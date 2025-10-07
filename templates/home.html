@@ -1,0 +1,81 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>JR Dashboard</title>
+  <link rel="icon" href="{{ url_for('static', filename='logo-jr.png') }}">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body class="home-body">
+  <main class="home-wrapper">
+    <header class="home-header">
+      <div class="home-brand">
+        <img src="{{ url_for('static', filename='logo-jr.png') }}" alt="JR" class="home-logo">
+        <div>
+          <p class="home-eyebrow">JR Ferragens &amp; Madeiras</p>
+          <h1>Dashboards operacionais</h1>
+          <p class="home-subtitle">Monitore combust&iacute;vel, manuten&ccedil;&atilde;o e reservas de hot&eacute;is em tempo real, com dados limpos diretamente das planilhas da JR.</p>
+        </div>
+      </div>
+      <a class="home-cta" href="#dashboards">Explorar dashboards</a>
+    </header>
+
+    <section id="dashboards" class="home-grid">
+      <article class="home-card">
+        <div class="home-card-header">
+          <span class="home-chip">Combust&iacute;vel</span>
+          <h2>Consumo, custo e efici&ecirc;ncia da frota</h2>
+        </div>
+        <p class="home-card-text">Filtros por m&ecirc;s, placa, posto e tipo de combust&iacute;vel com KPIs e gr&aacute;ficos de desempenho.</p>
+        <ul class="home-list">
+          <li>KPIs autom&aacute;ticos de custo, km e litros</li>
+          <li>Comparativo por posto e tipo de combust&iacute;vel</li>
+          <li>Hist&oacute;rico mensal de consumo e gastos</li>
+        </ul>
+        <a class="home-link" href="{{ url_for('comb_page') }}">Abrir dashboard &rarr;</a>
+      </article>
+
+      <article class="home-card">
+        <div class="home-card-header">
+          <span class="home-chip">Manuten&ccedil;&atilde;o</span>
+          <h2>Gest&atilde;o de oficinas e servi&ccedil;os</h2>
+        </div>
+        <p class="home-card-text">Acompanhe gastos por placa, oficina e m&ecirc;s, com ticket m&eacute;dio atualizado.</p>
+        <ul class="home-list">
+          <li>Resumo financeiro com ticket m&eacute;dio</li>
+          <li>Distribui&ccedil;&atilde;o por placa e oficina</li>
+          <li>Curva mensal de investimentos</li>
+        </ul>
+        <a class="home-link" href="{{ url_for('manut_page') }}">Abrir dashboard &rarr;</a>
+      </article>
+
+      <article class="home-card">
+        <div class="home-card-header">
+          <span class="home-chip">Hot&eacute;is</span>
+          <h2>Reservas e hospedagens da equipe</h2>
+        </div>
+        <p class="home-card-text">Filtros por m&ecirc;s, cidade e hotel para entender os investimentos em hospedagem.</p>
+        <ul class="home-list">
+          <li>KPIs autom&aacute;ticos de valor total, reservas e dias</li>
+          <li>Ranking por cidade e hotel/pousada</li>
+          <li>Hist&oacute;rico mensal dos gastos com hospedagem</li>
+        </ul>
+        <a class="home-link" href="{{ url_for('hoteis_page') }}">Abrir dashboard &rarr;</a>
+      </article>
+    </section>
+
+    <section class="home-footer">
+      <h3>Como os dados s&atilde;o atualizados?</h3>
+      <p>As planilhas <code>combustivel.xlsx</code>, <code>manutencao.xlsx</code> e <code>reserva de hoteis.xlsx</code> s&atilde;o importadas a cada acesso. Basta atualizar os arquivos em <code>/data</code> para refletir os novos indicadores.</p>
+      <div class="home-actions">
+        <a href="https://forms.gle/" target="_blank" rel="noopener" class="home-outline">Reportar sugest&otilde;es</a>
+        <a href="mailto:contato@jrferragens.com" class="home-outline">Falar com o TI</a>
+      </div>
+    </section>
+  </main>
+</body>
+</html>

@@ -1,0 +1,155 @@
+﻿<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>JR Dashboard - Manuten&ccedil;&atilde;o</title>
+  <link rel="icon" href="{{ url_for('static', filename='logo-jr.png') }}">
+  <script src="https://cdn.plot.ly/plotly-2.35.2.min.js" defer></script>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">
+      <img src="{{ url_for('static', filename='logo-jr.png') }}" alt="JR" class="logo">
+      <h1>JR DASHBOARD &bull; Manuten&ccedil;&atilde;o</h1>
+    </div>
+    <div class="filters">
+      <select id="mes"></select>
+      <select id="placa"></select>
+      <select id="oficina"></select>
+      <button id="limpar">Limpar filtros</button>
+      <a href="{{ url_for('home') }}" class="back-btn">&larr; Voltar</a>
+    </div>
+  </header>
+
+  <main class="container">
+    <section class="kpis">
+      <div class="kpi red">
+        <div class="kpi-title">Custo total (R$)</div>
+        <div id="kpi-custo" class="kpi-value">--</div>
+      </div>
+      <div class="kpi blue">
+        <div class="kpi-title">Servi&ccedil;os</div>
+        <div id="kpi-servicos" class="kpi-value">--</div>
+      </div>
+      <div class="kpi green">
+        <div class="kpi-title">Ticket m&eacute;dio</div>
+        <div id="kpi-ticket" class="kpi-value">--</div>
+      </div>
+    </section>
+
+    <section class="grid">
+      <div class="card"><h2>Gasto por placa</h2><div id="chart-placa"></div></div>
+      <div class="card"><h2>Gasto por oficina</h2><div id="chart-oficina"></div></div>
+      <div class="card"><h2>Gasto mensal</h2><div id="chart-mensal"></div></div>
+    </section>
+  </main>
+
+  <footer class="footer">
+    Atualizado automaticamente a partir da planilha em <code>data/manutencao.xlsx</code>. &copy; JR
+  </footer>
+
+<script>
+const fmtBRL = (value) => Number(value || 0).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
+const fmtNum = (value) => Number(value || 0).toLocaleString('pt-BR');
+const safeArray = (source, key) => (source && Array.isArray(source[key])) ? source[key] : [];
+
+async function fetchData() {
+  const params = new URLSearchParams({
+    mes: document.getElementById('mes').value || 'Todos',
+    placa: document.getElementById('placa').value || 'Todos',
+    oficina: document.getElementById('oficina').value || 'Todos'
+  });
+  const res = await fetch('/data/manutencao?' + params.toString());
+  return await res.json();
+}
+
+function fillSelect(id, values, label) {
+  const el = document.getElementById(id);
+  const current = el.value;
+  el.innerHTML = '';
+  const optAll = document.createElement('option');
+  optAll.value = 'Todos';
+  optAll.textContent = `${label} (Todos)`;
+  el.appendChild(optAll);
+  (values || []).forEach((value) => {
+    const opt = document.createElement('option');
+    opt.value = value;
+    opt.textContent = value;
+    el.appendChild(opt);
+  });
+  if ([...el.options].some((option) => option.value === current)) {
+    el.value = current;
+  }
+}
+
+function drawBarVertical(divId, x, y) {
+  const data = [{ type: 'bar', x: x || [], y: y || [], marker: { color: '#1C2D6B' } }];
+  const layout = { margin: { l: 50, r: 20, t: 20, b: 60 }, xaxis: { tickangle: -25, tickfont: { size: 10 }, automargin: true } };
+  Plotly.newPlot(divId, data, { ...plotlyTheme.layout, ...layout }, plotlyTheme.config);
+}
+
+async function refresh() {
+  const d = await fetchData();
+
+  if (!refresh._init) {
+    fillSelect('mes', d.meses, 'M\u00EAs');
+    fillSelect('placa', d.placas, 'Placa');
+    fillSelect('oficina', d.oficinas, 'Oficina');
+    ['mes', 'placa', 'oficina'].forEach((id) => {
+      document.getElementById(id).addEventListener('change', refresh);
+    });
+    document.getElementById('limpar').addEventListener('click', () => {
+      ['mes', 'placa', 'oficina'].forEach((id) => {
+        document.getElementById(id).value = 'Todos';
+      });
+      refresh();
+    });
+    refresh._init = true;
+  }
+
+  document.getElementById('kpi-custo').textContent = fmtBRL(d.custo_total);
+  document.getElementById('kpi-servicos').textContent = fmtNum(d.total_servicos);
+  document.getElementById('kpi-ticket').textContent = fmtBRL(d.media_servico);
+
+  drawBarVertical('chart-placa', safeArray(d.gasto_por_placa, 'PLACA'), safeArray(d.gasto_por_placa, 'Custo'));
+  drawBarVertical('chart-oficina', safeArray(d.gasto_por_oficina, 'OFICINA'), safeArray(d.gasto_por_oficina, 'Custo'));
+
+  const meses = safeArray(d.custo_mensal, 'Mes');
+  const custos = safeArray(d.custo_mensal, 'Custo');
+  const trace = {
+    type: 'scatter',
+    mode: 'lines+markers',
+    x: meses,
+    y: custos,
+    line: { color: '#1C2D6B', width: 3 },
+    marker: { color: '#BE1E2D', size: 7 },
+    hovertemplate: '<b>%{x}</b><br>R$ %{y:,.2f}<extra></extra>'
+  };
+  const layoutMensal = { margin: { l: 60, r: 20, t: 40, b: 60 }, xaxis: { tickangle: -30 }, yaxis: { title: 'R$' } };
+  Plotly.newPlot('chart-mensal', [trace], { ...plotlyTheme.layout, ...layoutMensal }, plotlyTheme.config);
+}
+
+const plotlyTheme = {
+  layout: {
+    paper_bgcolor: '#fff',
+    plot_bgcolor: '#fff',
+    font: { family: 'Inter, sans-serif', color: '#1C2D6B' },
+    xaxis: { gridcolor: '#e5e7eb', linecolor: '#e5e7eb' },
+    yaxis: { gridcolor: '#e5e7eb', linecolor: '#e5e7eb' }
+  },
+  config: {
+    responsive: true,
+    displaylogo: false,
+    modeBarButtonsToRemove: ['lasso2d', 'select2d']
+  }
+};
+
+window.addEventListener('DOMContentLoaded', refresh);
+</script>
+</body>
+</html>
