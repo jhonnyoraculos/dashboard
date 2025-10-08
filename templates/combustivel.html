@@ -33,6 +33,10 @@
         <div class="kpi-title">Total (R$)</div>
         <div id="kpi-custo" class="kpi-value">--</div>
       </div>
+      <div class="kpi yellow">
+        <div class="kpi-title">M&eacute;dia mensal (R$)</div>
+        <div id="kpi-media-mensal" class="kpi-value">--</div>
+      </div>
       <div class="kpi blue">
         <div class="kpi-title">KM total</div>
         <div id="kpi-km" class="kpi-value">--</div>
@@ -137,6 +141,7 @@ async function refresh() {
   }
 
   document.getElementById('kpi-custo').textContent = fmtBRL(d.custo_total);
+  document.getElementById('kpi-media-mensal').textContent = fmtBRL(d.media_mensal);
   document.getElementById('kpi-km').textContent = fmtNum(d.km_total);
   document.getElementById('kpi-litros').textContent = fmtNum(d.litros_total);
   document.getElementById('kpi-custo-km').textContent = 'R$ ' + Number(d.custo_por_km || 0).toFixed(2);

@@ -85,11 +85,14 @@ def agg_combustivel(df: pd.DataFrame) -> dict:
     custo_por_km = (custo_total / km_total) if km_total else 0.0
     km_por_litro = (km_total / litros_total) if litros_total else 0.0
     custo_por_litro = (custo_total / litros_total) if litros_total else 0.0
+    meses_distintos = df["Mes"].dropna().unique() if "Mes" in df else []
+    media_mensal = float(custo_total / len(meses_distintos)) if len(meses_distintos) else 0.0
 
     return {
         "km_total": km_total,
         "litros_total": litros_total,
         "custo_total": custo_total,
+        "media_mensal": media_mensal,
         "custo_por_km": custo_por_km,
         "km_por_litro": km_por_litro,
         "custo_por_litro": custo_por_litro,
@@ -136,11 +139,14 @@ def agg_manutencao(df: pd.DataFrame) -> dict:
     custo_total = float(df["Custo"].sum()) if "Custo" in df else 0.0
     total_servicos = int(len(df))
     media_servico = float(custo_total / total_servicos) if total_servicos else 0.0
+    meses_distintos = df["Mes"].dropna().unique() if "Mes" in df else []
+    media_mensal = float(custo_total / len(meses_distintos)) if len(meses_distintos) else 0.0
 
     return {
         "custo_total": custo_total,
         "total_servicos": total_servicos,
         "media_servico": media_servico,
+        "media_mensal": media_mensal,
         "custo_mensal": _group_sum(df, "Mes", sort_by="group"),
         "gasto_por_placa": _group_sum(df, "PLACA"),
         "gasto_por_oficina": _group_sum(df, "OFICINA"),

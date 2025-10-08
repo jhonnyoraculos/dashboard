@@ -25,6 +25,8 @@ body{
   display:flex;
   align-items:center;
   justify-content:space-between;
+  gap:16px;
+  flex-wrap:wrap;
   padding:18px 32px;
   background:var(--jr-blue);   /* azul JR */
   box-shadow:0 4px 12px rgba(0,0,0,.2); /* profundidade */
@@ -33,7 +35,7 @@ body{
   z-index:100;
 }
 
-.brand{display:flex; align-items:center; gap:14px;}
+.brand{display:flex; align-items:center; gap:14px; flex:0 0 auto;}
 .logo{width:44px; height:44px;}
 h1{
   font-size:22px;
@@ -47,6 +49,9 @@ h1{
   display:flex;
   gap:12px;
   flex-wrap:wrap;
+  align-items:center;
+  justify-content:flex-end;
+  flex:1 1 100%;
 }
 select, button{
   background:#fff;
@@ -58,6 +63,8 @@ select, button{
   font-size:14px;
   transition:all .25s ease;
   box-shadow:0 3px 8px rgba(0,0,0,.12); /* efeito card elevado */
+  flex:1 1 150px;
+  min-width:140px;
 }
 select:hover{border-color:var(--jr-red);}
 
@@ -71,9 +78,17 @@ button#limpar{
 }
 button#limpar:hover{opacity:.92;}
 
+.filters .back-btn{
+  flex:0 0 auto;
+  min-width:140px;
+  display:inline-flex;
+  justify-content:center;
+  align-items:center;
+}
+
 /* ---------- CONTAINER ---------- */
 .container{
-  padding:32px;
+  padding:32px 24px;
   max-width:1400px;
   margin:0 auto;
 }
@@ -81,7 +96,7 @@ button#limpar:hover{opacity:.92;}
 /* ---------- KPIs ---------- */
 .kpis{
   display:grid;
-  grid-template-columns:repeat(3,1fr);
+  grid-template-columns:repeat(auto-fit, minmax(220px, 1fr));
   gap:28px;
   margin-bottom:36px;
 }
@@ -112,7 +127,7 @@ button#limpar:hover{opacity:.92;}
 /* ---------- GRÁFICOS ---------- */
 .grid{
   display:grid;
-  grid-template-columns:repeat(2,1fr);
+  grid-template-columns:repeat(auto-fit, minmax(280px,1fr));
   gap:28px;
 }
 .card{
@@ -150,10 +165,38 @@ button#limpar:hover{opacity:.92;}
 }
 
 /* ---------- RESPONSIVO ---------- */
-@media (max-width: 980px){
-  .grid{grid-template-columns:1fr;}
-  .kpis{grid-template-columns:1fr;}
+@media (max-width: 960px){
+  .topbar{padding:16px 24px;}
+  .brand{
+    flex-basis:100%;
+    justify-content:flex-start;
+  }
+  .filters{justify-content:flex-start;}
   h1{font-size:20px;}
+}
+
+@media (max-width: 720px){
+  .topbar{padding:14px 16px;}
+  .filters{
+    flex-direction:column;
+    align-items:stretch;
+    gap:10px;
+  }
+  select, button{
+    flex:1 1 100%;
+    min-width:0;
+    width:100%;
+  }
+  .filters .back-btn{
+    width:100%;
+  }
+  .container{padding:24px 16px;}
+  .brand{
+    flex-direction:row;
+    gap:12px;
+    align-items:center;
+  }
+  h1{font-size:18px;}
 }
 .back-btn {
   background: var(--jr-red);

@@ -40,6 +40,10 @@
         <div class="kpi-title">Ticket m&eacute;dio</div>
         <div id="kpi-ticket" class="kpi-value">--</div>
       </div>
+      <div class="kpi yellow">
+        <div class="kpi-title">M&eacute;dia mensal (R$)</div>
+        <div id="kpi-media-mensal" class="kpi-value">--</div>
+      </div>
     </section>
 
     <section class="grid">
@@ -115,6 +119,7 @@ async function refresh() {
   document.getElementById('kpi-custo').textContent = fmtBRL(d.custo_total);
   document.getElementById('kpi-servicos').textContent = fmtNum(d.total_servicos);
   document.getElementById('kpi-ticket').textContent = fmtBRL(d.media_servico);
+  document.getElementById('kpi-media-mensal').textContent = fmtBRL(d.media_mensal);
 
   drawBarVertical('chart-placa', safeArray(d.gasto_por_placa, 'PLACA'), safeArray(d.gasto_por_placa, 'Custo'));
   drawBarVertical('chart-oficina', safeArray(d.gasto_por_oficina, 'OFICINA'), safeArray(d.gasto_por_oficina, 'Custo'));
