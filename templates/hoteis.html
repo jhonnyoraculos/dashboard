@@ -36,6 +36,10 @@
         <div class="kpi-title">Reservas</div>
         <div id="kpi-reservas" class="kpi-value">--</div>
       </div>
+      <div class="kpi yellow">
+        <div class="kpi-title">M&eacute;dia por reserva</div>
+        <div id="kpi-ticket" class="kpi-value">--</div>
+      </div>
       <div class="kpi green">
         <div class="kpi-title">M&eacute;dia mensal</div>
         <div id="kpi-media-mensal" class="kpi-value">--</div>
@@ -116,6 +120,7 @@ async function refresh() {
 
   document.getElementById('kpi-valor').textContent = fmtBRL(d.valor_total);
   document.getElementById('kpi-reservas').textContent = fmtNum(d.reservas_total);
+  document.getElementById('kpi-ticket').textContent = fmtBRL(d.valor_medio_reserva);
   document.getElementById('kpi-media-mensal').textContent = fmtBRL(d.media_mensal);
 
   const meses = safeArray(d.valor_mensal, 'Mes');

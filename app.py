@@ -187,11 +187,13 @@ def agg_hoteis(df: pd.DataFrame) -> dict:
     reservas_total = int(len(df))
     meses_distintos = df["Mes"].dropna().unique() if "Mes" in df else []
     media_mensal = float(valor_total / len(meses_distintos)) if len(meses_distintos) else 0.0
+    valor_medio_reserva = float(valor_total / reservas_total) if reservas_total else 0.0
 
     return {
         "valor_total": valor_total,
         "reservas_total": reservas_total,
         "media_mensal": media_mensal,
+        "valor_medio_reserva": valor_medio_reserva,
         "valor_mensal": _group_sum(df, "Mes", "Valor", sort_by="group"),
         "valor_por_cidade": _group_sum(df, "Cidade", "Valor"),
         "valor_por_hotel": _group_sum(df, "Hotel", "Valor"),
