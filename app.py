@@ -179,19 +179,18 @@ def load_hoteis() -> pd.DataFrame:
     df["Mes"] = period.astype(str)
     df.loc[period.isna(), "Mes"] = None
 
-    df = df.dropna(subset=["Valor"]).copy()
-
     for col in ["Motorista", "Ajudante", "Cidade", "Hotel", "Tipo"]:
         if col in df.columns:
             df[col] = df[col].astype("string").str.strip()
 
-    return df
+    return df.copy()
 
 
 def agg_hoteis(df: pd.DataFrame) -> dict:
-    valor_total = float(df["Valor"].sum()) if "Valor" in df else 0.0
-    reservas_total = int(len(df))
-    meses_distintos = df["Mes"].dropna().unique() if "Mes" in df else []
+    reservas = df[df["Data"].notna()].copy() if "Data" in df.columns else df.copy()
+    valor_total = float(reservas["Valor"].fillna(0).sum()) if "Valor" in reservas else 0.0
+    reservas_total = int(reservas.shape[0])
+    meses_distintos = reservas["Mes"].dropna().unique() if "Mes" in reservas else []
     media_mensal = float(valor_total / len(meses_distintos)) if len(meses_distintos) else 0.0
     valor_medio_reserva = float(valor_total / reservas_total) if reservas_total else 0.0
 
@@ -200,12 +199,12 @@ def agg_hoteis(df: pd.DataFrame) -> dict:
         "reservas_total": reservas_total,
         "media_mensal": media_mensal,
         "valor_medio_reserva": valor_medio_reserva,
-        "valor_mensal": _group_sum(df, "Mes", "Valor", sort_by="group"),
-        "valor_por_cidade": _group_sum(df, "Cidade", "Valor"),
-        "valor_por_hotel": _group_sum(df, "Hotel", "Valor"),
-        "meses": _unique_sorted(df, "Mes"),
-        "cidades": _unique_sorted(df, "Cidade"),
-        "hoteis": _unique_sorted(df, "Hotel"),
+        "valor_mensal": _group_sum(reservas, "Mes", "Valor", sort_by="group"),
+        "valor_por_cidade": _group_sum(reservas, "Cidade", "Valor"),
+        "valor_por_hotel": _group_sum(reservas, "Hotel", "Valor"),
+        "meses": _unique_sorted(reservas, "Mes"),
+        "cidades": _unique_sorted(reservas, "Cidade"),
+        "hoteis": _unique_sorted(reservas, "Hotel"),
     }
 
 
