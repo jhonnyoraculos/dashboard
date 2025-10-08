@@ -59,6 +59,7 @@
       <div class="card"><h2>Gasto total por m&ecirc;s</h2><div id="chart-custo-mes"></div></div>
       <div class="card"><h2>Gasto por posto</h2><div id="chart-posto"></div></div>
       <div class="card"><h2>Gasto por combust&iacute;vel</h2><div id="chart-comb"></div></div>
+      <div class="card"><h2>Gasto por placa</h2><div id="chart-placa"></div></div>
       <div class="card"><h2>KM por m&ecirc;s</h2><div id="chart-km-mes"></div></div>
       <div class="card"><h2>Litros por m&ecirc;s</h2><div id="chart-litros-mes"></div></div>
     </section>
@@ -166,6 +167,9 @@ async function refresh() {
 
   drawPie('chart-posto', safeArray(d.gasto_por_posto, 'POSTOS'), safeArray(d.gasto_por_posto, 'Custo'));
   drawPie('chart-comb', safeArray(d.gasto_por_combustivel, 'Combustivel'), safeArray(d.gasto_por_combustivel, 'Custo'));
+  const placas = safeArray(d.gasto_por_placa, 'PLACA').slice(0, 15);
+  const gastoPlaca = safeArray(d.gasto_por_placa, 'Custo').slice(0, 15);
+  drawBarVertical('chart-placa', placas, gastoPlaca);
   drawBarVertical('chart-km-mes', safeArray(d.km_mensal, 'Mes'), safeArray(d.km_mensal, 'Km Rodados'));
   drawBarVertical('chart-litros-mes', safeArray(d.litros_mensal, 'Mes'), safeArray(d.litros_mensal, 'Litros'));
 }

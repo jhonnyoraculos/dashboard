@@ -36,17 +36,9 @@
         <div class="kpi-title">Reservas</div>
         <div id="kpi-reservas" class="kpi-value">--</div>
       </div>
-      <div class="kpi yellow">
-        <div class="kpi-title">Dias reservados</div>
-        <div id="kpi-dias" class="kpi-value">--</div>
-      </div>
       <div class="kpi green">
-        <div class="kpi-title">Ticket m&eacute;dio</div>
-        <div id="kpi-ticket" class="kpi-value">--</div>
-      </div>
-      <div class="kpi green">
-        <div class="kpi-title">Valor m&eacute;dio por dia</div>
-        <div id="kpi-dia" class="kpi-value">--</div>
+        <div class="kpi-title">M&eacute;dia mensal</div>
+        <div id="kpi-media-mensal" class="kpi-value">--</div>
       </div>
     </section>
 
@@ -124,9 +116,7 @@ async function refresh() {
 
   document.getElementById('kpi-valor').textContent = fmtBRL(d.valor_total);
   document.getElementById('kpi-reservas').textContent = fmtNum(d.reservas_total);
-  document.getElementById('kpi-dias').textContent = fmtNum(d.dias_total);
-  document.getElementById('kpi-ticket').textContent = fmtBRL(d.valor_medio_reserva);
-  document.getElementById('kpi-dia').textContent = fmtBRL(d.valor_medio_dia);
+  document.getElementById('kpi-media-mensal').textContent = fmtBRL(d.media_mensal);
 
   const meses = safeArray(d.valor_mensal, 'Mes');
   const valoresMensal = safeArray(d.valor_mensal, 'Valor');

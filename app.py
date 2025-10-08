@@ -98,6 +98,7 @@ def agg_combustivel(df: pd.DataFrame) -> dict:
         "litros_mensal": _group_sum(df, "Mes", "Litros", sort_by="group"),
         "gasto_por_posto": _group_sum(df, "POSTOS"),
         "gasto_por_combustivel": _group_sum(df, "Combustivel"),
+        "gasto_por_placa": _group_sum(df, "PLACA"),
         "placas": _unique_sorted(df, "PLACA"),
         "postos": _unique_sorted(df, "POSTOS"),
         "combustiveis": _unique_sorted(df, "Combustivel"),
@@ -184,16 +185,13 @@ def load_hoteis() -> pd.DataFrame:
 def agg_hoteis(df: pd.DataFrame) -> dict:
     valor_total = float(df["Valor"].sum()) if "Valor" in df else 0.0
     reservas_total = int(len(df))
-    dias_total = float(df["Dias"].sum()) if "Dias" in df else 0.0
-    valor_medio_reserva = float(valor_total / reservas_total) if reservas_total else 0.0
-    valor_medio_dia = float(valor_total / dias_total) if dias_total else 0.0
+    meses_distintos = df["Mes"].dropna().unique() if "Mes" in df else []
+    media_mensal = float(valor_total / len(meses_distintos)) if len(meses_distintos) else 0.0
 
     return {
         "valor_total": valor_total,
         "reservas_total": reservas_total,
-        "dias_total": dias_total,
-        "valor_medio_reserva": valor_medio_reserva,
-        "valor_medio_dia": valor_medio_dia,
+        "media_mensal": media_mensal,
         "valor_mensal": _group_sum(df, "Mes", "Valor", sort_by="group"),
         "valor_por_cidade": _group_sum(df, "Cidade", "Valor"),
         "valor_por_hotel": _group_sum(df, "Hotel", "Valor"),
