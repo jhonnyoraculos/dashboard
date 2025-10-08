@@ -115,8 +115,25 @@ function drawBarVertical(divId, x, y) {
 }
 
 function drawPie(divId, labels, values) {
-  const data = [{ type: 'pie', labels: labels || [], values: values || [], hole: 0.45 }];
-  const layout = { margin: { l: 20, r: 20, t: 10, b: 10 } };
+  const isCompact = window.innerWidth <= 900;
+  const data = [{
+    type: 'pie',
+    labels: labels || [],
+    values: values || [],
+    hole: 0.45,
+    textinfo: isCompact ? 'label+percent' : 'percent',
+    hovertemplate: '<b>%{label}</b><br>R$ %{value:,.2f}<extra></extra>'
+  }];
+  const layout = {
+    margin: { l: 20, r: 20, t: 20, b: isCompact ? 70 : 20 },
+    showlegend: !isCompact,
+    legend: isCompact
+      ? { orientation: 'h', x: 0, y: -0.3, font: { size: 11 } }
+      : { orientation: 'v', x: 1, xanchor: 'left', y: 0.5, font: { size: 11 } }
+  };
+  if (isCompact) {
+    layout.height = 320;
+  }
   Plotly.newPlot(divId, data, { ...plotlyTheme.layout, ...layout }, plotlyTheme.config);
 }
 

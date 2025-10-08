@@ -136,6 +136,12 @@ button#limpar:hover{opacity:.92;}
   padding:24px;
   box-shadow:var(--shadow);
   transition:transform .2s ease;
+  display:flex;
+  flex-direction:column;
+}
+.card > div[id^="chart"]{
+  flex:1 1 auto;
+  min-height:260px;
 }
 .card:hover{transform:translateY(-2px);}
 .card h2{
@@ -166,7 +172,10 @@ button#limpar:hover{opacity:.92;}
 
 /* ---------- RESPONSIVO ---------- */
 @media (max-width: 960px){
-  .topbar{padding:16px 24px;}
+  .topbar{
+    padding:16px 24px;
+    position:static;
+  }
   .brand{
     flex-basis:100%;
     justify-content:flex-start;
@@ -181,6 +190,9 @@ button#limpar:hover{opacity:.92;}
     flex-direction:column;
     align-items:stretch;
     gap:10px;
+  }
+  .card > div[id^="chart"]{
+    min-height:320px;
   }
   select, button{
     flex:1 1 100%;
