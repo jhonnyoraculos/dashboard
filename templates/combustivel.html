@@ -22,6 +22,7 @@
       <select id="placa"></select>
       <select id="posto"></select>
       <select id="combustivel"></select>
+      <select id="segmento"></select>
       <button id="limpar">Limpar filtros</button>
       <a href="{{ url_for('home') }}" class="back-btn">&larr; Voltar</a>
     </div>
@@ -83,7 +84,8 @@ async function fetchData() {
     mes: document.getElementById('mes').value || 'Todos',
     placa: document.getElementById('placa').value || 'Todos',
     posto: document.getElementById('posto').value || 'Todos',
-    combustivel: document.getElementById('combustivel').value || 'Todos'
+    combustivel: document.getElementById('combustivel').value || 'Todos',
+    segmento: document.getElementById('segmento').value || 'Todos'
   });
   const res = await fetch('/data/combustivel?' + params.toString());
   return await res.json();
@@ -108,9 +110,62 @@ function fillSelect(id, values, label) {
   }
 }
 
-function drawBarVertical(divId, x, y) {
-  const data = [{ type: 'bar', x: x || [], y: y || [] }];
-  const layout = { margin: { l: 50, r: 20, t: 10, b: 60 }, xaxis: { tickangle: -25, tickfont: { size: 10 }, automargin: true }, hovermode: 'closest' };
+function drawBarVertical(divId, x, y, opts = {}) {
+  const labels = x || [];
+  const values = y || [];
+  const count = labels.length;
+  const autoOrient = opts.autoOrient ?? false;
+  const threshold = opts.threshold ?? 12;
+  const useHorizontal = autoOrient && count > threshold;
+  const sortMode = opts.sort;
+
+  let data;
+  let layout;
+  const plottingLabels = [...labels];
+  const plottingValues = values.map((val) => {
+    const num = Number(val);
+    return Number.isFinite(num) ? num : 0;
+  });
+
+  if (sortMode && plottingLabels.length === plottingValues.length) {
+    const combined = plottingLabels.map((label, index) => ({ label, value: plottingValues[index] ?? 0 }));
+    combined.sort((a, b) => sortMode === 'desc' ? (b.value - a.value) : (a.value - b.value));
+    combined.forEach((item, index) => {
+      plottingLabels[index] = item.label;
+      plottingValues[index] = item.value;
+    });
+  }
+
+  if (useHorizontal) {
+    const height = Math.max(320, count * 32);
+    data = [{ type: 'bar', x: plottingValues, y: plottingLabels, orientation: 'h' }];
+    layout = {
+      margin: { l: 110, r: 40, t: 10, b: 40 },
+      height,
+      yaxis: { automargin: true, tickfont: { size: 11 }, autorange: 'reversed' },
+      hovermode: 'closest'
+    };
+    const container = document.getElementById(divId);
+    if (opts.enableScroll && container) {
+      container.style.overflowY = 'auto';
+      container.style.maxHeight = '420px';
+      container.style.overflowX = 'hidden';
+    }
+  } else {
+    data = [{ type: 'bar', x: plottingLabels, y: plottingValues }];
+    layout = {
+      margin: { l: 50, r: 20, t: 10, b: 70 },
+      xaxis: { tickangle: -45, tickfont: { size: 9 }, automargin: true },
+      hovermode: 'closest'
+    };
+    const container = document.getElementById(divId);
+    if (container) {
+      container.style.overflowY = '';
+      container.style.maxHeight = '';
+      container.style.overflowX = '';
+    }
+  }
+
   Plotly.newPlot(divId, data, { ...plotlyTheme.layout, ...layout }, plotlyTheme.config);
 }
 
@@ -156,11 +211,12 @@ async function refresh() {
     fillSelect('placa', d.placas, 'Placa');
     fillSelect('posto', d.postos, 'Posto');
     fillSelect('combustivel', d.combustiveis, 'Combust\u00EDvel');
-    ['mes', 'placa', 'posto', 'combustivel'].forEach((id) => {
+    fillSelect('segmento', d.segmentos, 'Categoria');
+    ['mes', 'placa', 'posto', 'combustivel', 'segmento'].forEach((id) => {
       document.getElementById(id).addEventListener('change', refresh);
     });
     document.getElementById('limpar').addEventListener('click', () => {
-      ['mes', 'placa', 'posto', 'combustivel'].forEach((id) => {
+      ['mes', 'placa', 'posto', 'combustivel', 'segmento'].forEach((id) => {
         document.getElementById(id).value = 'Todos';
       });
       refresh();
@@ -200,9 +256,9 @@ async function refresh() {
 
   drawPie('chart-posto', safeArray(d.gasto_por_posto, 'POSTOS'), safeArray(d.gasto_por_posto, 'Custo'));
   drawPie('chart-comb', safeArray(d.gasto_por_combustivel, 'Combustivel'), safeArray(d.gasto_por_combustivel, 'Custo'));
-  const placas = safeArray(d.gasto_por_placa, 'PLACA').slice(0, 15);
-  const gastoPlaca = safeArray(d.gasto_por_placa, 'Custo').slice(0, 15);
-  drawBarVertical('chart-placa', placas, gastoPlaca);
+  const placas = safeArray(d.gasto_por_placa, 'PLACA');
+  const gastoPlaca = safeArray(d.gasto_por_placa, 'Custo');
+  drawBarVertical('chart-placa', placas, gastoPlaca, { autoOrient: true, threshold: 10, sort: 'desc', enableScroll: true });
   drawBarVertical('chart-km-mes', safeArray(d.km_mensal, 'Mes'), safeArray(d.km_mensal, 'Km Rodados'));
   drawBarVertical('chart-litros-mes', safeArray(d.litros_mensal, 'Mes'), safeArray(d.litros_mensal, 'Litros'));
 }

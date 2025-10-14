@@ -21,6 +21,7 @@
       <select id="mes"></select>
       <select id="placa"></select>
       <select id="oficina"></select>
+      <select id="segmento"></select>
       <button id="limpar">Limpar filtros</button>
       <a href="{{ url_for('home') }}" class="back-btn">&larr; Voltar</a>
     </div>
@@ -66,7 +67,8 @@ async function fetchData() {
   const params = new URLSearchParams({
     mes: document.getElementById('mes').value || 'Todos',
     placa: document.getElementById('placa').value || 'Todos',
-    oficina: document.getElementById('oficina').value || 'Todos'
+    oficina: document.getElementById('oficina').value || 'Todos',
+    segmento: document.getElementById('segmento').value || 'Todos'
   });
   const res = await fetch('/data/manutencao?' + params.toString());
   return await res.json();
@@ -104,11 +106,12 @@ async function refresh() {
     fillSelect('mes', d.meses, 'M\u00EAs');
     fillSelect('placa', d.placas, 'Placa');
     fillSelect('oficina', d.oficinas, 'Oficina');
-    ['mes', 'placa', 'oficina'].forEach((id) => {
+    fillSelect('segmento', d.segmentos, 'Categoria');
+    ['mes', 'placa', 'oficina', 'segmento'].forEach((id) => {
       document.getElementById(id).addEventListener('change', refresh);
     });
     document.getElementById('limpar').addEventListener('click', () => {
-      ['mes', 'placa', 'oficina'].forEach((id) => {
+      ['mes', 'placa', 'oficina', 'segmento'].forEach((id) => {
         document.getElementById(id).value = 'Todos';
       });
       refresh();

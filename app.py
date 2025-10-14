@@ -75,6 +75,13 @@ def load_combustivel() -> pd.DataFrame:
         if col in df.columns:
             df[col] = df[col].astype("string").str.strip()
 
+    vex_col = next((col for col in df.columns if col.lower() == "vex"), None)
+    if vex_col:
+        df[vex_col] = df[vex_col].astype("string").str.strip()
+        df["Categoria"] = df[vex_col].apply(lambda value: "Vex" if pd.notna(value) and value != "" else "Transporte")
+    else:
+        df["Categoria"] = "Transporte"
+
     return df
 
 
@@ -106,6 +113,7 @@ def agg_combustivel(df: pd.DataFrame) -> dict:
         "postos": _unique_sorted(df, "POSTOS"),
         "combustiveis": _unique_sorted(df, "Combustivel"),
         "meses": _unique_sorted(df, "Mes"),
+        "segmentos": _unique_sorted(df, "Categoria"),
     }
 
 
@@ -132,6 +140,13 @@ def load_manutencao() -> pd.DataFrame:
         if col in df.columns:
             df[col] = df[col].astype("string").str.strip()
 
+    vex_col = next((col for col in df.columns if col.lower() == "vex"), None)
+    if vex_col:
+        df[vex_col] = df[vex_col].astype("string").str.strip()
+        df["Categoria"] = df[vex_col].apply(lambda value: "Vex" if pd.notna(value) and value != "" else "Transporte")
+    else:
+        df["Categoria"] = "Transporte"
+
     return df
 
 
@@ -153,6 +168,7 @@ def agg_manutencao(df: pd.DataFrame) -> dict:
         "placas": _unique_sorted(df, "PLACA"),
         "oficinas": _unique_sorted(df, "OFICINA"),
         "meses": _unique_sorted(df, "Mes"),
+        "segmentos": _unique_sorted(df, "Categoria"),
     }
 
 
@@ -239,6 +255,7 @@ def data_comb():
     placa = request.args.get("placa")
     posto = request.args.get("posto")
     combustivel = request.args.get("combustivel")
+    segmento = request.args.get("segmento")
 
     if mes and mes != "Todos":
         df = df[df["Mes"] == mes]
@@ -248,6 +265,8 @@ def data_comb():
         df = df[df["POSTOS"] == posto]
     if combustivel and combustivel != "Todos":
         df = df[df["Combustivel"] == combustivel]
+    if segmento and segmento != "Todos" and "Categoria" in df.columns:
+        df = df[df["Categoria"] == segmento]
 
     return jsonify(agg_combustivel(df))
 
@@ -259,6 +278,7 @@ def data_manu():
     mes = request.args.get("mes")
     placa = request.args.get("placa")
     oficina = request.args.get("oficina")
+    segmento = request.args.get("segmento")
 
     if mes and mes != "Todos":
         df = df[df["Mes"] == mes]
@@ -266,6 +286,8 @@ def data_manu():
         df = df[df["PLACA"] == placa]
     if oficina and oficina != "Todos":
         df = df[df["OFICINA"] == oficina]
+    if segmento and segmento != "Todos" and "Categoria" in df.columns:
+        df = df[df["Categoria"] == segmento]
 
     return jsonify(agg_manutencao(df))
 
