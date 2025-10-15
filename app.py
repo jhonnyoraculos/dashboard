@@ -2,6 +2,7 @@ from flask import Flask, render_template, jsonify, request
 import pandas as pd
 import unicodedata
 import os
+import threading
 from pathlib import Path
 
 app = Flask(__name__)
@@ -10,15 +11,23 @@ BASE_PATH = Path(__file__).parent / "data"
 DATA_COMB = BASE_PATH / "combustivel.xlsx"
 DATA_MANU = BASE_PATH / "manutencao.xlsx"
 DATA_HOTEIS = BASE_PATH / "reserva de hoteis.xlsx"
+DATA_PEDAGIO = BASE_PATH / "pedagio seguro e ipva.xlsx"
+_PEDAGIO_CACHE = {"mtime": None, "df": None}
 
 
 def _clean_columns(df: pd.DataFrame) -> pd.DataFrame:
     """Remove colunas artificiais e normaliza nomes em ASCII."""
     df = df.loc[:, ~df.columns.astype(str).str.startswith("Unnamed")]
     rename_map = {}
+    keep_cols = []
     for col in df.columns:
         normal = unicodedata.normalize("NFKD", str(col)).encode("ascii", "ignore").decode("ascii")
-        rename_map[col] = normal.strip()
+        cleaned = normal.strip()
+        if cleaned == "" or cleaned.lower() == "nan":
+            continue
+        keep_cols.append(col)
+        rename_map[col] = cleaned
+    df = df.loc[:, keep_cols]
     return df.rename(columns=rename_map)
 
 
@@ -53,6 +62,53 @@ def _unique_sorted(df: pd.DataFrame, column: str) -> list:
     if series.empty:
         return []
     return sorted(series.astype(str).str.strip().unique().tolist())
+
+
+def _to_numeric_currency(series: pd.Series) -> pd.Series:
+    if series is None:
+        return pd.Series(dtype="float64")
+    if pd.api.types.is_numeric_dtype(series):
+        return pd.to_numeric(series, errors="coerce")
+
+    cleaned = series.astype("string").str.strip()
+    cleaned = cleaned.replace({"": pd.NA, "nan": pd.NA, "None": pd.NA})
+    cleaned = cleaned.str.replace("R$", "", regex=False).str.replace("\u00a0", "", regex=False)
+    cleaned = cleaned.str.replace(" ", "", regex=False)
+
+    mask_comma = cleaned.str.contains(",", regex=False, na=False)
+    cleaned.loc[mask_comma] = (
+        cleaned.loc[mask_comma]
+        .str.replace(".", "", regex=False)
+        .str.replace(",", ".", regex=False)
+    )
+    cleaned.loc[~mask_comma] = cleaned.loc[~mask_comma].str.replace(",", ".", regex=False)
+
+    return pd.to_numeric(cleaned, errors="coerce")
+
+
+def _normalize_ascii(value):
+    if pd.isna(value):
+        return value
+    return unicodedata.normalize("NFKD", str(value)).encode("ascii", "ignore").decode("ascii").strip()
+
+
+def _canonical_tipo(value):
+    if pd.isna(value):
+        return None
+    text = _normalize_ascii(value).upper()
+    if not text:
+        return None
+    if "PEDAG" in text:
+        return "Pedágio"
+    if "IPVA" in text:
+        return "IPVA"
+    if "SEGUR" in text or "APOLI" in text or "APOLICE" in text:
+        return "Seguro"
+    if "LICENCI" in text:
+        return "Licenciamento"
+    if "DPVAT" in text:
+        return "DPVAT"
+    return text.title()
 
 
 def load_combustivel() -> pd.DataFrame:
@@ -224,6 +280,179 @@ def agg_hoteis(df: pd.DataFrame) -> dict:
     }
 
 
+def load_pedagio() -> pd.DataFrame:
+    if not DATA_PEDAGIO.exists():
+        return pd.DataFrame(columns=["PLACA", "Tipo", "Custo", "Mes"])
+
+    try:
+        mtime = DATA_PEDAGIO.stat().st_mtime
+    except PermissionError:
+        print("Aviso: sem permissão para ler planilha de pedágio/seguro/IPVA. Verifique se o arquivo está aberto.")
+        return pd.DataFrame(columns=["PLACA", "Tipo", "Custo", "Mes"])
+
+    global _PEDAGIO_CACHE
+    if _PEDAGIO_CACHE["df"] is not None and _PEDAGIO_CACHE["mtime"] == mtime:
+        return _PEDAGIO_CACHE["df"].copy()
+
+    try:
+        raw = pd.read_excel(DATA_PEDAGIO, sheet_name=0, header=None, engine="openpyxl")
+    except PermissionError:
+        print("Aviso: sem permissão para ler planilha de pedágio/seguro/IPVA. Verifique se o arquivo está aberto.")
+        return pd.DataFrame(columns=["PLACA", "Tipo", "Custo", "Mes"])
+    except Exception as exc:
+        print(f"Aviso: falha ao ler planilha de pedágio/seguro/IPVA: {exc}")
+        return pd.DataFrame(columns=["PLACA", "Tipo", "Custo", "Mes"])
+
+    expected_core = {"TIPO", "CUSTO"}
+    header_idx = None
+    for idx in range(min(len(raw), 10)):
+        row = raw.iloc[idx]
+        normalized = set()
+        for value in row.tolist():
+            if pd.isna(value):
+                continue
+            normalized.add(_normalize_ascii(value).upper())
+        has_placa = any(label in normalized for label in ("PLACA", "PLACAS"))
+        if has_placa and expected_core.issubset(normalized):
+            header_idx = idx
+            break
+
+    if header_idx is None:
+        print("Aviso: cabeçalho da planilha de pedágio/seguro/IPVA não encontrado.")
+        return pd.DataFrame(columns=["PLACA", "Tipo", "Custo", "Mes"])
+
+    df = raw.iloc[header_idx + 1 :].copy()
+    df.columns = raw.iloc[header_idx]
+    df = df.dropna(how="all").reset_index(drop=True)
+    df = _clean_columns(df)
+
+    rename_map = {}
+    for col in df.columns:
+        col_norm = str(col).strip().upper()
+        if col_norm in {"PLACA", "PLACAS"}:
+            rename_map[col] = "PLACA"
+        elif col_norm == "TIPO":
+            rename_map[col] = "Tipo"
+        elif col_norm in {"CUSTO", "VALOR", "VALORES"}:
+            rename_map[col] = "Custo"
+        elif col_norm in {"MES", "MÊS"}:
+            rename_map[col] = "Mes"
+        elif col_norm == "DATA":
+            rename_map[col] = "Data"
+        elif col_norm == "VEX":
+            rename_map[col] = "Vex"
+        elif col_norm in {"DESCRICAO", "DESCRIÇÃO"}:
+            rename_map[col] = "Descricao"
+        elif col_norm in {"SEGURADORA", "FORNECEDOR"}:
+            rename_map[col] = "Fornecedor"
+
+    if rename_map:
+        df = df.rename(columns=rename_map)
+
+    if "Custo" in df.columns:
+        df["Custo"] = _to_numeric_currency(df["Custo"])
+    else:
+        df["Custo"] = pd.Series(pd.NA, index=df.index, dtype="float64")
+
+    if "Tipo" in df.columns:
+        df["Tipo"] = df["Tipo"].apply(_canonical_tipo).astype("string")
+    else:
+        df["Tipo"] = pd.Series(pd.NA, index=df.index, dtype="string")
+
+    if "PLACA" in df.columns:
+        df["PLACA"] = (
+            df["PLACA"]
+            .apply(_normalize_ascii)
+            .astype("string")
+            .str.upper()
+            .replace({"": pd.NA})
+        )
+    else:
+        df["PLACA"] = pd.Series(pd.NA, index=df.index, dtype="string")
+
+    if "Mes" in df.columns:
+        mes_raw = df["Mes"]
+        mes_dt = pd.to_datetime(mes_raw, errors="coerce")
+        df["Mes"] = mes_dt.dt.to_period("M").astype("string")
+        missing_mes = df["Mes"].isna() | (df["Mes"] == "")
+        if missing_mes.any():
+            alt = (
+                mes_raw.astype("string")
+                .str.strip()
+                .str.replace(" ", "", regex=False)
+                .str.replace(".", "/", regex=False)
+                .str.replace("-", "/", regex=False)
+            )
+            alt_dt = pd.to_datetime(alt, errors="coerce")
+            valid_alt = missing_mes & alt_dt.notna()
+            df.loc[valid_alt, "Mes"] = alt_dt[valid_alt].dt.to_period("M").astype("string")
+            df.loc[missing_mes & ~valid_alt, "Mes"] = alt.loc[missing_mes & ~valid_alt]
+    else:
+        df["Mes"] = pd.Series(pd.NA, index=df.index, dtype="string")
+
+    if "Data" in df.columns:
+        df["Data"] = pd.to_datetime(df["Data"], errors="coerce")
+        empty_mes = df["Mes"].isna() | (df["Mes"] == "")
+        df.loc[empty_mes, "Mes"] = df.loc[empty_mes, "Data"].dt.to_period("M").astype("string")
+
+    vex_col = next((col for col in df.columns if col.lower() == "vex"), None)
+    if vex_col:
+        df[vex_col] = df[vex_col].astype("string").str.strip()
+        df["Categoria"] = df[vex_col].apply(lambda value: "Vex" if pd.notna(value) and value != "" else "Transporte")
+    elif "Categoria" not in df.columns:
+        df["Categoria"] = "Transporte"
+
+    df = df[df["Custo"].notna()].copy()
+    df["Tipo"] = df["Tipo"].fillna("Outros")
+
+    _PEDAGIO_CACHE["mtime"] = mtime
+    _PEDAGIO_CACHE["df"] = df.copy()
+    return df
+
+
+def agg_pedagio(df: pd.DataFrame) -> dict:
+    registros = df.shape[0]
+    custo_total = float(df["Custo"].sum()) if "Custo" in df else 0.0
+    meses_distintos = df["Mes"].dropna().unique() if "Mes" in df else []
+    media_mensal = float(custo_total / len(meses_distintos)) if len(meses_distintos) else 0.0
+    media_valores = float(custo_total / registros) if registros else 0.0
+
+    if "Tipo" in df.columns and not df.empty:
+        tipo_totais = df.groupby("Tipo", dropna=False)["Custo"].sum()
+    else:
+        tipo_totais = pd.Series(dtype="float64")
+
+    gasto_pedagio = float(tipo_totais.get("Pedágio", 0.0))
+    gasto_ipva = float(tipo_totais.get("IPVA", 0.0))
+    gasto_seguro = float(tipo_totais.get("Seguro", 0.0))
+
+    resultado = {
+        "custo_total": custo_total,
+        "total_lancamentos": registros,
+        "media_mensal": media_mensal,
+        "ticket_medio": media_valores,
+        "media_valores": media_valores,
+        "gasto_pedagio": gasto_pedagio,
+        "gasto_ipva": gasto_ipva,
+        "gasto_seguro": gasto_seguro,
+        "custo_mensal": _group_sum(df, "Mes", "Custo", sort_by="group"),
+        "gasto_por_tipo": _group_sum(df, "Tipo", "Custo"),
+        "gasto_por_placa": _group_sum(df, "PLACA", "Custo"),
+        "meses": _unique_sorted(df, "Mes"),
+        "tipos": _unique_sorted(df, "Tipo"),
+        "placas": _unique_sorted(df, "PLACA"),
+    }
+
+    if "Categoria" in df.columns:
+        resultado["segmentos"] = _unique_sorted(df, "Categoria")
+        resultado["gasto_por_categoria"] = _group_sum(df, "Categoria", "Custo")
+    else:
+        resultado["segmentos"] = []
+        resultado["gasto_por_categoria"] = {"Categoria": [], "Custo": []}
+
+    return resultado
+
+
 
 
 
@@ -245,6 +474,11 @@ def manut_page():
 @app.route("/hoteis")
 def hoteis_page():
     return render_template("hoteis.html")
+
+
+@app.route("/pedagio")
+def pedagio_page():
+    return render_template("pedagio.html")
 
 
 @app.route("/data/combustivel")
@@ -310,10 +544,80 @@ def data_hoteis():
     return jsonify(agg_hoteis(df))
 
 
+@app.route("/data/pedagio")
+def data_pedagio():
+    df = load_pedagio()
 
+    mes = request.args.get("mes")
+    placa = request.args.get("placa")
+    tipo = request.args.get("tipo")
+    segmento = request.args.get("segmento")
+
+    if mes and mes != "Todos":
+        df = df[df["Mes"] == mes]
+    if placa and placa != "Todos":
+        df = df[df["PLACA"] == placa]
+    if tipo and tipo != "Todos":
+        df = df[df["Tipo"] == tipo]
+    if segmento and segmento != "Todos" and "Categoria" in df.columns:
+        df = df[df["Categoria"] == segmento]
+
+    return jsonify(agg_pedagio(df))
+
+
+def _warm_pedagio_cache() -> None:
+    try:
+        load_pedagio()
+    except Exception as exc:  # pragma: no cover
+        print(f"Aviso: nao foi possivel pre-carregar pedagio/seguro/IPVA ({exc})")
+
+
+threading.Thread(target=_warm_pedagio_cache, daemon=True).start()
+
+
+def _safe_total(loader, aggregator, key: str) -> dict:
+    try:
+        df = loader()
+    except PermissionError:
+        return {"status": "erro", "motivo": "permissao", "valor": None}
+    except FileNotFoundError:
+        return {"status": "erro", "motivo": "arquivo_nao_encontrado", "valor": None}
+    except Exception as exc:  # pragma: no cover
+        return {"status": "erro", "motivo": str(exc), "valor": None}
+
+    try:
+        valor = float(aggregator(df).get(key, 0.0))
+    except Exception as exc:  # pragma: no cover
+        return {"status": "erro", "motivo": str(exc), "valor": None}
+
+    return {"status": "ok", "motivo": None, "valor": valor}
+
+
+def compute_overview_totals() -> dict:
+    areas = {
+        "combustivel": (load_combustivel, agg_combustivel, "custo_total"),
+        "manutencao": (load_manutencao, agg_manutencao, "custo_total"),
+        "hoteis": (load_hoteis, agg_hoteis, "valor_total"),
+        "pedagio": (load_pedagio, agg_pedagio, "custo_total"),
+    }
+
+    detalhes = {}
+    total_geral = 0.0
+
+    for nome, (loader, aggregator, chave) in areas.items():
+        resultado = _safe_total(loader, aggregator, chave)
+        detalhes[nome] = resultado
+        if resultado["valor"] is not None:
+            total_geral += resultado["valor"]
+
+    detalhes["total_geral"] = total_geral if total_geral else 0.0
+    return detalhes
+
+
+@app.route("/data/overview")
+def data_overview():
+    return jsonify(compute_overview_totals())
 
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 5000)))
-
-

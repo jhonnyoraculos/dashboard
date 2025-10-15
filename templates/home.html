@@ -18,10 +18,15 @@
         <div>
           <p class="home-eyebrow">JR Ferragens &amp; Madeiras</p>
           <h1>Dashboards operacionais</h1>
-          <p class="home-subtitle">Monitore combust&iacute;vel, manuten&ccedil;&atilde;o e reservas de hot&eacute;is em tempo real, com dados limpos diretamente das planilhas da JR.</p>
+          <p class="home-subtitle">Monitore combust&iacute;vel, manuten&ccedil;&atilde;o, hospedagens e despesas de ped&aacute;gio/seguro/IPVA em tempo real, com dados limpos diretamente das planilhas da JR.</p>
         </div>
       </div>
       <a class="home-cta" href="#dashboards">Explorar dashboards</a>
+      <div class="home-total-card">
+        <p class="home-total-label">Gasto consolidado (todas as planilhas)</p>
+        <p id="home-total-value" class="home-total-value">--</p>
+        <p id="home-total-status" class="home-total-status">Carregando dados...</p>
+      </div>
     </header>
 
     <section id="dashboards" class="home-grid">
@@ -66,12 +71,66 @@
         </ul>
         <a class="home-link" href="{{ url_for('hoteis_page') }}">Abrir dashboard &rarr;</a>
       </article>
+
+      <article class="home-card">
+        <div class="home-card-header">
+          <span class="home-chip">Ped&aacute;gio &amp; Seguros</span>
+          <h2>Ped&aacute;gio, IPVA e seguros da frota</h2>
+        </div>
+        <p class="home-card-text">Acompanhe quanto cada placa consome com ped&aacute;gio, seguros e tributos, com KPIs din&acirc;micos.</p>
+        <ul class="home-list">
+          <li>Resumo mensal consolidado por tipo de despesa</li>
+          <li>Comparativo por placa e categoria</li>
+          <li>Filtros r&aacute;pidos por m&ecirc;s, placa e tipo</li>
+        </ul>
+        <a class="home-link" href="{{ url_for('pedagio_page') }}">Abrir dashboard &rarr;</a>
+      </article>
     </section>
 
     <section class="home-footer">
       <h3>Como os dados s&atilde;o atualizados?</h3>
-      <p>As planilhas <code>combustivel.xlsx</code>, <code>manutencao.xlsx</code> e <code>reserva de hoteis.xlsx</code> s&atilde;o importadas a cada acesso. Basta atualizar os arquivos em <code>/data</code> para refletir os novos indicadores.</p>
+      <p>As planilhas <code>combustivel.xlsx</code>, <code>manutencao.xlsx</code>, <code>reserva de hoteis.xlsx</code> e <code>pedagio seguro e ipva.xlsx</code> s&atilde;o importadas a cada acesso. Basta atualizar os arquivos em <code>/data</code> para refletir os novos indicadores.</p>
     </section>
   </main>
+  <script>
+    const fmtBRL = (value) => Number(value || 0).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
+
+    async function loadOverviewTotal() {
+      const totalEl = document.getElementById('home-total-value');
+      const statusEl = document.getElementById('home-total-status');
+
+      try {
+        const res = await fetch('/data/overview');
+        if (!res.ok) {
+          throw new Error('Falha ao consultar os dados (' + res.status + ')');
+        }
+        const data = await res.json();
+        const total = data && typeof data.total_geral === 'number' ? data.total_geral : null;
+        totalEl.textContent = total !== null ? fmtBRL(total) : '--';
+
+        const problemas = Object.entries(data || {})
+          .filter(([chave, info]) => chave !== 'total_geral' && info && info.status !== 'ok')
+          .map(([chave, info]) => {
+            if (!info || !info.motivo) return chave;
+            return `${chave} (${info.motivo})`;
+          });
+
+        if (problemas.length) {
+          statusEl.textContent = 'Algumas planilhas n\u00E3o puderam ser lidas: ' + problemas.join(', ');
+          statusEl.classList.add('home-total-status--alerta');
+        } else {
+          statusEl.textContent = 'C\u00E1lculo baseado nos dados mais recentes das quatro planilhas.';
+          statusEl.classList.remove('home-total-status--alerta');
+        }
+      } catch (error) {
+        console.error(error);
+        totalEl.textContent = '--';
+        statusEl.textContent = 'N\u00E3o foi poss\u00EDvel carregar o total agora. Atualize a p\u00E1gina depois de verificar as planilhas.';
+        statusEl.classList.add('home-total-status--alerta');
+      }
+    }
+
+    document.addEventListener('DOMContentLoaded', loadOverviewTotal);
+  </script>
 </body>
 </html>

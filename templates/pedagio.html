@@ -1,0 +1,328 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>JR Dashboard - Ped&aacute;gio, Seguro e IPVA</title>
+  <link rel="icon" href="{{ url_for('static', filename='logo-jr.png') }}">
+  <script src="https://cdn.plot.ly/plotly-2.35.2.min.js" defer></script>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">
+      <img src="{{ url_for('static', filename='logo-jr.png') }}" alt="JR" class="logo">
+      <h1>JR DASHBOARD &bull; Ped&aacute;gio, Seguro e IPVA</h1>
+    </div>
+    <div class="filters">
+      <select id="mes"></select>
+      <select id="placa"></select>
+      <select id="tipo"></select>
+      <select id="segmento"></select>
+      <button id="limpar">Limpar filtros</button>
+      <a href="{{ url_for('home') }}" class="back-btn">&larr; Voltar</a>
+    </div>
+  </header>
+
+  <main class="container">
+    <p id="status-message" style="text-align:center;color:#1C2D6B;font-weight:600;margin-bottom:1.2rem;"></p>
+    <section class="kpis">
+      <div class="kpi red">
+        <div class="kpi-title">Gasto total (R$)</div>
+        <div id="kpi-total" class="kpi-value">--</div>
+      </div>
+      <div class="kpi yellow">
+        <div class="kpi-title">M&eacute;dia mensal (R$)</div>
+        <div id="kpi-media-mensal" class="kpi-value">--</div>
+      </div>
+      <div class="kpi blue">
+        <div class="kpi-title">Gasto ped&aacute;gio</div>
+        <div id="kpi-pedagio" class="kpi-value">--</div>
+      </div>
+      <div class="kpi blue">
+        <div class="kpi-title">Gasto IPVA</div>
+        <div id="kpi-ipva" class="kpi-value">--</div>
+      </div>
+      <div class="kpi blue">
+        <div class="kpi-title">Gasto seguro</div>
+        <div id="kpi-seguro" class="kpi-value">--</div>
+      </div>
+      <div class="kpi green">
+        <div class="kpi-title">M&eacute;dia de valores</div>
+        <div id="kpi-media-valores" class="kpi-value">--</div>
+      </div>
+      <div class="kpi blue">
+        <div class="kpi-title">Lan&ccedil;amentos</div>
+        <div id="kpi-lancamentos" class="kpi-value">--</div>
+      </div>
+    </section>
+
+    <section class="grid">
+      <div class="card"><h2>Gasto mensal</h2><div id="chart-mensal"></div></div>
+      <div class="card"><h2>Gasto por tipo</h2><div id="chart-tipo"></div></div>
+      <div class="card"><h2>Gasto por placa</h2><div id="chart-placa"></div></div>
+      <div class="card"><h2>Gasto por segmento</h2><div id="chart-segmento"></div></div>
+    </section>
+  </main>
+
+  <footer class="footer">
+    Atualizado automaticamente a partir da planilha em <code>data/pedagio seguro e ipva.xlsx</code>. &copy; JR
+  </footer>
+
+<script>
+const fmtBRL = (value) => Number(value || 0).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
+const fmtNum = (value) => Number(value || 0).toLocaleString('pt-BR');
+const safeArray = (source, key) => (source && Array.isArray(source[key])) ? source[key] : [];
+
+async function fetchData() {
+  const params = new URLSearchParams({
+    mes: document.getElementById('mes').value || 'Todos',
+    placa: document.getElementById('placa').value || 'Todos',
+    tipo: document.getElementById('tipo').value || 'Todos',
+    segmento: document.getElementById('segmento').value || 'Todos'
+  });
+  const res = await fetch('/data/pedagio?' + params.toString());
+  if (!res.ok) {
+    throw new Error('Falha ao carregar dados (' + res.status + ')');
+  }
+  return await res.json();
+}
+
+function fillSelect(id, values, label) {
+  const el = document.getElementById(id);
+  const current = el.value;
+  el.innerHTML = '';
+  const optAll = document.createElement('option');
+  optAll.value = 'Todos';
+  optAll.textContent = `${label} (Todos)`;
+  el.appendChild(optAll);
+  (values || []).forEach((value) => {
+    const opt = document.createElement('option');
+    opt.value = value;
+    opt.textContent = value;
+    el.appendChild(opt);
+  });
+  if ([...el.options].some((option) => option.value === current)) {
+    el.value = current;
+  }
+}
+
+function drawBar(divId, labels, values, opts = {}) {
+  const plottingLabels = Array.isArray(labels) ? [...labels] : [];
+  const plottingValues = (values || []).map((val) => {
+    const num = Number(val);
+    return Number.isFinite(num) ? num : 0;
+  });
+  const count = plottingLabels.length;
+  const sortMode = opts.sort;
+  const autoOrient = opts.autoOrient ?? false;
+  const useHorizontal = autoOrient && count > (opts.threshold ?? 12);
+
+  if (sortMode && plottingLabels.length === plottingValues.length) {
+    const combined = plottingLabels.map((label, index) => ({
+      label,
+      value: plottingValues[index] ?? 0
+    }));
+    combined.sort((a, b) => (sortMode === 'desc' ? b.value - a.value : a.value - b.value));
+    combined.forEach((item, index) => {
+      plottingLabels[index] = item.label;
+      plottingValues[index] = item.value;
+    });
+  }
+
+  let data;
+  let layout;
+  if (useHorizontal) {
+    const height = Math.max(320, count * 32);
+    data = [{
+      type: 'bar',
+      x: plottingValues,
+      y: plottingLabels,
+      orientation: 'h',
+      marker: { color: '#1C2D6B' }
+    }];
+    layout = {
+      margin: { l: 120, r: 40, t: 20, b: 40 },
+      height,
+      xaxis: { title: 'R$', tickprefix: 'R$ ' },
+      yaxis: { automargin: true, autorange: 'reversed', tickfont: { size: 11 } },
+      hovermode: 'closest'
+    };
+    const container = document.getElementById(divId);
+    if (container) {
+      if (opts.enableScroll) {
+        container.style.overflowY = 'auto';
+        container.style.maxHeight = '420px';
+        container.style.overflowX = 'hidden';
+      } else {
+        container.style.overflowY = '';
+        container.style.maxHeight = '';
+        container.style.overflowX = '';
+      }
+    }
+  } else {
+    data = [{
+      type: 'bar',
+      x: plottingLabels,
+      y: plottingValues,
+      marker: { color: '#1C2D6B' }
+    }];
+    layout = {
+      margin: { l: 60, r: 20, t: 30, b: 70 },
+      xaxis: { tickangle: -30, automargin: true },
+      yaxis: { title: 'R$' },
+      hovermode: 'closest'
+    };
+    const container = document.getElementById(divId);
+    if (container) {
+      container.style.overflowY = '';
+      container.style.maxHeight = '';
+      container.style.overflowX = '';
+    }
+  }
+
+  Plotly.newPlot(divId, data, { ...plotlyTheme.layout, ...layout }, plotlyTheme.config);
+}
+
+function drawPie(divId, labels, values) {
+  const isCompact = window.innerWidth <= 900;
+  const data = [{
+    type: 'pie',
+    labels: labels || [],
+    values: (values || []).map((value) => Number(value)),
+    hole: 0.45,
+    textinfo: isCompact ? 'label+percent' : 'percent',
+    textposition: 'inside',
+    hovertemplate: '<b>%{label}</b><br>R$ %{value:,.2f}<extra></extra>'
+  }];
+  const layout = {
+    margin: isCompact
+      ? { l: 12, r: 12, t: 20, b: 70 }
+      : { l: 16, r: 16, t: 30, b: 110 },
+    showlegend: !isCompact,
+    legend: isCompact
+      ? { orientation: 'h', x: 0, y: -0.3, font: { size: 11 } }
+      : { orientation: 'h', x: 0.5, xanchor: 'center', y: -0.32, yanchor: 'top', font: { size: 11 }, itemwidth: 90 },
+    height: isCompact ? 320 : 360
+  };
+  Plotly.newPlot(divId, data, { ...plotlyTheme.layout, ...layout }, plotlyTheme.config);
+}
+
+const statusEl = document.getElementById('status-message');
+const loadingMessage = 'Carregando dados da planilha. Isso pode levar alguns segundos na primeira vez.';
+const kpiIds = [
+  'kpi-total',
+  'kpi-media-mensal',
+  'kpi-pedagio',
+  'kpi-ipva',
+  'kpi-seguro',
+  'kpi-media-valores',
+  'kpi-lancamentos'
+];
+
+function setLoading(isLoading) {
+  if (isLoading) {
+    statusEl.textContent = loadingMessage;
+    kpiIds.forEach((id) => {
+      const el = document.getElementById(id);
+      if (el) {
+        el.textContent = '...';
+      }
+    });
+  } else if (statusEl.textContent === loadingMessage) {
+    statusEl.textContent = '';
+  }
+}
+
+async function refresh() {
+  try {
+    setLoading(true);
+    const d = await fetchData();
+
+    if (!refresh._init) {
+      fillSelect('mes', d.meses, 'M\u00EAs');
+      fillSelect('placa', d.placas, 'Placa');
+      fillSelect('tipo', d.tipos, 'Tipo');
+      fillSelect('segmento', d.segmentos, 'Segmento');
+      ['mes', 'placa', 'tipo', 'segmento'].forEach((id) => {
+        document.getElementById(id).addEventListener('change', refresh);
+      });
+      document.getElementById('limpar').addEventListener('click', () => {
+        ['mes', 'placa', 'tipo', 'segmento'].forEach((id) => {
+          const select = document.getElementById(id);
+          if (select) {
+            select.value = 'Todos';
+          }
+        });
+        refresh();
+      });
+      refresh._init = true;
+    }
+
+    const mediaValores = Number(d.media_valores ?? d.ticket_medio ?? 0);
+    document.getElementById('kpi-total').textContent = fmtBRL(d.custo_total);
+    document.getElementById('kpi-media-mensal').textContent = fmtBRL(d.media_mensal);
+    document.getElementById('kpi-pedagio').textContent = fmtBRL(d.gasto_pedagio);
+    document.getElementById('kpi-ipva').textContent = fmtBRL(d.gasto_ipva);
+    document.getElementById('kpi-seguro').textContent = fmtBRL(d.gasto_seguro);
+    document.getElementById('kpi-media-valores').textContent = fmtBRL(mediaValores);
+    document.getElementById('kpi-lancamentos').textContent = fmtNum(d.total_lancamentos);
+
+    const meses = safeArray(d.custo_mensal, 'Mes');
+    const custos = safeArray(d.custo_mensal, 'Custo').map((value) => Number(value));
+    const lineTrace = {
+      type: 'scatter',
+      mode: 'lines+markers',
+      x: meses,
+      y: custos,
+      line: { color: '#1C2D6B', width: 3 },
+      marker: { color: '#BE1E2D', size: 7 },
+      hovertemplate: '<b>%{x}</b><br>R$ %{y:,.2f}<extra></extra>'
+    };
+    const layoutMensal = {
+      margin: { l: 60, r: 20, t: 40, b: 60 },
+      xaxis: { tickangle: -30 },
+      yaxis: { title: 'R$' }
+    };
+    Plotly.newPlot('chart-mensal', [lineTrace], { ...plotlyTheme.layout, ...layoutMensal }, plotlyTheme.config);
+
+    drawPie('chart-tipo', safeArray(d.gasto_por_tipo, 'Tipo'), safeArray(d.gasto_por_tipo, 'Custo'));
+    drawBar('chart-placa', safeArray(d.gasto_por_placa, 'PLACA'), safeArray(d.gasto_por_placa, 'Custo'), { autoOrient: true, threshold: 8, enableScroll: true, sort: 'desc' });
+    drawBar('chart-segmento', safeArray(d.gasto_por_categoria, 'Categoria'), safeArray(d.gasto_por_categoria, 'Custo'));
+  } catch (error) {
+    console.error(error);
+    statusEl.textContent = 'Nao foi possivel carregar os dados. Verifique a planilha e recarregue a pagina.';
+    kpiIds.forEach((id) => {
+      const el = document.getElementById(id);
+      if (el) {
+        el.textContent = '--';
+      }
+    });
+  } finally {
+    setLoading(false);
+  }
+}
+
+const plotlyTheme = {
+  layout: {
+    paper_bgcolor: '#fff',
+    plot_bgcolor: '#fff',
+    font: { family: 'Inter, sans-serif', color: '#1C2D6B' },
+    xaxis: { gridcolor: '#e5e7eb', zerolinecolor: '#e5e7eb', linecolor: '#e5e7eb' },
+    yaxis: { gridcolor: '#e5e7eb', zerolinecolor: '#e5e7eb', linecolor: '#e5e7eb' },
+    colorway: ['#1C2D6B', '#BE1E2D', '#4B5563', '#9CA3AF']
+  },
+  config: {
+    responsive: true,
+    displaylogo: false,
+    modeBarButtonsToRemove: ['lasso2d', 'select2d']
+  }
+};
+
+window.addEventListener('DOMContentLoaded', refresh);
+</script>
+</body>
+</html>

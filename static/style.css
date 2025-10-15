@@ -304,6 +304,38 @@ body.home-body{
   transform:translateY(-2px);
   box-shadow:0 14px 28px rgba(190,30,45,0.3);
 }
+.home-total-card{
+  background:rgba(28,45,107,0.06);
+  border-radius:var(--radius);
+  padding:18px 24px;
+  display:flex;
+  flex-direction:column;
+  gap:4px;
+  align-self:flex-start;
+  box-shadow:0 10px 28px rgba(28,45,107,0.15);
+}
+.home-total-label{
+  margin:0;
+  font-size:13px;
+  letter-spacing:.05em;
+  text-transform:uppercase;
+  color:var(--muted);
+  font-weight:600;
+}
+.home-total-value{
+  margin:0;
+  font-size:32px;
+  font-weight:800;
+  color:var(--jr-blue);
+}
+.home-total-status{
+  margin:0;
+  font-size:13px;
+  color:#4B5563;
+}
+.home-total-status--alerta{
+  color:var(--jr-red);
+}
 .home-grid{
   display:grid;
   gap:28px;
@@ -421,4 +453,6 @@ body.home-body{
   .home-brand{flex-direction:column; align-items:flex-start;}
   .home-logo{width:60px; height:60px;}
   .home-header h1{font-size:28px;}
+  .home-total-card{width:100%;}
+  .home-total-value{font-size:28px;}
 }
