@@ -51,6 +51,7 @@
       <div class="card"><h2>Gasto por placa</h2><div id="chart-placa"></div></div>
       <div class="card"><h2>Gasto por oficina</h2><div id="chart-oficina"></div></div>
       <div class="card"><h2>Gasto mensal</h2><div id="chart-mensal"></div></div>
+      <div class="card"><h2>Gasto semanal (&uacute;ltimos 7 dias)</h2><div id="chart-semanal"></div></div>
     </section>
   </main>
 
@@ -95,7 +96,10 @@ function fillSelect(id, values, label) {
 
 function drawBarVertical(divId, x, y) {
   const data = [{ type: 'bar', x: x || [], y: y || [], marker: { color: '#1C2D6B' } }];
-  const layout = { margin: { l: 50, r: 20, t: 20, b: 60 }, xaxis: { tickangle: -25, tickfont: { size: 10 }, automargin: true } };
+  const layout = {
+    margin: { l: 50, r: 20, t: 20, b: 60 },
+    xaxis: { tickangle: -25, tickfont: { size: 10 }, automargin: true }
+  };
   Plotly.newPlot(divId, data, { ...plotlyTheme.layout, ...layout }, plotlyTheme.config);
 }
 
@@ -140,6 +144,18 @@ async function refresh() {
   };
   const layoutMensal = { margin: { l: 60, r: 20, t: 40, b: 60 }, xaxis: { tickangle: -30 }, yaxis: { title: 'R$' } };
   Plotly.newPlot('chart-mensal', [trace], { ...plotlyTheme.layout, ...layoutMensal }, plotlyTheme.config);
+
+  const diasSemana = safeArray(d.custo_semana, 'Dia');
+  const custoSemana = safeArray(d.custo_semana, 'Custo');
+  const traceSemana = {
+    type: 'bar',
+    x: diasSemana,
+    y: custoSemana,
+    marker: { color: '#1C2D6B' },
+    hovertemplate: '<b>%{x}</b><br>R$ %{y:,.2f}<extra></extra>'
+  };
+  const layoutSemana = { margin: { l: 60, r: 20, t: 40, b: 50 }, yaxis: { title: 'R$', rangemode: 'tozero' } };
+  Plotly.newPlot('chart-semanal', [traceSemana], { ...plotlyTheme.layout, ...layoutSemana }, plotlyTheme.config);
 }
 
 const plotlyTheme = {

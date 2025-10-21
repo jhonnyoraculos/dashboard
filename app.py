@@ -12,7 +12,10 @@ DATA_COMB = BASE_PATH / "combustivel.xlsx"
 DATA_MANU = BASE_PATH / "manutencao.xlsx"
 DATA_HOTEIS = BASE_PATH / "reserva de hoteis.xlsx"
 DATA_PEDAGIO = BASE_PATH / "pedagio seguro e ipva.xlsx"
-_PEDAGIO_CACHE = {"mtime": None, "df": None}
+_PEDAGIO_CACHE = {"mtime": None, "df": None, "lock": threading.Lock()}
+_COMBUSTIVEL_CACHE = {"mtime": None, "df": None, "lock": threading.Lock()}
+_MANUTENCAO_CACHE = {"mtime": None, "df": None, "lock": threading.Lock()}
+_HOTEIS_CACHE = {"mtime": None, "df": None, "lock": threading.Lock()}
 
 
 def _clean_columns(df: pd.DataFrame) -> pd.DataFrame:
@@ -64,6 +67,63 @@ def _unique_sorted(df: pd.DataFrame, column: str) -> list:
     return sorted(series.astype(str).str.strip().unique().tolist())
 
 
+def _weekly_series(df: pd.DataFrame, date_col: str, value_col: str, label: str) -> dict:
+    today = pd.Timestamp.today().normalize()
+    start_default = today - pd.Timedelta(days=6)
+    default_index = pd.date_range(start_default, today, freq="D")
+    template = {
+        "Dia": default_index.strftime("%d/%m").tolist(),
+        "DiaISO": default_index.strftime("%Y-%m-%d").tolist(),
+        label: [0.0] * len(default_index),
+    }
+
+    if df.empty or date_col not in df.columns or value_col not in df.columns:
+        return template
+
+    dates = pd.to_datetime(df[date_col], errors="coerce")
+    values = pd.to_numeric(df[value_col], errors="coerce")
+    valid = dates.notna() & values.notna()
+    if not valid.any():
+        return template
+
+    data = pd.DataFrame(
+        {
+            "data": dates.loc[valid].dt.normalize(),
+            "valor": values.loc[valid].astype("float64"),
+        }
+    )
+    data = data.dropna()
+    if data.empty:
+        return template
+
+    start = start_default
+    end = today
+    index = default_index
+
+    window_mask = data["data"].between(start, end)
+    if not window_mask.any():
+        end = data["data"].max()
+        if pd.isna(end):
+            return template
+        start = end - pd.Timedelta(days=6)
+        index = pd.date_range(start, end, freq="D")
+        template = {
+            "Dia": index.strftime("%d/%m").tolist(),
+            label: [0.0] * len(index),
+        }
+        window_mask = data["data"].between(start, end)
+        if not window_mask.any():
+            return template
+
+    grouped = data.loc[window_mask].groupby("data")["valor"].sum()
+    grouped = grouped.reindex(index, fill_value=0.0).astype("float64")
+    return {
+        "Dia": index.strftime("%d/%m").tolist(),
+        "DiaISO": index.strftime("%Y-%m-%d").tolist(),
+        label: grouped.round(2).tolist(),
+    }
+
+
 def _to_numeric_currency(series: pd.Series) -> pd.Series:
     if series is None:
         return pd.Series(dtype="float64")
@@ -99,7 +159,7 @@ def _canonical_tipo(value):
     if not text:
         return None
     if "PEDAG" in text:
-        return "Pedágio"
+        return "Pedagio"
     if "IPVA" in text:
         return "IPVA"
     if "SEGUR" in text or "APOLI" in text or "APOLICE" in text:
@@ -112,33 +172,81 @@ def _canonical_tipo(value):
 
 
 def load_combustivel() -> pd.DataFrame:
-    df = pd.read_excel(DATA_COMB, sheet_name=0, header=1)
-    df = _clean_columns(df)
+    def _empty() -> pd.DataFrame:
+        return pd.DataFrame(columns=[
+            "Data",
+            "Mes",
+            "Km Rodados",
+            "Litros",
+            "Custo",
+            "Combustivel",
+            "POSTOS",
+            "PLACA",
+            "Categoria",
+        ])
 
-    df = df.rename(columns={
-        "COMBUSTIVEL": "Combustivel",
-        "MES": "Mes",
-    })
+    cache = _COMBUSTIVEL_CACHE
+    lock = cache["lock"]
 
-    df["Data"] = pd.to_datetime(df.get("Data"), errors="coerce")
-    for col in ["Km Rodados", "Litros", "Custo"]:
-        df[col] = pd.to_numeric(df.get(col), errors="coerce")
+    with lock:
+        try:
+            mtime = DATA_COMB.stat().st_mtime
+        except FileNotFoundError:
+            cache["mtime"] = None
+            cache["df"] = None
+            return _empty()
+        except PermissionError:
+            print("Aviso: sem permissao para ler planilha de combustivel. Verifique se o arquivo esta aberto.")
+            cached = cache.get("df")
+            if cached is not None:
+                return cached.copy()
+            return _empty()
 
-    df = df.dropna(subset=["Data"]).copy()
-    df["Mes"] = df["Data"].dt.to_period("M").astype(str)
+        cached = cache.get("df")
+        if cached is not None and cache.get("mtime") == mtime:
+            return cached.copy()
 
-    for col in ["Combustivel", "POSTOS", "PLACA"]:
-        if col in df.columns:
-            df[col] = df[col].astype("string").str.strip()
+        try:
+            df = pd.read_excel(DATA_COMB, sheet_name=0, header=1)
+        except PermissionError:
+            print("Aviso: sem permissao para ler planilha de combustivel. Verifique se o arquivo esta aberto.")
+            if cached is not None:
+                return cached.copy()
+            return _empty()
+        except Exception as exc:
+            print(f"Aviso: falha ao ler planilha de combustivel: {exc}")
+            if cached is not None:
+                return cached.copy()
+            return _empty()
 
-    vex_col = next((col for col in df.columns if col.lower() == "vex"), None)
-    if vex_col:
-        df[vex_col] = df[vex_col].astype("string").str.strip()
-        df["Categoria"] = df[vex_col].apply(lambda value: "Vex" if pd.notna(value) and value != "" else "Transporte")
-    else:
-        df["Categoria"] = "Transporte"
+        df = _clean_columns(df)
 
-    return df
+        df = df.rename(columns={
+            "COMBUSTIVEL": "Combustivel",
+            "MES": "Mes",
+        })
+
+        df["Data"] = pd.to_datetime(df.get("Data"), errors="coerce")
+        for col in ["Km Rodados", "Litros", "Custo"]:
+            df[col] = pd.to_numeric(df.get(col), errors="coerce")
+
+        df = df.dropna(subset=["Data"]).copy()
+        df["Mes"] = df["Data"].dt.to_period("M").astype(str)
+
+        for col in ["Combustivel", "POSTOS", "PLACA"]:
+            if col in df.columns:
+                df[col] = df[col].astype("string").str.strip()
+
+        vex_col = next((col for col in df.columns if col.lower() == "vex"), None)
+        if vex_col:
+            df[vex_col] = df[vex_col].astype("string").str.strip()
+            df["Categoria"] = df[vex_col].apply(lambda value: "Vex" if pd.notna(value) and value != "" else "Transporte")
+        else:
+            df["Categoria"] = "Transporte"
+
+        cache["mtime"] = mtime
+        cache["df"] = df.copy()
+        return df
 
 
 def agg_combustivel(df: pd.DataFrame) -> dict:
@@ -170,40 +278,86 @@ def agg_combustivel(df: pd.DataFrame) -> dict:
         "combustiveis": _unique_sorted(df, "Combustivel"),
         "meses": _unique_sorted(df, "Mes"),
         "segmentos": _unique_sorted(df, "Categoria"),
+        "gasto_semana": _weekly_series(df, "Data", "Custo", "Custo"),
     }
 
 
 def load_manutencao() -> pd.DataFrame:
-    df = pd.read_excel(DATA_MANU, sheet_name=0, header=1)
-    df = _clean_columns(df)
+    def _empty() -> pd.DataFrame:
+        return pd.DataFrame(columns=[
+            "Data",
+            "Mes",
+            "Custo",
+            "PLACA",
+            "OFICINA",
+            "Categoria",
+        ])
 
-    df = df.rename(columns={
-        "PLACAS": "PLACA",
-        "MES": "Mes",
-        "DATA": "Data",
-    })
+    cache = _MANUTENCAO_CACHE
+    lock = cache["lock"]
 
-    df["Data"] = pd.to_datetime(df.get("Data"), errors="coerce")
-    if "Mes" in df.columns:
-        mes_dt = pd.to_datetime(df["Mes"], errors="coerce")
-        df["Data"] = df["Data"].combine_first(mes_dt)
+    with lock:
+        try:
+            mtime = DATA_MANU.stat().st_mtime
+        except FileNotFoundError:
+            cache["mtime"] = None
+            cache["df"] = None
+            return _empty()
+        except PermissionError:
+            print("Aviso: sem permissao para ler planilha de manutencao. Verifique se o arquivo esta aberto.")
+            cached = cache.get("df")
+            if cached is not None:
+                return cached.copy()
+            return _empty()
 
-    df["Mes"] = df["Data"].dt.to_period("M").astype(str)
-    df["Custo"] = pd.to_numeric(df.get("Custo"), errors="coerce")
+        cached = cache.get("df")
+        if cached is not None and cache.get("mtime") == mtime:
+            return cached.copy()
 
-    df = df.dropna(subset=["Mes", "Custo"]).copy()
-    for col in ["PLACA", "OFICINA"]:
-        if col in df.columns:
-            df[col] = df[col].astype("string").str.strip()
+        try:
+            df = pd.read_excel(DATA_MANU, sheet_name=0, header=1)
+        except PermissionError:
+            print("Aviso: sem permissao para ler planilha de manutencao. Verifique se o arquivo esta aberto.")
+            if cached is not None:
+                return cached.copy()
+            return _empty()
+        except Exception as exc:
+            print(f"Aviso: falha ao ler planilha de manutencao: {exc}")
+            if cached is not None:
+                return cached.copy()
+            return _empty()
 
-    vex_col = next((col for col in df.columns if col.lower() == "vex"), None)
-    if vex_col:
-        df[vex_col] = df[vex_col].astype("string").str.strip()
-        df["Categoria"] = df[vex_col].apply(lambda value: "Vex" if pd.notna(value) and value != "" else "Transporte")
-    else:
-        df["Categoria"] = "Transporte"
+        df = _clean_columns(df)
 
-    return df
+        df = df.rename(columns={
+            "PLACAS": "PLACA",
+            "MES": "Mes",
+            "DATA": "Data",
+        })
+
+        df["Data"] = pd.to_datetime(df.get("Data"), errors="coerce")
+        if "Mes" in df.columns:
+            mes_dt = pd.to_datetime(df["Mes"], errors="coerce")
+            df["Data"] = df["Data"].combine_first(mes_dt)
+
+        df["Mes"] = df["Data"].dt.to_period("M").astype(str)
+        df["Custo"] = pd.to_numeric(df.get("Custo"), errors="coerce")
+
+        df = df.dropna(subset=["Mes", "Custo"]).copy()
+        for col in ["PLACA", "OFICINA"]:
+            if col in df.columns:
+                df[col] = df[col].astype("string").str.strip()
+
+        vex_col = next((col for col in df.columns if col.lower() == "vex"), None)
+        if vex_col:
+            df[vex_col] = df[vex_col].astype("string").str.strip()
+            df["Categoria"] = df[vex_col].apply(lambda value: "Vex" if pd.notna(value) and value != "" else "Transporte")
+        else:
+            df["Categoria"] = "Transporte"
+
+        cache["mtime"] = mtime
+        cache["df"] = df.copy()
+        return df
 
 
 def agg_manutencao(df: pd.DataFrame) -> dict:
@@ -225,37 +379,86 @@ def agg_manutencao(df: pd.DataFrame) -> dict:
         "oficinas": _unique_sorted(df, "OFICINA"),
         "meses": _unique_sorted(df, "Mes"),
         "segmentos": _unique_sorted(df, "Categoria"),
+        "custo_semana": _weekly_series(df, "Data", "Custo", "Custo"),
     }
 
 
 def load_hoteis() -> pd.DataFrame:
-    df = pd.read_excel(DATA_HOTEIS, sheet_name=0, header=4)
-    df = _clean_columns(df)
+    def _empty() -> pd.DataFrame:
+        return pd.DataFrame(columns=[
+            "Data",
+            "Valor",
+            "Dias",
+            "Mes",
+            "Motorista",
+            "Ajudante",
+            "Cidade",
+            "Hotel",
+            "Tipo",
+        ])
 
-    df = df.rename(columns={
-        "DATA": "Data",
-        "VALOR": "Valor",
-        "HOTEL/POUSADA": "Hotel",
-        "MOTORISTA": "Motorista",
-        "AJUDANTE": "Ajudante",
-        "CIDADE": "Cidade",
-        "TIPO": "Tipo",
-        "DIAS": "Dias",
-    })
+    cache = _HOTEIS_CACHE
+    lock = cache["lock"]
 
-    df["Data"] = pd.to_datetime(df.get("Data"), errors="coerce")
-    df["Valor"] = pd.to_numeric(df.get("Valor"), errors="coerce")
-    df["Dias"] = pd.to_numeric(df.get("Dias"), errors="coerce")
+    with lock:
+        try:
+            mtime = DATA_HOTEIS.stat().st_mtime
+        except FileNotFoundError:
+            cache["mtime"] = None
+            cache["df"] = None
+            return _empty()
+        except PermissionError:
+            print("Aviso: sem permissao para ler planilha de hoteis. Verifique se o arquivo esta aberto.")
+            cached = cache.get("df")
+            if cached is not None:
+                return cached.copy()
+            return _empty()
 
-    period = df["Data"].dt.to_period("M")
-    df["Mes"] = period.astype(str)
-    df.loc[period.isna(), "Mes"] = None
+        cached = cache.get("df")
+        if cached is not None and cache.get("mtime") == mtime:
+            return cached.copy()
 
-    for col in ["Motorista", "Ajudante", "Cidade", "Hotel", "Tipo"]:
-        if col in df.columns:
-            df[col] = df[col].astype("string").str.strip()
+        try:
+            df = pd.read_excel(DATA_HOTEIS, sheet_name=0, header=4)
+        except PermissionError:
+            print("Aviso: sem permissao para ler planilha de hoteis. Verifique se o arquivo esta aberto.")
+            if cached is not None:
+                return cached.copy()
+            return _empty()
+        except Exception as exc:
+            print(f"Aviso: falha ao ler planilha de hoteis: {exc}")
+            if cached is not None:
+                return cached.copy()
+            return _empty()
 
-    return df.copy()
+        df = _clean_columns(df)
+
+        df = df.rename(columns={
+            "DATA": "Data",
+            "VALOR": "Valor",
+            "HOTEL/POUSADA": "Hotel",
+            "MOTORISTA": "Motorista",
+            "AJUDANTE": "Ajudante",
+            "CIDADE": "Cidade",
+            "TIPO": "Tipo",
+            "DIAS": "Dias",
+        })
+
+        df["Data"] = pd.to_datetime(df.get("Data"), errors="coerce")
+        df["Valor"] = pd.to_numeric(df.get("Valor"), errors="coerce")
+        df["Dias"] = pd.to_numeric(df.get("Dias"), errors="coerce")
+
+        period = df["Data"].dt.to_period("M")
+        df["Mes"] = period.astype(str)
+        df.loc[period.isna(), "Mes"] = None
+
+        for col in ["Motorista", "Ajudante", "Cidade", "Hotel", "Tipo"]:
+            if col in df.columns:
+                df[col] = df[col].astype("string").str.strip()
+
+        cache["mtime"] = mtime
+        cache["df"] = df.copy()
+        return df.copy()
 
 
 def agg_hoteis(df: pd.DataFrame) -> dict:
@@ -277,137 +480,158 @@ def agg_hoteis(df: pd.DataFrame) -> dict:
         "meses": _unique_sorted(reservas, "Mes"),
         "cidades": _unique_sorted(reservas, "Cidade"),
         "hoteis": _unique_sorted(reservas, "Hotel"),
+        "valor_semana": _weekly_series(reservas, "Data", "Valor", "Valor"),
     }
 
 
 def load_pedagio() -> pd.DataFrame:
-    if not DATA_PEDAGIO.exists():
-        return pd.DataFrame(columns=["PLACA", "Tipo", "Custo", "Mes"])
+    def _empty() -> pd.DataFrame:
+        return pd.DataFrame(columns=['PLACA', 'Tipo', 'Custo', 'Mes', 'Data', 'Categoria'])
 
-    try:
-        mtime = DATA_PEDAGIO.stat().st_mtime
-    except PermissionError:
-        print("Aviso: sem permissão para ler planilha de pedágio/seguro/IPVA. Verifique se o arquivo está aberto.")
-        return pd.DataFrame(columns=["PLACA", "Tipo", "Custo", "Mes"])
+    cache = _PEDAGIO_CACHE
+    lock = cache['lock']
 
-    global _PEDAGIO_CACHE
-    if _PEDAGIO_CACHE["df"] is not None and _PEDAGIO_CACHE["mtime"] == mtime:
-        return _PEDAGIO_CACHE["df"].copy()
+    with lock:
+        if not DATA_PEDAGIO.exists():
+            cache['mtime'] = None
+            cache['df'] = None
+            return _empty()
 
-    try:
-        raw = pd.read_excel(DATA_PEDAGIO, sheet_name=0, header=None, engine="openpyxl")
-    except PermissionError:
-        print("Aviso: sem permissão para ler planilha de pedágio/seguro/IPVA. Verifique se o arquivo está aberto.")
-        return pd.DataFrame(columns=["PLACA", "Tipo", "Custo", "Mes"])
-    except Exception as exc:
-        print(f"Aviso: falha ao ler planilha de pedágio/seguro/IPVA: {exc}")
-        return pd.DataFrame(columns=["PLACA", "Tipo", "Custo", "Mes"])
+        try:
+            mtime = DATA_PEDAGIO.stat().st_mtime
+        except PermissionError:
+            print('Aviso: sem permissao para ler planilha de pedagio/seguro/IPVA. Verifique se o arquivo esta aberto.')
+            cached_df = cache.get('df')
+            if cached_df is not None:
+                return cached_df.copy(deep=False)
+            return _empty()
 
-    expected_core = {"TIPO", "CUSTO"}
-    header_idx = None
-    for idx in range(min(len(raw), 10)):
-        row = raw.iloc[idx]
-        normalized = set()
-        for value in row.tolist():
-            if pd.isna(value):
-                continue
-            normalized.add(_normalize_ascii(value).upper())
-        has_placa = any(label in normalized for label in ("PLACA", "PLACAS"))
-        if has_placa and expected_core.issubset(normalized):
-            header_idx = idx
-            break
+        cached_df = cache.get('df')
+        if cached_df is not None and cache.get('mtime') == mtime:
+            return cached_df.copy(deep=False)
 
-    if header_idx is None:
-        print("Aviso: cabeçalho da planilha de pedágio/seguro/IPVA não encontrado.")
-        return pd.DataFrame(columns=["PLACA", "Tipo", "Custo", "Mes"])
+        try:
+            raw = pd.read_excel(DATA_PEDAGIO, sheet_name=0, header=None, engine='openpyxl')
+        except PermissionError:
+            print('Aviso: sem permissao para ler planilha de pedagio/seguro/IPVA. Verifique se o arquivo esta aberto.')
+            cached_df = cache.get('df')
+            if cached_df is not None:
+                return cached_df.copy(deep=False)
+            return _empty()
+        except Exception as exc:
+            print(f'Aviso: falha ao ler planilha de pedagio/seguro/IPVA: {exc}')
+            cached_df = cache.get('df')
+            if cached_df is not None:
+                return cached_df.copy(deep=False)
+            return _empty()
 
-    df = raw.iloc[header_idx + 1 :].copy()
-    df.columns = raw.iloc[header_idx]
-    df = df.dropna(how="all").reset_index(drop=True)
-    df = _clean_columns(df)
+        expected_core = {'TIPO', 'CUSTO'}
+        header_idx = None
+        for idx in range(min(len(raw), 10)):
+            row = raw.iloc[idx]
+            normalized = set()
+            for value in row.tolist():
+                if pd.isna(value):
+                    continue
+                normalized.add(_normalize_ascii(value).upper())
+            has_placa = any(label in normalized for label in ('PLACA', 'PLACAS'))
+            if has_placa and expected_core.issubset(normalized):
+                header_idx = idx
+                break
 
-    rename_map = {}
-    for col in df.columns:
-        col_norm = str(col).strip().upper()
-        if col_norm in {"PLACA", "PLACAS"}:
-            rename_map[col] = "PLACA"
-        elif col_norm == "TIPO":
-            rename_map[col] = "Tipo"
-        elif col_norm in {"CUSTO", "VALOR", "VALORES"}:
-            rename_map[col] = "Custo"
-        elif col_norm in {"MES", "MÊS"}:
-            rename_map[col] = "Mes"
-        elif col_norm == "DATA":
-            rename_map[col] = "Data"
-        elif col_norm == "VEX":
-            rename_map[col] = "Vex"
-        elif col_norm in {"DESCRICAO", "DESCRIÇÃO"}:
-            rename_map[col] = "Descricao"
-        elif col_norm in {"SEGURADORA", "FORNECEDOR"}:
-            rename_map[col] = "Fornecedor"
+        if header_idx is None:
+            print('Aviso: cabecalho da planilha de pedagio/seguro/IPVA nao encontrado.')
+            return _empty()
 
-    if rename_map:
-        df = df.rename(columns=rename_map)
+        df = raw.iloc[header_idx + 1 :].copy()
+        df.columns = raw.iloc[header_idx]
+        df = df.dropna(how='all').reset_index(drop=True)
+        df = _clean_columns(df)
 
-    if "Custo" in df.columns:
-        df["Custo"] = _to_numeric_currency(df["Custo"])
-    else:
-        df["Custo"] = pd.Series(pd.NA, index=df.index, dtype="float64")
+        rename_map = {}
+        for col in df.columns:
+            col_norm = _normalize_ascii(col).upper()
+            if col_norm in {'PLACA', 'PLACAS'}:
+                rename_map[col] = 'PLACA'
+            elif col_norm == 'TIPO':
+                rename_map[col] = 'Tipo'
+            elif col_norm in {'CUSTO', 'VALOR', 'VALORES'}:
+                rename_map[col] = 'Custo'
+            elif col_norm == 'MES':
+                rename_map[col] = 'Mes'
+            elif col_norm == 'DATA':
+                rename_map[col] = 'Data'
+            elif col_norm == 'VEX':
+                rename_map[col] = 'Vex'
+            elif col_norm in {'DESCRICAO', 'DESCRICAO'}:
+                rename_map[col] = 'Descricao'
+            elif col_norm in {'SEGURADORA', 'FORNECEDOR'}:
+                rename_map[col] = 'Fornecedor'
 
-    if "Tipo" in df.columns:
-        df["Tipo"] = df["Tipo"].apply(_canonical_tipo).astype("string")
-    else:
-        df["Tipo"] = pd.Series(pd.NA, index=df.index, dtype="string")
+        if rename_map:
+            df = df.rename(columns=rename_map)
 
-    if "PLACA" in df.columns:
-        df["PLACA"] = (
-            df["PLACA"]
-            .apply(_normalize_ascii)
-            .astype("string")
-            .str.upper()
-            .replace({"": pd.NA})
-        )
-    else:
-        df["PLACA"] = pd.Series(pd.NA, index=df.index, dtype="string")
+        if 'Custo' in df.columns:
+            df['Custo'] = _to_numeric_currency(df['Custo'])
+        else:
+            df['Custo'] = pd.Series(pd.NA, index=df.index, dtype='float64')
 
-    if "Mes" in df.columns:
-        mes_raw = df["Mes"]
-        mes_dt = pd.to_datetime(mes_raw, errors="coerce")
-        df["Mes"] = mes_dt.dt.to_period("M").astype("string")
-        missing_mes = df["Mes"].isna() | (df["Mes"] == "")
-        if missing_mes.any():
-            alt = (
-                mes_raw.astype("string")
-                .str.strip()
-                .str.replace(" ", "", regex=False)
-                .str.replace(".", "/", regex=False)
-                .str.replace("-", "/", regex=False)
+        if 'Tipo' in df.columns:
+            df['Tipo'] = df['Tipo'].apply(_canonical_tipo).astype('string')
+        else:
+            df['Tipo'] = pd.Series(pd.NA, index=df.index, dtype='string')
+
+        if 'PLACA' in df.columns:
+            df['PLACA'] = (
+                df['PLACA']
+                .apply(_normalize_ascii)
+                .astype('string')
+                .str.upper()
+                .replace({'': pd.NA})
             )
-            alt_dt = pd.to_datetime(alt, errors="coerce")
-            valid_alt = missing_mes & alt_dt.notna()
-            df.loc[valid_alt, "Mes"] = alt_dt[valid_alt].dt.to_period("M").astype("string")
-            df.loc[missing_mes & ~valid_alt, "Mes"] = alt.loc[missing_mes & ~valid_alt]
-    else:
-        df["Mes"] = pd.Series(pd.NA, index=df.index, dtype="string")
+        else:
+            df['PLACA'] = pd.Series(pd.NA, index=df.index, dtype='string')
 
-    if "Data" in df.columns:
-        df["Data"] = pd.to_datetime(df["Data"], errors="coerce")
-        empty_mes = df["Mes"].isna() | (df["Mes"] == "")
-        df.loc[empty_mes, "Mes"] = df.loc[empty_mes, "Data"].dt.to_period("M").astype("string")
+        if 'Mes' in df.columns:
+            mes_raw = df['Mes']
+            mes_dt = pd.to_datetime(mes_raw, errors='coerce')
+            df['Mes'] = mes_dt.dt.to_period('M').astype('string')
+            missing_mes = df['Mes'].isna() | (df['Mes'] == '')
+            if missing_mes.any():
+                alt = (
+                    mes_raw.astype('string')
+                    .str.strip()
+                    .str.replace(' ', '', regex=False)
+                    .str.replace('.', '/', regex=False)
+                    .str.replace('-', '/', regex=False)
+                )
+                alt_dt = pd.to_datetime(alt, errors='coerce')
+                valid_alt = missing_mes & alt_dt.notna()
+                df.loc[valid_alt, 'Mes'] = alt_dt[valid_alt].dt.to_period('M').astype('string')
+                df.loc[missing_mes & ~valid_alt, 'Mes'] = alt.loc[missing_mes & ~valid_alt]
+        else:
+            df['Mes'] = pd.Series(pd.NA, index=df.index, dtype='string')
 
-    vex_col = next((col for col in df.columns if col.lower() == "vex"), None)
-    if vex_col:
-        df[vex_col] = df[vex_col].astype("string").str.strip()
-        df["Categoria"] = df[vex_col].apply(lambda value: "Vex" if pd.notna(value) and value != "" else "Transporte")
-    elif "Categoria" not in df.columns:
-        df["Categoria"] = "Transporte"
+        if 'Data' in df.columns:
+            df['Data'] = pd.to_datetime(df['Data'], errors='coerce')
+            empty_mes = df['Mes'].isna() | (df['Mes'] == '')
+            df.loc[empty_mes, 'Mes'] = df.loc[empty_mes, 'Data'].dt.to_period('M').astype('string')
 
-    df = df[df["Custo"].notna()].copy()
-    df["Tipo"] = df["Tipo"].fillna("Outros")
+        vex_col = next((col for col in df.columns if col.lower() == 'vex'), None)
+        if vex_col:
+            df[vex_col] = df[vex_col].astype('string').str.strip()
+            df['Categoria'] = df[vex_col].apply(lambda value: 'Vex' if pd.notna(value) and value != '' else 'Transporte')
+        elif 'Categoria' not in df.columns:
+            df['Categoria'] = 'Transporte'
 
-    _PEDAGIO_CACHE["mtime"] = mtime
-    _PEDAGIO_CACHE["df"] = df.copy()
-    return df
+        df = df[df['Custo'].notna()].copy()
+        df['Tipo'] = df['Tipo'].fillna('Outros')
+
+        result = df.copy()
+        cache['mtime'] = mtime
+        cache['df'] = result
+        return result.copy(deep=False)
+
 
 
 def agg_pedagio(df: pd.DataFrame) -> dict:
@@ -422,7 +646,7 @@ def agg_pedagio(df: pd.DataFrame) -> dict:
     else:
         tipo_totais = pd.Series(dtype="float64")
 
-    gasto_pedagio = float(tipo_totais.get("Pedágio", 0.0))
+    gasto_pedagio = float(tipo_totais.get("Pedagio", 0.0))
     gasto_ipva = float(tipo_totais.get("IPVA", 0.0))
     gasto_seguro = float(tipo_totais.get("Seguro", 0.0))
 
@@ -450,6 +674,7 @@ def agg_pedagio(df: pd.DataFrame) -> dict:
         resultado["segmentos"] = []
         resultado["gasto_por_categoria"] = {"Categoria": [], "Custo": []}
 
+    resultado["custo_semana"] = _weekly_series(df, "Data", "Custo", "Custo")
     return resultado
 
 
@@ -565,14 +790,21 @@ def data_pedagio():
     return jsonify(agg_pedagio(df))
 
 
-def _warm_pedagio_cache() -> None:
-    try:
-        load_pedagio()
-    except Exception as exc:  # pragma: no cover
-        print(f"Aviso: nao foi possivel pre-carregar pedagio/seguro/IPVA ({exc})")
+def _warm_data_caches() -> None:
+    loaders = (
+        (load_combustivel, "combustivel"),
+        (load_manutencao, "manutencao"),
+        (load_hoteis, "hoteis"),
+        (load_pedagio, "pedagio/seguro/IPVA"),
+    )
+    for loader, label in loaders:
+        try:
+            loader()
+        except Exception as exc:  # pragma: no cover
+            print(f"Aviso: nao foi possivel pre-carregar {label} ({exc})")
 
 
-threading.Thread(target=_warm_pedagio_cache, daemon=True).start()
+threading.Thread(target=_warm_data_caches, daemon=True).start()
 
 
 def _safe_total(loader, aggregator, key: str) -> dict:

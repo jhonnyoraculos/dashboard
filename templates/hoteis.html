@@ -48,6 +48,7 @@
 
     <section class="grid">
       <div class="card"><h2>Valor mensal</h2><div id="chart-mensal"></div></div>
+      <div class="card"><h2>Valor semanal (&uacute;ltimos 7 dias)</h2><div id="chart-semanal"></div></div>
       <div class="card"><h2>Valor por cidade</h2><div id="chart-cidade"></div></div>
       <div class="card"><h2>Valor por hotel/pousada</h2><div id="chart-hotel"></div></div>
     </section>
@@ -136,6 +137,30 @@ async function refresh() {
   };
   const layoutMensal = { margin: { l: 60, r: 20, t: 40, b: 60 }, xaxis: { tickangle: -30 }, yaxis: { title: 'R$' } };
   Plotly.newPlot('chart-mensal', [traceMensal], { ...plotlyTheme.layout, ...layoutMensal }, plotlyTheme.config);
+
+  const diasISO = safeArray(d.valor_semana, 'DiaISO');
+  const diasSemana = safeArray(d.valor_semana, 'Dia');
+  const valoresSemana = safeArray(d.valor_semana, 'Valor');
+  const sabadoMask = diasISO.map((iso) => {
+    if (!iso) return false;
+    const time = Date.parse(iso + 'T00:00:00');
+    if (Number.isNaN(time)) return false;
+    return new Date(time).getDay() === 6;
+  });
+  const coresSemana = sabadoMask.map((isSabado) => (isSabado ? '#BE1E2D' : '#1C2D6B'));
+
+  const traceSemana = {
+    type: 'bar',
+    x: diasSemana,
+    y: valoresSemana,
+    marker: { color: coresSemana },
+    hovertemplate: '<b>%{x}</b><br>R$ %{y:,.2f}<extra></extra>'
+  };
+  const layoutSemana = {
+    margin: { l: 60, r: 20, t: 40, b: 50 },
+    yaxis: { title: 'R$', rangemode: 'tozero' }
+  };
+  Plotly.newPlot('chart-semanal', [traceSemana], { ...plotlyTheme.layout, ...layoutSemana }, plotlyTheme.config);
 
   drawBarVertical('chart-cidade', safeArray(d.valor_por_cidade, 'Cidade'), safeArray(d.valor_por_cidade, 'Valor'));
   drawBarVertical('chart-hotel', topN(d.valor_por_hotel, 'Hotel', 12), topN(d.valor_por_hotel, 'Valor', 12));
