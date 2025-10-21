@@ -44,6 +44,10 @@
         <div class="kpi-title">M&eacute;dia mensal</div>
         <div id="kpi-media-mensal" class="kpi-value">--</div>
       </div>
+      <div class="kpi">
+        <div class="kpi-title">Gasto aos s&aacute;bados (R$)</div>
+        <div id="kpi-sabado" class="kpi-value">--</div>
+      </div>
     </section>
 
     <section class="grid">
@@ -123,6 +127,7 @@ async function refresh() {
   document.getElementById('kpi-reservas').textContent = fmtNum(d.reservas_total);
   document.getElementById('kpi-ticket').textContent = fmtBRL(d.valor_medio_reserva);
   document.getElementById('kpi-media-mensal').textContent = fmtBRL(d.media_mensal);
+  document.getElementById('kpi-sabado').textContent = fmtBRL(d.valor_sabado);
 
   const meses = safeArray(d.valor_mensal, 'Mes');
   const valoresMensal = safeArray(d.valor_mensal, 'Valor');

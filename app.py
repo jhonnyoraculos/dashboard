@@ -468,6 +468,11 @@ def agg_hoteis(df: pd.DataFrame) -> dict:
     meses_distintos = reservas["Mes"].dropna().unique() if "Mes" in reservas else []
     media_mensal = float(valor_total / len(meses_distintos)) if len(meses_distintos) else 0.0
     valor_medio_reserva = float(valor_total / reservas_total) if reservas_total else 0.0
+    if "Data" in reservas.columns and "Valor" in reservas.columns:
+        mask_sabado = reservas["Data"].dt.dayofweek == 5
+        valor_sabado = float(reservas.loc[mask_sabado, "Valor"].fillna(0).sum())
+    else:
+        valor_sabado = 0.0
 
     return {
         "valor_total": valor_total,
@@ -481,6 +486,7 @@ def agg_hoteis(df: pd.DataFrame) -> dict:
         "cidades": _unique_sorted(reservas, "Cidade"),
         "hoteis": _unique_sorted(reservas, "Hotel"),
         "valor_semana": _weekly_series(reservas, "Data", "Valor", "Valor"),
+        "valor_sabado": valor_sabado,
     }
 
 
