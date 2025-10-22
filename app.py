@@ -3,6 +3,7 @@ import pandas as pd
 import unicodedata
 import os
 import threading
+import concurrent.futures
 from pathlib import Path
 
 app = Flask(__name__)
@@ -16,6 +17,13 @@ _PEDAGIO_CACHE = {"mtime": None, "df": None, "lock": threading.Lock()}
 _COMBUSTIVEL_CACHE = {"mtime": None, "df": None, "lock": threading.Lock()}
 _MANUTENCAO_CACHE = {"mtime": None, "df": None, "lock": threading.Lock()}
 _HOTEIS_CACHE = {"mtime": None, "df": None, "lock": threading.Lock()}
+_OVERVIEW_CACHE = {"mtimes": None, "dados": None}
+_CACHE_MAP = {
+    "combustivel": _COMBUSTIVEL_CACHE,
+    "manutencao": _MANUTENCAO_CACHE,
+    "hoteis": _HOTEIS_CACHE,
+    "pedagio": _PEDAGIO_CACHE,
+}
 
 
 def _clean_columns(df: pd.DataFrame) -> pd.DataFrame:
@@ -796,21 +804,35 @@ def data_pedagio():
     return jsonify(agg_pedagio(df))
 
 
-def _warm_data_caches() -> None:
+def _warm_data_caches(*, blocking: bool = False) -> None:
     loaders = (
         (load_combustivel, "combustivel"),
         (load_manutencao, "manutencao"),
         (load_hoteis, "hoteis"),
         (load_pedagio, "pedagio/seguro/IPVA"),
     )
-    for loader, label in loaders:
-        try:
-            loader()
-        except Exception as exc:  # pragma: no cover
-            print(f"Aviso: nao foi possivel pre-carregar {label} ({exc})")
+
+    def _run() -> None:
+        with concurrent.futures.ThreadPoolExecutor(max_workers=len(loaders)) as pool:
+            future_map = {
+                pool.submit(loader): (loader, label)
+                for loader, label in loaders
+            }
+            for future, (loader, label) in future_map.items():
+                try:
+                    future.result()
+                except Exception as exc:  # pragma: no cover
+                    print(f"Aviso: nao foi possivel pre-carregar {label} ({exc})")
+
+    if blocking:
+        _run()
+    else:
+        threading.Thread(target=_run, daemon=True).start()
 
 
-threading.Thread(target=_warm_data_caches, daemon=True).start()
+_warm_data_caches(
+    blocking=os.environ.get("WARM_CACHE_SYNC", "").strip().lower() in {"1", "true", "yes"}
+)
 
 
 def _safe_total(loader, aggregator, key: str) -> dict:
@@ -839,16 +861,30 @@ def compute_overview_totals() -> dict:
         "pedagio": (load_pedagio, agg_pedagio, "custo_total"),
     }
 
+    chave_cache = tuple(_CACHE_MAP[nome]["mtime"] for nome in ("combustivel", "manutencao", "hoteis", "pedagio"))
+    if _OVERVIEW_CACHE["mtimes"] == chave_cache and _OVERVIEW_CACHE["dados"] is not None:
+        return _OVERVIEW_CACHE["dados"]
+
     detalhes = {}
     total_geral = 0.0
 
-    for nome, (loader, aggregator, chave) in areas.items():
-        resultado = _safe_total(loader, aggregator, chave)
-        detalhes[nome] = resultado
-        if resultado["valor"] is not None:
-            total_geral += resultado["valor"]
+    with concurrent.futures.ThreadPoolExecutor(max_workers=len(areas)) as pool:
+        future_map = {
+            pool.submit(_safe_total, loader, aggregator, chave): nome
+            for nome, (loader, aggregator, chave) in areas.items()
+        }
+        for future in concurrent.futures.as_completed(future_map):
+            nome = future_map[future]
+            resultado = future.result()
+            detalhes[nome] = resultado
+            if resultado["valor"] is not None:
+                total_geral += resultado["valor"]
 
     detalhes["total_geral"] = total_geral if total_geral else 0.0
+    _OVERVIEW_CACHE["mtimes"] = tuple(
+        _CACHE_MAP[nome]["mtime"] for nome in ("combustivel", "manutencao", "hoteis", "pedagio")
+    )
+    _OVERVIEW_CACHE["dados"] = detalhes
     return detalhes
 
 
