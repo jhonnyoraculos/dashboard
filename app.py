@@ -476,11 +476,52 @@ def agg_hoteis(df: pd.DataFrame) -> dict:
     meses_distintos = reservas["Mes"].dropna().unique() if "Mes" in reservas else []
     media_mensal = float(valor_total / len(meses_distintos)) if len(meses_distintos) else 0.0
     valor_medio_reserva = float(valor_total / reservas_total) if reservas_total else 0.0
+    col_nao_planejada = next(
+        (
+            col
+            for col in reservas.columns
+            if str(col).strip().upper().replace(" ", "") in {"NAOPLANEJADA", "NAOPLANEJADAS"}
+        ),
+        None,
+    )
+    if col_nao_planejada:
+        flag_series = pd.to_numeric(reservas[col_nao_planejada], errors="coerce").fillna(0)
+        reservas = reservas.assign(_NaoPlanejada=flag_series.astype("int64"))
+    else:
+        reservas = reservas.assign(_NaoPlanejada=0)
     if "Data" in reservas.columns and "Valor" in reservas.columns:
-        mask_sabado = reservas["Data"].dt.dayofweek == 5
+        mask_sabado = reservas["Data"].dt.dayofweek.isin([4, 5])
         valor_sabado = float(reservas.loc[mask_sabado, "Valor"].fillna(0).sum())
+        valor_nao_planejado = float(
+            reservas.loc[
+                (reservas["_NaoPlanejada"] == 1)
+                | reservas["Data"].dt.dayofweek.isin([4, 5])
+            ]["Valor"].fillna(0).sum()
+        )
     else:
         valor_sabado = 0.0
+        valor_nao_planejado = 0.0
+
+    semanal = _weekly_series(reservas, "Data", "Valor", "Valor")
+    if "DiaISO" in semanal:
+        nao_planejada_flags = []
+        if "Data" in reservas.columns:
+            nao_planejada_por_dia = (
+                reservas.loc[reservas["_NaoPlanejada"] == 1, "Data"]
+                .dt.normalize()
+                .value_counts()
+            )
+        else:
+            nao_planejada_por_dia = pd.Series(dtype="int64")
+        for iso in semanal["DiaISO"]:
+            dt = pd.to_datetime(iso, errors="coerce")
+            if pd.isna(dt):
+                nao_planejada_flags.append(False)
+            else:
+                nao_planejada_flags.append(bool(nao_planejada_por_dia.get(dt.normalize(), 0)))
+        semanal["NaoPlanejada"] = nao_planejada_flags
+    else:
+        semanal["NaoPlanejada"] = []
 
     return {
         "valor_total": valor_total,
@@ -493,8 +534,9 @@ def agg_hoteis(df: pd.DataFrame) -> dict:
         "meses": _unique_sorted(reservas, "Mes"),
         "cidades": _unique_sorted(reservas, "Cidade"),
         "hoteis": _unique_sorted(reservas, "Hotel"),
-        "valor_semana": _weekly_series(reservas, "Data", "Valor", "Valor"),
+        "valor_semana": semanal,
         "valor_sabado": valor_sabado,
+        "valor_nao_planejado": valor_nao_planejado,
     }
 
 
@@ -767,7 +809,9 @@ def data_manu():
 
 @app.route("/data/hoteis")
 def data_hoteis():
-    df = load_hoteis()
+    df_total = load_hoteis()
+    totais_gerais = agg_hoteis(df_total)
+    df = df_total.copy()
 
     mes = request.args.get("mes")
     cidade = request.args.get("cidade")
@@ -780,7 +824,10 @@ def data_hoteis():
     if hotel and hotel != "Todos":
         df = df[df["Hotel"] == hotel]
 
-    return jsonify(agg_hoteis(df))
+    resultado = agg_hoteis(df)
+    resultado["valor_sabado_total"] = totais_gerais.get("valor_sabado", 0.0)
+    resultado["valor_nao_planejado_total"] = totais_gerais.get("valor_nao_planejado", 0.0)
+    return jsonify(resultado)
 
 
 @app.route("/data/pedagio")

@@ -48,6 +48,10 @@
         <div class="kpi-title">Gasto aos s&aacute;bados (R$)</div>
         <div id="kpi-sabado" class="kpi-value">--</div>
       </div>
+      <div class="kpi">
+        <div class="kpi-title">Gasto n&atilde;o planejado (R$)</div>
+        <div id="kpi-nao-planejado" class="kpi-value">--</div>
+      </div>
     </section>
 
     <section class="grid">
@@ -128,6 +132,7 @@ async function refresh() {
   document.getElementById('kpi-ticket').textContent = fmtBRL(d.valor_medio_reserva);
   document.getElementById('kpi-media-mensal').textContent = fmtBRL(d.media_mensal);
   document.getElementById('kpi-sabado').textContent = fmtBRL(d.valor_sabado);
+  document.getElementById('kpi-nao-planejado').textContent = fmtBRL(d.valor_nao_planejado);
 
   const meses = safeArray(d.valor_mensal, 'Mes');
   const valoresMensal = safeArray(d.valor_mensal, 'Valor');
@@ -145,6 +150,7 @@ async function refresh() {
 
   const diasISO = safeArray(d.valor_semana, 'DiaISO');
   const diasSemana = safeArray(d.valor_semana, 'Dia');
+  const naoPlanejadaFlags = safeArray(d.valor_semana, 'NaoPlanejada');
   const valoresSemana = safeArray(d.valor_semana, 'Valor');
   const sabadoMask = diasISO.map((iso) => {
     if (!iso) return false;
@@ -152,7 +158,14 @@ async function refresh() {
     if (Number.isNaN(time)) return false;
     return new Date(time).getDay() === 6;
   });
-  const coresSemana = sabadoMask.map((isSabado) => (isSabado ? '#BE1E2D' : '#1C2D6B'));
+  const coresSemana = diasSemana.map((_, index) => {
+    const isNaoPlanejada = Boolean(naoPlanejadaFlags[index]);
+    if (isNaoPlanejada) {
+      return '#F59E0B';
+    }
+    const isSabado = sabadoMask[index];
+    return isSabado ? '#BE1E2D' : '#1C2D6B';
+  });
 
   const traceSemana = {
     type: 'bar',
