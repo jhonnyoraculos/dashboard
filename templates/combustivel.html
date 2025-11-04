@@ -118,13 +118,30 @@ function drawBarVertical(divId, labelsSource, valuesSource, options = {}) {
     sort: 'desc',
     enableScroll: false,
     maxHeight: '420px',
+    valueFormat: 'currency', // 'currency' | 'number'
+    decimals: undefined,
+    valueSuffix: '',
+    hoverSuffix: '',
+    tickPrefix: undefined,
+    tickSuffix: '',
+    hoverPrefix: undefined,
+    tickFormat: undefined,
     showText: false,
-    textFormatter: (value) => 'R$ ' + Number(value || 0).toLocaleString('pt-BR', {
-      minimumFractionDigits: 2,
-      maximumFractionDigits: 2
-    }),
+    textFormatter: null,
   };
   const opts = { ...defaults, ...options };
+
+  const isCurrency = opts.valueFormat === 'currency';
+  const decimals = typeof opts.decimals === 'number'
+    ? opts.decimals
+    : 0;
+  const tickFormat = opts.tickFormat ?? (decimals > 0 ? `,.${decimals}f` : ',.0f');
+  const tickPrefix = opts.tickPrefix !== undefined ? opts.tickPrefix : (isCurrency ? 'R$ ' : '');
+  const hoverPrefix = opts.hoverPrefix !== undefined ? opts.hoverPrefix : (isCurrency ? 'R$ ' : '');
+  const formatterOptions = { minimumFractionDigits: decimals, maximumFractionDigits: decimals };
+  const formatValue = typeof opts.textFormatter === 'function'
+    ? opts.textFormatter
+    : (value) => `${tickPrefix}${Number(value || 0).toLocaleString('pt-BR', formatterOptions)}${opts.valueSuffix || ''}`;
 
   const labelsArray = Array.isArray(labelsSource) ? labelsSource : [];
   const valuesArray = Array.isArray(valuesSource) ? valuesSource : [];
@@ -150,13 +167,14 @@ function drawBarVertical(divId, labelsSource, valuesSource, options = {}) {
   const rangeMax = maxValue > 0 ? maxValue * 1.05 : 1;
   const longestLabel = plottingLabels.reduce((max, label) => Math.max(max, (label || '').length), 0);
   const showText = opts.showText === true;
-  const textValues = showText ? plottingValues.map((value) => opts.textFormatter(value)) : undefined;
+  const textValues = showText ? plottingValues.map((value) => formatValue(value)) : undefined;
 
   const baseTrace = {
     type: 'bar',
     marker: { color: '#1C2D6B' },
     text: textValues,
     textfont: { size: 11 },
+    textposition: showText ? 'outside' : 'none',
     cliponaxis: false,
   };
 
@@ -170,8 +188,7 @@ function drawBarVertical(divId, labelsSource, valuesSource, options = {}) {
       orientation: 'h',
       x: plottingValues,
       y: plottingLabels,
-      textposition: 'outside',
-      hovertemplate: '<b>%{y}</b><br>R$ %{x:,.2f}<extra></extra>'
+      hovertemplate: `<b>%{y}</b><br>${hoverPrefix}%{x:${tickFormat}}${opts.hoverSuffix}<extra></extra>`
     }];
 
     layout = {
@@ -181,8 +198,9 @@ function drawBarVertical(divId, labelsSource, valuesSource, options = {}) {
         rangemode: 'tozero',
         range: [0, rangeMax],
         gridcolor: '#e5e7eb',
-        tickprefix: 'R$ ',
-        tickformat: ',.0f',
+        tickprefix: tickPrefix,
+        ticksuffix: opts.tickSuffix || '',
+        tickformat: tickFormat,
         zeroline: false,
       },
       yaxis: {
@@ -210,12 +228,11 @@ function drawBarVertical(divId, labelsSource, valuesSource, options = {}) {
       ...baseTrace,
       x: plottingLabels,
       y: plottingValues,
-      textposition: 'auto',
-      hovertemplate: '<b>%{x}</b><br>R$ %{y:,.2f}<extra></extra>'
+      hovertemplate: `<b>%{x}</b><br>${hoverPrefix}%{y:${tickFormat}}${opts.hoverSuffix}<extra></extra>`
     }];
 
     layout = {
-      margin: { l: 60, r: 20, t: 10, b: 70 },
+      margin: { l: 60, r: 20, t: 10, b: showText ? 80 : 70 },
       xaxis: {
         tickangle: -45,
         tickfont: { size: 9 },
@@ -227,8 +244,9 @@ function drawBarVertical(divId, labelsSource, valuesSource, options = {}) {
         rangemode: 'tozero',
         range: [0, rangeMax],
         gridcolor: '#e5e7eb',
-        tickprefix: 'R$ ',
-        tickformat: ',.0f',
+        tickprefix: tickPrefix,
+        ticksuffix: opts.tickSuffix || '',
+        tickformat: tickFormat,
       },
       hovermode: 'closest',
     };
@@ -348,8 +366,20 @@ async function refresh() {
   const placas = safeArray(d.gasto_por_placa, 'PLACA');
   const gastoPlaca = safeArray(d.gasto_por_placa, 'Custo');
   drawBarVertical('chart-placa', placas, gastoPlaca, { autoOrient: true, threshold: 10, sort: 'desc', enableScroll: true });
-  drawBarVertical('chart-km-mes', safeArray(d.km_mensal, 'Mes'), safeArray(d.km_mensal, 'Km Rodados'));
-  drawBarVertical('chart-litros-mes', safeArray(d.litros_mensal, 'Mes'), safeArray(d.litros_mensal, 'Litros'));
+  drawBarVertical('chart-km-mes', safeArray(d.km_mensal, 'Mes'), safeArray(d.km_mensal, 'Km Rodados'), {
+    valueFormat: 'number',
+    hoverSuffix: ' km',
+    tickPrefix: '',
+    tickSuffix: '',
+    decimals: 0,
+  });
+  drawBarVertical('chart-litros-mes', safeArray(d.litros_mensal, 'Mes'), safeArray(d.litros_mensal, 'Litros'), {
+    valueFormat: 'number',
+    hoverSuffix: ' L',
+    tickPrefix: '',
+    tickSuffix: '',
+    decimals: 0,
+  });
 }
 
 const plotlyTheme = {
