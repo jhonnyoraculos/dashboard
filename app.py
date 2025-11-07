@@ -4,6 +4,7 @@ import unicodedata
 import os
 import threading
 import concurrent.futures
+from collections import defaultdict
 from pathlib import Path
 
 app = Flask(__name__)
@@ -73,6 +74,32 @@ def _unique_sorted(df: pd.DataFrame, column: str) -> list:
     if series.empty:
         return []
     return sorted(series.astype(str).str.strip().unique().tolist())
+
+
+def _parse_int(value, *, min_value: int | None = None, max_value: int | None = None) -> int | None:
+    if value in (None, "", "Todos"):
+        return None
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError):
+        return None
+    if min_value is not None and parsed < min_value:
+        return None
+    if max_value is not None and parsed > max_value:
+        return None
+    return parsed
+
+
+def _filter_by_period(df: pd.DataFrame, *, ano: int | None = None, mes: int | None = None) -> pd.DataFrame:
+    if df.empty or "Mes" not in df.columns or (ano is None and mes is None):
+        return df
+    periodos = pd.to_datetime(df["Mes"], errors="coerce")
+    mask = periodos.notna()
+    if ano is not None:
+        mask &= periodos.dt.year == ano
+    if mes is not None:
+        mask &= periodos.dt.month == mes
+    return df.loc[mask].copy()
 
 
 def _weekly_series(df: pd.DataFrame, date_col: str, value_col: str, label: str) -> dict:
@@ -450,6 +477,7 @@ def load_hoteis() -> pd.DataFrame:
             "CIDADE": "Cidade",
             "TIPO": "Tipo",
             "DIAS": "Dias",
+            "CATEGORIA": "Categoria",
         })
 
         df["Data"] = pd.to_datetime(df.get("Data"), errors="coerce")
@@ -460,7 +488,7 @@ def load_hoteis() -> pd.DataFrame:
         df["Mes"] = period.astype(str)
         df.loc[period.isna(), "Mes"] = None
 
-        for col in ["Motorista", "Ajudante", "Cidade", "Hotel", "Tipo"]:
+        for col in ["Motorista", "Ajudante", "Cidade", "Hotel", "Tipo", "Categoria"]:
             if col in df.columns:
                 df[col] = df[col].astype("string").str.strip()
 
@@ -882,43 +910,107 @@ _warm_data_caches(
 )
 
 
-def _safe_total(loader, aggregator, key: str) -> dict:
+def _safe_total(
+    loader,
+    aggregator,
+    key: str,
+    value_col: str | None = None,
+    *,
+    ano: int | None = None,
+    mes: int | None = None,
+) -> dict:
     try:
         df = loader()
     except PermissionError:
-        return {"status": "erro", "motivo": "permissao", "valor": None}
+        return {"status": "erro", "motivo": "permissao", "valor": None, "categorias": None}
     except FileNotFoundError:
-        return {"status": "erro", "motivo": "arquivo_nao_encontrado", "valor": None}
+        return {"status": "erro", "motivo": "arquivo_nao_encontrado", "valor": None, "categorias": None}
     except Exception as exc:  # pragma: no cover
-        return {"status": "erro", "motivo": str(exc), "valor": None}
+        return {"status": "erro", "motivo": str(exc), "valor": None, "categorias": None}
+
+    periodos_disponiveis: list[str] = []
+    if "Mes" in df.columns:
+        period_series = pd.to_datetime(df["Mes"], errors="coerce").dt.to_period("M")
+        valores_periodo = {str(periodo) for periodo in period_series.dropna().unique()}
+        periodos_disponiveis = sorted(valores_periodo)
+
+    df = _filter_by_period(df, ano=ano, mes=mes)
 
     try:
-        valor = float(aggregator(df).get(key, 0.0))
+        resumo = aggregator(df)
     except Exception as exc:  # pragma: no cover
-        return {"status": "erro", "motivo": str(exc), "valor": None}
+        return {"status": "erro", "motivo": str(exc), "valor": None, "categorias": None}
 
-    return {"status": "ok", "motivo": None, "valor": valor}
+    valor = float(resumo.get(key, 0.0)) if resumo else 0.0
+    categorias = None
+    if value_col and value_col in df.columns and "Categoria" in df.columns:
+        df_categoria = df.copy()
+        df_categoria[value_col] = pd.to_numeric(df_categoria[value_col], errors="coerce")
+        grupos = (
+            df_categoria.groupby(
+                df_categoria["Categoria"]
+                .astype("string")
+                .str.strip()
+                .str.title()
+                .replace({"": "Outros"})
+                .fillna("Outros")
+            )[value_col]
+            .sum()
+        )
+        if not grupos.empty:
+            categorias = {categoria: float(valor_cat) for categoria, valor_cat in grupos.items() if pd.notna(valor_cat)}
+
+    return {
+        "status": "ok",
+        "motivo": None,
+        "valor": valor,
+        "categorias": categorias,
+        "periodos": periodos_disponiveis,
+    }
 
 
-def compute_overview_totals() -> dict:
+def compute_overview_totals(*, ano: int | None = None, mes: int | None = None) -> dict:
+    ano = _parse_int(ano)
+    mes = _parse_int(mes, min_value=1, max_value=12)
     areas = {
-        "combustivel": (load_combustivel, agg_combustivel, "custo_total"),
-        "manutencao": (load_manutencao, agg_manutencao, "custo_total"),
-        "hoteis": (load_hoteis, agg_hoteis, "valor_total"),
-        "pedagio": (load_pedagio, agg_pedagio, "custo_total"),
+        "combustivel": (load_combustivel, agg_combustivel, "custo_total", "Custo"),
+        "manutencao": (load_manutencao, agg_manutencao, "custo_total", "Custo"),
+        "hoteis": (load_hoteis, agg_hoteis, "valor_total", "Valor"),
+        "pedagio": (load_pedagio, agg_pedagio, "custo_total", "Custo"),
     }
 
     chave_cache = tuple(_CACHE_MAP[nome]["mtime"] for nome in ("combustivel", "manutencao", "hoteis", "pedagio"))
-    if _OVERVIEW_CACHE["mtimes"] == chave_cache and _OVERVIEW_CACHE["dados"] is not None:
+    use_cache = ano is None and mes is None
+    if (
+        use_cache
+        and _OVERVIEW_CACHE["mtimes"] == chave_cache
+        and _OVERVIEW_CACHE["dados"] is not None
+    ):
         return _OVERVIEW_CACHE["dados"]
 
     detalhes = {}
     total_geral = 0.0
+    segmento_totais = defaultdict(float)
+    periodos_unicos: set[str] = set()
 
-    with concurrent.futures.ThreadPoolExecutor(max_workers=len(areas)) as pool:
+    use_threads = ano is None and mes is None
+    if use_threads:
+        pool = concurrent.futures.ThreadPoolExecutor(max_workers=len(areas))
+    else:
+        pool = concurrent.futures.ThreadPoolExecutor(max_workers=1)
+
+    with pool:
         future_map = {
-            pool.submit(_safe_total, loader, aggregator, chave): nome
-            for nome, (loader, aggregator, chave) in areas.items()
+            pool.submit(
+                _safe_total,
+                loader,
+                aggregator,
+                chave,
+                valor_col,
+                ano=ano,
+                mes=mes,
+            ): nome
+            for nome, (loader, aggregator, chave, valor_col) in areas.items()
         }
         for future in concurrent.futures.as_completed(future_map):
             nome = future_map[future]
@@ -926,18 +1018,40 @@ def compute_overview_totals() -> dict:
             detalhes[nome] = resultado
             if resultado["valor"] is not None:
                 total_geral += resultado["valor"]
+            categorias = resultado.get("categorias") or {}
+            for categoria, valor in categorias.items():
+                segmento_totais[categoria] += valor
+            for periodo in resultado.get("periodos") or []:
+                if periodo:
+                    periodos_unicos.add(periodo)
 
-    detalhes["total_geral"] = total_geral if total_geral else 0.0
-    _OVERVIEW_CACHE["mtimes"] = tuple(
-        _CACHE_MAP[nome]["mtime"] for nome in ("combustivel", "manutencao", "hoteis", "pedagio")
-    )
-    _OVERVIEW_CACHE["dados"] = detalhes
+    segmentos_dict = {categoria: float(valor) for categoria, valor in segmento_totais.items()}
+    periodos_ordenados = sorted(periodos_unicos)
+    anos_disponiveis = sorted({int(p.split("-")[0]) for p in periodos_ordenados if "-" in p})
+    meses_disponiveis = sorted({int(p.split("-")[1]) for p in periodos_ordenados if "-" in p})
+
+    detalhes["total_geral"] = float(total_geral)
+    detalhes["segmentos"] = segmentos_dict
+    detalhes["total_transporte"] = segmentos_dict.get("Transporte", 0.0)
+    detalhes["total_vex"] = segmentos_dict.get("Vex", 0.0)
+    detalhes["periodos_disponiveis"] = periodos_ordenados
+    detalhes["anos_disponiveis"] = anos_disponiveis
+    detalhes["meses_disponiveis"] = meses_disponiveis
+    detalhes["filtro"] = {"ano": ano, "mes": mes}
+
+    if use_cache:
+        _OVERVIEW_CACHE["mtimes"] = tuple(
+            _CACHE_MAP[nome]["mtime"] for nome in ("combustivel", "manutencao", "hoteis", "pedagio")
+        )
+        _OVERVIEW_CACHE["dados"] = detalhes
     return detalhes
 
 
 @app.route("/data/overview")
 def data_overview():
-    return jsonify(compute_overview_totals())
+    ano = _parse_int(request.args.get("ano"))
+    mes = _parse_int(request.args.get("mes"), min_value=1, max_value=12)
+    return jsonify(compute_overview_totals(ano=ano, mes=mes))
 
 
 if __name__ == "__main__":

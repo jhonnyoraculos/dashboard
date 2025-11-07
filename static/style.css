@@ -119,9 +119,12 @@ button#limpar:hover{opacity:.92;}
   font-weight:600;
 }
 .kpi .kpi-value{
-  font-size:28px;
+  font-size:clamp(18px, 1.8vw, 26px);
   font-weight:800;
   color:var(--jr-red);
+  line-height:1.2;
+  white-space:normal;
+  overflow-wrap:anywhere;
 }
 
 /* ---------- GRÁFICOS ---------- */
@@ -304,6 +307,18 @@ body.home-body{
   transform:translateY(-2px);
   box-shadow:0 14px 28px rgba(190,30,45,0.3);
 }
+.home-actions{
+  display:flex;
+  flex-wrap:wrap;
+  gap:20px;
+  align-items:flex-start;
+}
+.home-total-grid{
+  flex:1 1 auto;
+  display:grid;
+  grid-template-columns:repeat(3, minmax(0, 1fr));
+  gap:16px;
+}
 .home-total-card{
   background:rgba(28,45,107,0.06);
   border-radius:var(--radius);
@@ -311,12 +326,11 @@ body.home-body{
   display:flex;
   flex-direction:column;
   gap:4px;
-  align-self:flex-start;
-  box-shadow:0 10px 28px rgba(28,45,107,0.15);
+  box-shadow:0 10px 28px rgba(28,45,107,0.12);
 }
 .home-total-label{
   margin:0;
-  font-size:13px;
+  font-size:12px;
   letter-spacing:.05em;
   text-transform:uppercase;
   color:var(--muted);
@@ -324,18 +338,71 @@ body.home-body{
 }
 .home-total-value{
   margin:0;
-  font-size:32px;
+  font-size:28px;
   font-weight:800;
   color:var(--jr-blue);
 }
 .home-total-status{
   margin:0;
-  font-size:13px;
+  font-size:12px;
   color:#4B5563;
 }
 .home-total-status--alerta{
   color:var(--jr-red);
 }
+.home-total-card--primary{
+  background:rgba(28,45,107,0.06);
+}
+.home-total-card--secondary{
+  background:var(--card);
+  box-shadow:var(--shadow);
+  border:1px solid rgba(28,45,107,0.08);
+}
+.home-total-filters{
+  margin-top:18px;
+  display:flex;
+  flex-wrap:wrap;
+  gap:12px;
+  align-items:center;
+}
+.home-filter-field{
+  display:flex;
+  flex-direction:column;
+  gap:2px;
+}
+.home-filter-field label{
+  margin:0;
+  font-size:10px;
+  letter-spacing:.05em;
+  text-transform:uppercase;
+  color:var(--muted);
+  font-weight:600;
+}
+.home-filter-field select{
+  border:1px solid rgba(28,45,107,0.15);
+  border-radius:14px;
+  padding:6px 14px;
+  font-weight:600;
+  font-size:13px;
+  color:var(--jr-blue);
+  min-width:120px;
+  height:38px;
+  box-shadow:0 4px 10px rgba(0,0,0,0.05);
+  background:#fff;
+  flex:1 1 1px;
+}
+.home-filter-clear{
+  border:none;
+  background:var(--jr-red);
+  color:#fff;
+  font-weight:700;
+  border-radius:999px;
+  padding:8px 22px;
+  cursor:pointer;
+  box-shadow:0 8px 20px rgba(190,30,45,0.2);
+  transition:opacity .2s ease;
+}
+.home-filter-clear:hover{opacity:.92;}
 .home-grid{
   display:grid;
   gap:28px;
@@ -434,6 +501,56 @@ body.home-body{
   gap:16px;
   flex-wrap:wrap;
 }
+.home-total-section{
+  background:rgba(28,45,107,0.05);
+  border-radius:var(--radius);
+  padding:32px;
+  box-shadow:var(--shadow);
+}
+.home-total-grid{
+  display:grid;
+  grid-template-columns:repeat(auto-fit, minmax(220px, 1fr));
+  gap:20px;
+}
+.home-total-card{
+  background:rgba(28,45,107,0.06);
+  border-radius:var(--radius);
+  padding:18px 24px;
+  display:flex;
+  flex-direction:column;
+  gap:4px;
+  box-shadow:0 10px 28px rgba(28,45,107,0.12);
+}
+.home-total-card--secondary{
+  background:var(--card);
+  box-shadow:var(--shadow);
+  border:1px solid rgba(28,45,107,0.08);
+}
+.home-total-card--primary{
+  background:rgba(28,45,107,0.06);
+}
+.home-total-label{
+  margin:0;
+  font-size:12px;
+  letter-spacing:.05em;
+  text-transform:uppercase;
+  color:var(--muted);
+  font-weight:600;
+}
+.home-total-value{
+  margin:0;
+  font-size:28px;
+  font-weight:800;
+  color:var(--jr-blue);
+}
+.home-total-status{
+  margin:0;
+  font-size:12px;
+  color:#4B5563;
+}
+.home-total-status--alerta{
+  color:var(--jr-red);
+}
 .home-outline{
   border:1px solid rgba(28,45,107,0.2);
   color:var(--jr-blue);
@@ -453,6 +570,20 @@ body.home-body{
   .home-brand{flex-direction:column; align-items:flex-start;}
   .home-logo{width:60px; height:60px;}
   .home-header h1{font-size:28px;}
-  .home-total-card{width:100%;}
-  .home-total-value{font-size:28px;}
+  .home-actions{flex-direction:column; gap:18px;}
+  .home-total-section{padding:24px;}
+  .home-total-grid{
+    width:100%;
+    gap:12px;
+    grid-template-columns:1fr;
+  }
+  .home-total-value{font-size:26px;}
+  .home-total-filters{
+    flex-direction:column;
+    align-items:stretch;
+  }
+  .home-filter-field select,
+  .home-filter-clear{
+    width:100%;
+  }
 }

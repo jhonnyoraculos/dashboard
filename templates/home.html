@@ -22,12 +22,41 @@
         </div>
       </div>
       <a class="home-cta" href="#dashboards">Explorar dashboards</a>
-      <div class="home-total-card">
-        <p class="home-total-label">Gasto consolidado (todas as planilhas)</p>
-        <p id="home-total-value" class="home-total-value">--</p>
-        <p id="home-total-status" class="home-total-status">Carregando dados...</p>
-      </div>
     </header>
+    <section class="home-total-section">
+      <div class="home-total-grid">
+        <div class="home-total-card home-total-card--secondary">
+          <p class="home-total-label">Gasto consolidado (todas as planilhas)</p>
+          <p id="home-total-value" class="home-total-value">--</p>
+          <p id="home-total-status" class="home-total-status">Carregando dados...</p>
+        </div>
+        <div class="home-total-card home-total-card--secondary">
+          <p class="home-total-label">Gasto transporte</p>
+          <p id="home-transporte-value" class="home-total-value">--</p>
+          <p id="home-transporte-status" class="home-total-status">Carregando dados...</p>
+        </div>
+        <div class="home-total-card home-total-card--secondary">
+          <p class="home-total-label">Gasto Vex</p>
+          <p id="home-vex-value" class="home-total-value">--</p>
+          <p id="home-vex-status" class="home-total-status">Carregando dados...</p>
+        </div>
+      </div>
+      <div class="home-total-filters">
+        <div class="home-filter-field">
+          <label for="home-filter-ano">Ano</label>
+          <select id="home-filter-ano">
+            <option value="Todos">Todos</option>
+          </select>
+        </div>
+        <div class="home-filter-field">
+          <label for="home-filter-mes">M&ecirc;s</label>
+          <select id="home-filter-mes">
+            <option value="Todos">Todos</option>
+          </select>
+        </div>
+        <button type="button" id="home-filter-clear" class="home-filter-clear">Limpar filtro</button>
+      </div>
+    </section>
 
     <section id="dashboards" class="home-grid">
       <article class="home-card">
@@ -94,39 +123,216 @@
   </main>
   <script>
     const fmtBRL = (value) => Number(value || 0).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
+    const MONTH_NAMES = ['Janeiro', 'Fevereiro', 'Mar\u00E7o', 'Abril', 'Maio', 'Junho', 'Julho', 'Agosto', 'Setembro', 'Outubro', 'Novembro', 'Dezembro'];
+    const filterState = { ano: 'Todos', mes: 'Todos', initialized: false };
+    let overviewRequestId = 0;
+
+    function applyStatus(element, message, isAlert = false) {
+      if (!element) return;
+      element.textContent = message;
+      if (isAlert) {
+        element.classList.add('home-total-status--alerta');
+      } else {
+        element.classList.remove('home-total-status--alerta');
+      }
+    }
+
+    function monthLabel(value) {
+      const num = Number(value);
+      if (!Number.isFinite(num) || num < 1 || num > 12) return String(value);
+      return `${String(num).padStart(2, '0')} - ${MONTH_NAMES[num - 1]}`;
+    }
+
+    function describeFilterValue(ano, mes) {
+      const hasAno = Number.isFinite(ano);
+      const hasMes = Number.isFinite(mes);
+      if (!hasAno && !hasMes) return '';
+      if (hasMes && hasAno) {
+        return `Filtro aplicado: ${MONTH_NAMES[mes - 1] ?? mes}/${ano}.`;
+      }
+      if (hasMes) {
+        return `Filtro aplicado: ${MONTH_NAMES[mes - 1] ?? mes}.`;
+      }
+      return `Filtro aplicado: ${ano}.`;
+    }
+
+    function populateFilterSelect(selectId, values, formatter) {
+      const select = document.getElementById(selectId);
+      if (!select) return;
+      const current = select.value || 'Todos';
+      select.innerHTML = '';
+      const optAll = document.createElement('option');
+      optAll.value = 'Todos';
+      optAll.textContent = 'Todos';
+      select.appendChild(optAll);
+      (values || []).forEach((value) => {
+        const option = document.createElement('option');
+        option.value = String(value);
+        option.textContent = formatter ? formatter(value) : String(value);
+        select.appendChild(option);
+      });
+      if ([...select.options].some((option) => option.value === current)) {
+        select.value = current;
+      } else {
+        select.value = 'Todos';
+      }
+    }
+
+    function syncFilterStateFromResponse(filtro) {
+      if (typeof filtro?.ano === 'number') {
+        filterState.ano = String(filtro.ano);
+      } else if (filtro && (filtro.ano === null || filtro.ano === undefined)) {
+        filterState.ano = 'Todos';
+      }
+
+      if (typeof filtro?.mes === 'number') {
+        filterState.mes = String(filtro.mes);
+      } else if (filtro && (filtro.mes === null || filtro.mes === undefined)) {
+        filterState.mes = 'Todos';
+      }
+
+      if (filterState.ano === undefined) filterState.ano = 'Todos';
+      if (filterState.mes === undefined) filterState.mes = 'Todos';
+    }
+
+    function setupOverviewFilters(data) {
+      populateFilterSelect('home-filter-ano', data?.anos_disponiveis || [], (value) => String(value));
+      populateFilterSelect('home-filter-mes', data?.meses_disponiveis || [], monthLabel);
+      const anoSelect = document.getElementById('home-filter-ano');
+      const mesSelect = document.getElementById('home-filter-mes');
+      if (anoSelect) anoSelect.value = filterState.ano || 'Todos';
+      if (mesSelect) mesSelect.value = filterState.mes || 'Todos';
+
+      if (!filterState.initialized && anoSelect && mesSelect) {
+        anoSelect.addEventListener('change', (event) => {
+          filterState.ano = event.target.value || 'Todos';
+          loadOverviewTotal();
+        });
+        mesSelect.addEventListener('change', (event) => {
+          filterState.mes = event.target.value || 'Todos';
+          loadOverviewTotal();
+        });
+        const clearBtn = document.getElementById('home-filter-clear');
+        if (clearBtn) {
+          clearBtn.addEventListener('click', () => {
+            if (filterState.ano === 'Todos' && filterState.mes === 'Todos') return;
+            filterState.ano = 'Todos';
+            filterState.mes = 'Todos';
+            if (anoSelect) anoSelect.value = 'Todos';
+            if (mesSelect) mesSelect.value = 'Todos';
+            loadOverviewTotal();
+          });
+        }
+        filterState.initialized = true;
+      }
+    }
+
+    function numericFilterState() {
+      const ano = Number(filterState.ano);
+      const mes = Number(filterState.mes);
+      return {
+        ano: Number.isFinite(ano) ? ano : null,
+        mes: Number.isFinite(mes) ? mes : null,
+      };
+    }
+
+    function updateSegmentCard(value, valueEl, statusEl, label, problemas, filtroDescricao = '') {
+      const hasProblemas = problemas.length > 0;
+      const filtroMensagem = filtroDescricao ? filtroDescricao : '';
+      if (Number.isFinite(value)) {
+        valueEl.textContent = fmtBRL(value);
+        if (hasProblemas) {
+          const mensagem = ['Resultado parcial.', filtroMensagem, `Verifique: ${problemas.join(', ')}`]
+            .filter(Boolean)
+            .join(' ');
+          applyStatus(statusEl, mensagem, true);
+        } else {
+          const baseMsg = `Somat\u00F3rio das despesas marcadas como "${label}".`;
+          const mensagem = [baseMsg, filtroMensagem].filter(Boolean).join(' ');
+          applyStatus(statusEl, mensagem, false);
+        }
+      } else {
+        valueEl.textContent = '--';
+        const mensagem = filtroMensagem
+          ? `Sem dados dispon\u00EDveis para "${label}" nesse filtro.`
+          : `Sem dados dispon\u00EDveis para "${label}".`;
+        applyStatus(statusEl, mensagem, true);
+      }
+    }
 
     async function loadOverviewTotal() {
       const totalEl = document.getElementById('home-total-value');
-      const statusEl = document.getElementById('home-total-status');
+      const totalStatusEl = document.getElementById('home-total-status');
+      const transporteEl = document.getElementById('home-transporte-value');
+      const transporteStatusEl = document.getElementById('home-transporte-status');
+      const vexEl = document.getElementById('home-vex-value');
+      const vexStatusEl = document.getElementById('home-vex-status');
+      const requestId = ++overviewRequestId;
 
       try {
-        const res = await fetch('/data/overview');
+        const params = new URLSearchParams();
+        if (filterState.ano && filterState.ano !== 'Todos') params.set('ano', filterState.ano);
+        if (filterState.mes && filterState.mes !== 'Todos') params.set('mes', filterState.mes);
+        const query = params.toString();
+        const res = await fetch('/data/overview' + (query ? `?${query}` : ''));
         if (!res.ok) {
           throw new Error('Falha ao consultar os dados (' + res.status + ')');
         }
         const data = await res.json();
-        const total = data && typeof data.total_geral === 'number' ? data.total_geral : null;
-        totalEl.textContent = total !== null ? fmtBRL(total) : '--';
+        if (requestId !== overviewRequestId) return;
+
+        syncFilterStateFromResponse(data?.filtro || {});
+        setupOverviewFilters(data);
+
+        const total = typeof data.total_geral === 'number' ? data.total_geral : null;
+        totalEl.textContent = Number.isFinite(total) ? fmtBRL(total) : '--';
 
         const problemas = Object.entries(data || {})
-          .filter(([chave, info]) => chave !== 'total_geral' && info && info.status !== 'ok')
+          .filter(([chave, info]) => !['total_geral', 'segmentos', 'total_transporte', 'total_vex', 'anos_disponiveis', 'meses_disponiveis', 'periodos_disponiveis', 'filtro'].includes(chave) && info && info.status !== 'ok')
           .map(([chave, info]) => {
             if (!info || !info.motivo) return chave;
             return `${chave} (${info.motivo})`;
           });
+        const hasProblemas = problemas.length > 0;
 
-        if (problemas.length) {
-          statusEl.textContent = 'Algumas planilhas n\u00E3o puderam ser lidas: ' + problemas.join(', ');
-          statusEl.classList.add('home-total-status--alerta');
+        const filtroNums = numericFilterState();
+        const filtroDescricao = describeFilterValue(filtroNums.ano, filtroNums.mes);
+
+        if (Number.isFinite(total)) {
+          const statusMsgParts = [];
+          if (filtroDescricao) statusMsgParts.push(filtroDescricao);
+          statusMsgParts.push(
+            hasProblemas
+              ? `Resultado parcial. Verifique: ${problemas.join(', ')}`
+              : 'C\u00E1lculo baseado nos dados mais recentes das quatro planilhas.'
+          );
+          applyStatus(totalStatusEl, statusMsgParts.join(' '), hasProblemas);
         } else {
-          statusEl.textContent = 'C\u00E1lculo baseado nos dados mais recentes das quatro planilhas.';
-          statusEl.classList.remove('home-total-status--alerta');
+        const mensagem = filtroDescricao
+          ? `${filtroDescricao} Sem dados consolidados dispon\u00EDveis no momento.`
+          : 'Sem dados consolidados dispon\u00EDveis no momento.';
+          applyStatus(totalStatusEl, mensagem, true);
         }
+
+        const segmentos = (data && data.segmentos) || {};
+        const totalTransporte = typeof data.total_transporte === 'number'
+          ? data.total_transporte
+          : (typeof segmentos.Transporte === 'number' ? segmentos.Transporte : null);
+        const totalVex = typeof data.total_vex === 'number'
+          ? data.total_vex
+          : (typeof segmentos.Vex === 'number' ? segmentos.Vex : null);
+
+        updateSegmentCard(totalTransporte, transporteEl, transporteStatusEl, 'Transporte', problemas, filtroDescricao);
+        updateSegmentCard(totalVex, vexEl, vexStatusEl, 'Vex', problemas, filtroDescricao);
       } catch (error) {
+        if (requestId !== overviewRequestId) return;
         console.error(error);
         totalEl.textContent = '--';
-        statusEl.textContent = 'N\u00E3o foi poss\u00EDvel carregar o total agora. Atualize a p\u00E1gina depois de verificar as planilhas.';
-        statusEl.classList.add('home-total-status--alerta');
+        transporteEl.textContent = '--';
+        vexEl.textContent = '--';
+        applyStatus(totalStatusEl, 'N\u00E3o foi poss\u00EDvel carregar os dados agora. Atualize a p\u00E1gina depois de verificar as planilhas.', true);
+        applyStatus(transporteStatusEl, 'N\u00E3o foi poss\u00EDvel carregar os dados agora.', true);
+        applyStatus(vexStatusEl, 'N\u00E3o foi poss\u00EDvel carregar os dados agora.', true);
       }
     }
 
