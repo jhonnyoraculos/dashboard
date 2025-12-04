@@ -93,8 +93,15 @@ def _parse_int(value, *, min_value: int | None = None, max_value: int | None = N
     return parsed
 
 
-def _filter_by_period(df: pd.DataFrame, *, ano: int | None = None, mes: int | None = None) -> pd.DataFrame:
-    if df.empty or "Mes" not in df.columns or (ano is None and mes is None):
+def _filter_by_period(
+    df: pd.DataFrame,
+    *,
+    ano: int | None = None,
+    mes: int | None = None,
+    meses: list[int] | None = None,
+) -> pd.DataFrame:
+    meses = meses or []
+    if df.empty or "Mes" not in df.columns or (ano is None and mes is None and not meses):
         return df
     periodos = pd.to_datetime(df["Mes"], errors="coerce")
     mask = periodos.notna()
@@ -102,7 +109,45 @@ def _filter_by_period(df: pd.DataFrame, *, ano: int | None = None, mes: int | No
         mask &= periodos.dt.year == ano
     if mes is not None:
         mask &= periodos.dt.month == mes
+    if meses:
+        mask &= periodos.dt.month.isin(meses)
     return df.loc[mask].copy()
+
+
+def _parse_mes_list(raw: list[str] | str | None) -> list[str]:
+    if raw is None:
+        return []
+    if isinstance(raw, str):
+        raw_values = [raw]
+    else:
+        raw_values = list(raw)
+
+    meses: list[str] = []
+    for value in raw_values:
+        if value in (None, "", "Todos"):
+            continue
+        parts = str(value).split(",")
+        for part in parts:
+            mes = part.strip()
+            if mes and mes.lower() != "todos":
+                meses.append(mes)
+    return meses
+
+
+def _parse_mes_int_list(raw: list[str] | None) -> list[int]:
+    if raw is None:
+        return []
+    meses: list[int] = []
+    for value in raw:
+        if value in (None, "", "Todos"):
+            continue
+        try:
+            num = int(value)
+        except (TypeError, ValueError):
+            continue
+        if 1 <= num <= 12:
+            meses.append(num)
+    return meses
 
 
 def _weekly_series(df: pd.DataFrame, date_col: str, value_col: str, label: str) -> dict:
@@ -881,14 +926,14 @@ def pedagio_page():
 def data_comb():
     df = load_combustivel()
 
-    mes = request.args.get("mes")
+    meses = _parse_mes_list(request.args.getlist("mes"))
     placa = request.args.get("placa")
     posto = request.args.get("posto")
     combustivel = request.args.get("combustivel")
     segmento = request.args.get("segmento")
 
-    if mes and mes != "Todos":
-        df = df[df["Mes"] == mes]
+    if meses:
+        df = df[df["Mes"].isin(meses)]
     if placa and placa != "Todos":
         df = df[df["PLACA"] == placa]
     if posto and posto != "Todos":
@@ -905,13 +950,13 @@ def data_comb():
 def data_manu():
     df = load_manutencao()
 
-    mes = request.args.get("mes")
+    meses = _parse_mes_list(request.args.getlist("mes"))
     placa = request.args.get("placa")
     oficina = request.args.get("oficina")
     segmento = request.args.get("segmento")
 
-    if mes and mes != "Todos":
-        df = df[df["Mes"] == mes]
+    if meses:
+        df = df[df["Mes"].isin(meses)]
     if placa and placa != "Todos":
         df = df[df["PLACA"] == placa]
     if oficina and oficina != "Todos":
@@ -928,12 +973,12 @@ def data_hoteis():
     totais_gerais = agg_hoteis(df_total)
     df = df_total.copy()
 
-    mes = request.args.get("mes")
+    meses = _parse_mes_list(request.args.getlist("mes"))
     cidade = request.args.get("cidade")
     hotel = request.args.get("hotel")
 
-    if mes and mes != "Todos":
-        df = df[df["Mes"] == mes]
+    if meses:
+        df = df[df["Mes"].isin(meses)]
     if cidade and cidade != "Todos":
         df = df[df["Cidade"] == cidade]
     if hotel and hotel != "Todos":
@@ -949,13 +994,13 @@ def data_hoteis():
 def data_pedagio():
     df = load_pedagio()
 
-    mes = request.args.get("mes")
+    meses = _parse_mes_list(request.args.getlist("mes"))
     placa = request.args.get("placa")
     tipo = request.args.get("tipo")
     segmento = request.args.get("segmento")
 
-    if mes and mes != "Todos":
-        df = df[df["Mes"] == mes]
+    if meses:
+        df = df[df["Mes"].isin(meses)]
     if placa and placa != "Todos":
         df = df[df["PLACA"] == placa]
     if tipo and tipo != "Todos":
@@ -1005,6 +1050,7 @@ def _safe_total(
     *,
     ano: int | None = None,
     mes: int | None = None,
+    meses: list[int] | None = None,
 ) -> dict:
     try:
         df = loader()
@@ -1021,7 +1067,7 @@ def _safe_total(
         valores_periodo = {str(periodo) for periodo in period_series.dropna().unique()}
         periodos_disponiveis = sorted(valores_periodo)
 
-    df = _filter_by_period(df, ano=ano, mes=mes)
+    df = _filter_by_period(df, ano=ano, mes=mes, meses=meses or [])
 
     try:
         resumo = aggregator(df)
@@ -1056,9 +1102,12 @@ def _safe_total(
     }
 
 
-def compute_overview_totals(*, ano: int | None = None, mes: int | None = None) -> dict:
+def compute_overview_totals(*, ano: int | None = None, mes: int | None = None, meses_lista: list[int] | None = None) -> dict:
     ano = _parse_int(ano)
     mes = _parse_int(mes, min_value=1, max_value=12)
+    meses_lista = list(meses_lista or [])
+    if mes is not None and mes not in meses_lista:
+        meses_lista.append(mes)
     areas = {
         "combustivel": (load_combustivel, agg_combustivel, "custo_total", "Custo"),
         "manutencao": (load_manutencao, agg_manutencao, "custo_total", "Custo"),
@@ -1067,7 +1116,7 @@ def compute_overview_totals(*, ano: int | None = None, mes: int | None = None) -
     }
 
     chave_cache = tuple(_CACHE_MAP[nome]["mtime"] for nome in ("combustivel", "manutencao", "hoteis", "pedagio"))
-    use_cache = ano is None and mes is None
+    use_cache = ano is None and mes is None and not meses_lista
     if (
         use_cache
         and _OVERVIEW_CACHE["mtimes"] == chave_cache
@@ -1096,6 +1145,7 @@ def compute_overview_totals(*, ano: int | None = None, mes: int | None = None) -
                 valor_col,
                 ano=ano,
                 mes=mes,
+                meses=meses_lista,
             ): nome
             for nome, (loader, aggregator, chave, valor_col) in areas.items()
         }
@@ -1124,7 +1174,7 @@ def compute_overview_totals(*, ano: int | None = None, mes: int | None = None) -
     detalhes["periodos_disponiveis"] = periodos_ordenados
     detalhes["anos_disponiveis"] = anos_disponiveis
     detalhes["meses_disponiveis"] = meses_disponiveis
-    detalhes["filtro"] = {"ano": ano, "mes": mes}
+    detalhes["filtro"] = {"ano": ano, "mes": mes, "meses": meses_lista}
 
     if use_cache:
         _OVERVIEW_CACHE["mtimes"] = tuple(
@@ -1138,7 +1188,10 @@ def compute_overview_totals(*, ano: int | None = None, mes: int | None = None) -
 def data_overview():
     ano = _parse_int(request.args.get("ano"))
     mes = _parse_int(request.args.get("mes"), min_value=1, max_value=12)
-    return jsonify(compute_overview_totals(ano=ano, mes=mes))
+    meses_lista = _parse_mes_int_list(request.args.getlist("mes"))
+    if mes is not None and mes not in meses_lista:
+        meses_lista.append(mes)
+    return jsonify(compute_overview_totals(ano=ano, mes=mes, meses_lista=meses_lista))
 
 
 if __name__ == "__main__":

@@ -6,6 +6,7 @@
   <title>JR Dashboard - Combust&iacute;vel</title>
   <link rel="icon" href="{{ url_for('static', filename='logo-jr.png') }}">
   <script src="https://cdn.plot.ly/plotly-2.35.2.min.js" defer></script>
+  <script src="https://cdn.jsdelivr.net/npm/html2canvas@1.4.1/dist/html2canvas.min.js" defer></script>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;800&display=swap" rel="stylesheet">
@@ -18,7 +19,7 @@
       <h1>JR DASHBOARD &bull; Combust&iacute;vel</h1>
     </div>
     <div class="filters">
-      <select id="mes"></select>
+      <select id="mes" multiple></select>
       <select id="placa"></select>
       <select id="posto"></select>
       <select id="combustivel"></select>
@@ -29,45 +30,52 @@
   </header>
 
   <main class="container">
+    <div class="export-bar">
+      <button type="button" class="export-btn" id="export-comb-cards">Exportar cards (PNG)</button>
+      <button type="button" class="export-btn" id="export-comb-page">Exportar p&aacute;gina (PNG)</button>
+      <button type="button" class="toggle-btn" id="toggle-comb-cards">Ocultar cards</button>
+      <button type="button" class="toggle-btn" id="toggle-comb-charts">Ocultar gr&aacute;ficos</button>
+    </div>
+    <div class="visibility-panel" id="visibility-comb"></div>
     <section class="kpis">
-      <div class="kpi red">
+      <div class="kpi red" id="kpi-card-total">
         <div class="kpi-title">Total (R$)</div>
         <div id="kpi-custo" class="kpi-value">--</div>
       </div>
-      <div class="kpi yellow">
+      <div class="kpi yellow" id="kpi-card-media-mensal">
         <div class="kpi-title">M&eacute;dia mensal (R$)</div>
         <div id="kpi-media-mensal" class="kpi-value">--</div>
       </div>
-      <div class="kpi blue">
+      <div class="kpi blue" id="kpi-card-km-total">
         <div class="kpi-title">KM total</div>
         <div id="kpi-km" class="kpi-value">--</div>
       </div>
-      <div class="kpi yellow">
+      <div class="kpi yellow" id="kpi-card-litros">
         <div class="kpi-title">Total litros</div>
         <div id="kpi-litros" class="kpi-value">--</div>
       </div>
-      <div class="kpi green">
+      <div class="kpi green" id="kpi-card-custo-km">
         <div class="kpi-title">Custo m&eacute;dio por KM</div>
         <div id="kpi-custo-km" class="kpi-value">--</div>
       </div>
-      <div class="kpi green">
+      <div class="kpi green" id="kpi-card-km-litro">
         <div class="kpi-title">M&eacute;dia KM/L</div>
         <div id="kpi-km-litro" class="kpi-value">--</div>
       </div>
-      <div class="kpi green">
+      <div class="kpi green" id="kpi-card-custo-litro">
         <div class="kpi-title">Custo m&eacute;dio por litro</div>
         <div id="kpi-custo-litro" class="kpi-value">--</div>
       </div>
     </section>
 
     <section class="grid">
-      <div class="card"><h2>Gasto total por m&ecirc;s</h2><div id="chart-custo-mes"></div></div>
-      <div class="card"><h2>Gasto semanal (&uacute;ltimos 7 dias)</h2><div id="chart-semanal"></div></div>
-      <div class="card"><h2>Gasto por posto</h2><div id="chart-posto"></div></div>
-      <div class="card"><h2>Gasto por combust&iacute;vel</h2><div id="chart-comb"></div></div>
-      <div class="card"><h2>Gasto por placa</h2><div id="chart-placa"></div></div>
-      <div class="card"><h2>KM por m&ecirc;s</h2><div id="chart-km-mes"></div></div>
-      <div class="card"><h2>Litros por m&ecirc;s</h2><div id="chart-litros-mes"></div></div>
+      <div class="card" id="card-custo-mes"><h2>Gasto total por m&ecirc;s</h2><div id="chart-custo-mes"></div></div>
+      <div class="card" id="card-semanal"><h2>Gasto semanal (&uacute;ltimos 7 dias)</h2><div id="chart-semanal"></div></div>
+      <div class="card" id="card-posto"><h2>Gasto por posto</h2><div id="chart-posto"></div></div>
+      <div class="card" id="card-combustivel"><h2>Gasto por combust&iacute;vel</h2><div id="chart-comb"></div></div>
+      <div class="card" id="card-placa"><h2>Gasto por placa</h2><div id="chart-placa"></div></div>
+      <div class="card" id="card-km-mes"><h2>KM por m&ecirc;s</h2><div id="chart-km-mes"></div></div>
+      <div class="card" id="card-litros-mes"><h2>Litros por m&ecirc;s</h2><div id="chart-litros-mes"></div></div>
     </section>
   </main>
 
@@ -79,15 +87,79 @@
 const fmtBRL = (value) => Number(value || 0).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
 const fmtNum = (value) => Number(value || 0).toLocaleString('pt-BR');
 const safeArray = (source, key) => (source && Array.isArray(source[key])) ? source[key] : [];
+const ensureExportButton = (chartId, filename) => {
+  const chart = document.getElementById(chartId);
+  if (!chart) return;
+  const parent = chart.parentElement;
+  if (!parent) return;
+  parent.style.position = parent.style.position || 'relative';
+  let btn = parent.querySelector(`button.chart-export[data-for="${chartId}"]`);
+  if (!btn) {
+    btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'chart-export';
+    btn.dataset.for = chartId;
+    btn.textContent = 'PNG';
+    parent.appendChild(btn);
+  }
+  btn.onclick = () => Plotly.downloadImage(chartId, { format: 'png', filename: filename || chartId, scale: 2 });
+};
+// Export helper: clona o elemento dentro de um wrapper com padding/largura fixa para capturar a sombra no PNG.
+const exportElementToPng = async (el, filename) => {
+  if (!el || typeof html2canvas !== 'function') return;
+  const bg = getComputedStyle(document.body).backgroundColor || '#f5f6fa';
+  const rect = el.getBoundingClientRect();
+  const clone = el.cloneNode(true);
+  clone.style.width = `${rect.width}px`;
+  const wrapper = document.createElement('div');
+  wrapper.style.padding = '20px';
+  wrapper.style.background = bg;
+  wrapper.style.display = 'block';
+  wrapper.style.width = `${rect.width + 40}px`; // padding somado para acomodar sombra
+  wrapper.style.boxSizing = 'border-box';
+  wrapper.style.position = 'relative';
+  wrapper.appendChild(clone);
+  document.body.appendChild(wrapper);
+  const canvas = await html2canvas(wrapper, { scale: 2, backgroundColor: bg, useCORS: true });
+  document.body.removeChild(wrapper);
+  const link = document.createElement('a');
+  link.download = `${filename || 'export'}.png`;
+  link.href = canvas.toDataURL('image/png');
+  link.click();
+};
+
+function setupVisibility(panelId, items) {
+  const panel = document.getElementById(panelId);
+  if (!panel) return;
+  panel.innerHTML = '';
+  items.forEach(({ selector, label }) => {
+    const target = document.querySelector(selector);
+    if (!target) return;
+    const inputId = `${panelId}-${selector.replace(/[^a-z0-9]/gi, '')}`;
+    const wrapper = document.createElement('label');
+    const checkbox = document.createElement('input');
+    checkbox.type = 'checkbox';
+    checkbox.id = inputId;
+    checkbox.checked = !target.classList.contains('hidden-section');
+    checkbox.addEventListener('change', () => {
+      target.classList.toggle('hidden-section', !checkbox.checked);
+    });
+    const text = document.createTextNode(label);
+    wrapper.setAttribute('for', inputId);
+    wrapper.appendChild(checkbox);
+    wrapper.appendChild(text);
+    panel.appendChild(wrapper);
+  });
+}
+
 
 async function fetchData() {
-  const params = new URLSearchParams({
-    mes: document.getElementById('mes').value || 'Todos',
-    placa: document.getElementById('placa').value || 'Todos',
-    posto: document.getElementById('posto').value || 'Todos',
-    combustivel: document.getElementById('combustivel').value || 'Todos',
-    segmento: document.getElementById('segmento').value || 'Todos'
-  });
+  const params = new URLSearchParams();
+  appendMulti(params, 'mes', getSelectValues('mes'));
+  params.append('placa', document.getElementById('placa').value || 'Todos');
+  params.append('posto', document.getElementById('posto').value || 'Todos');
+  params.append('combustivel', document.getElementById('combustivel').value || 'Todos');
+  params.append('segmento', document.getElementById('segmento').value || 'Todos');
   const res = await fetch('/data/combustivel?' + params.toString());
   return await res.json();
 }
@@ -109,6 +181,72 @@ function fillSelect(id, values, label) {
   if ([...el.options].some((option) => option.value === current)) {
     el.value = current;
   }
+}
+
+const getSelectValues = (id) => {
+  const el = document.getElementById(id);
+  if (!el) return [];
+  return Array.from(el.selectedOptions || []).map((opt) => opt.value);
+};
+
+function fillSelectMulti(id, values, label) {
+  const el = document.getElementById(id);
+  if (!el) return;
+  const current = getSelectValues(id);
+  el.innerHTML = '';
+  const optAll = document.createElement('option');
+  optAll.value = 'Todos';
+  optAll.textContent = `${label} (Todos)`;
+  el.appendChild(optAll);
+  (values || []).forEach((value) => {
+    const opt = document.createElement('option');
+    opt.value = value;
+    opt.textContent = value;
+    el.appendChild(opt);
+  });
+  const optionMap = new Map(Array.from(el.options || []).map((opt) => [opt.value, opt]));
+  const selection = current.filter((value) => optionMap.has(value));
+  const finalSelection = selection.length ? selection : ['Todos'];
+  finalSelection.forEach((value) => {
+    const opt = optionMap.get(value);
+    if (opt) opt.selected = true;
+  });
+}
+
+function appendMulti(params, key, values) {
+  const list = (values || []).filter((value) => value !== '');
+  const hasTodos = list.includes('Todos');
+  const cleaned = hasTodos && list.length > 1 ? list.filter((value) => value !== 'Todos') : list;
+  if (!cleaned.length || cleaned.includes('Todos')) {
+    params.append(key, 'Todos');
+    return;
+  }
+  cleaned.forEach((value) => params.append(key, value));
+}
+
+function resetMultiSelect(id) {
+  const el = document.getElementById(id);
+  if (!el) return;
+  Array.from(el.options || []).forEach((opt, idx) => {
+    opt.selected = idx === 0;
+  });
+}
+
+function enhanceMultiSelect(id, expandedSize = 10) {
+  const el = document.getElementById(id);
+  if (!el) return;
+  el.multiple = true;
+  el.size = 1;
+  const expand = () => {
+    el.classList.add('expanded');
+    el.size = Math.min(expandedSize, el.options.length);
+  };
+  const collapse = () => {
+    el.classList.remove('expanded');
+    el.size = 1;
+  };
+  el.addEventListener('focus', expand);
+  el.addEventListener('blur', collapse);
 }
 
 function drawBarVertical(divId, labelsSource, valuesSource, options = {}) {
@@ -208,6 +346,7 @@ function drawBarVertical(divId, labelsSource, valuesSource, options = {}) {
         tickfont: { size: 11 },
         categoryorder: 'array',
         categoryarray: plottingLabels,
+        autorange: 'reversed',
       },
       hovermode: 'closest',
     };
@@ -299,7 +438,7 @@ async function refresh() {
   const d = await fetchData();
 
   if (!refresh._init) {
-    fillSelect('mes', d.meses, 'M\u00EAs');
+    fillSelectMulti('mes', d.meses, 'M\u00EAs');
     fillSelect('placa', d.placas, 'Placa');
     fillSelect('posto', d.postos, 'Posto');
     fillSelect('combustivel', d.combustiveis, 'Combust\u00EDvel');
@@ -308,11 +447,13 @@ async function refresh() {
       document.getElementById(id).addEventListener('change', refresh);
     });
     document.getElementById('limpar').addEventListener('click', () => {
-      ['mes', 'placa', 'posto', 'combustivel', 'segmento'].forEach((id) => {
+      resetMultiSelect('mes');
+      ['placa', 'posto', 'combustivel', 'segmento'].forEach((id) => {
         document.getElementById(id).value = 'Todos';
       });
       refresh();
     });
+    enhanceMultiSelect('mes');
     refresh._init = true;
   }
 
@@ -345,6 +486,7 @@ async function refresh() {
   };
 
   Plotly.newPlot('chart-custo-mes', [traceLine], { ...plotlyTheme.layout, ...layoutCusto }, plotlyTheme.config);
+  ensureExportButton('chart-custo-mes', 'combustivel-gasto-mensal');
 
   const diasSemana = safeArray(d.gasto_semana, 'Dia');
   const custosSemana = safeArray(d.gasto_semana, 'Custo');
@@ -360,12 +502,16 @@ async function refresh() {
     yaxis: { title: 'R$', rangemode: 'tozero' }
   };
   Plotly.newPlot('chart-semanal', [traceSemana], { ...plotlyTheme.layout, ...layoutSemana }, plotlyTheme.config);
+  ensureExportButton('chart-semanal', 'combustivel-gasto-semanal');
 
   drawPie('chart-posto', safeArray(d.gasto_por_posto, 'POSTOS'), safeArray(d.gasto_por_posto, 'Custo'));
+  ensureExportButton('chart-posto', 'combustivel-gasto-por-posto');
   drawPie('chart-comb', safeArray(d.gasto_por_combustivel, 'Combustivel'), safeArray(d.gasto_por_combustivel, 'Custo'));
+  ensureExportButton('chart-comb', 'combustivel-gasto-por-combustivel');
   const placas = safeArray(d.gasto_por_placa, 'PLACA');
   const gastoPlaca = safeArray(d.gasto_por_placa, 'Custo');
   drawBarVertical('chart-placa', placas, gastoPlaca, { autoOrient: true, threshold: 10, sort: 'desc', enableScroll: true });
+  ensureExportButton('chart-placa', 'combustivel-gasto-por-placa');
   drawBarVertical('chart-km-mes', safeArray(d.km_mensal, 'Mes'), safeArray(d.km_mensal, 'Km Rodados'), {
     valueFormat: 'number',
     hoverSuffix: ' km',
@@ -373,6 +519,7 @@ async function refresh() {
     tickSuffix: '',
     decimals: 0,
   });
+  ensureExportButton('chart-km-mes', 'combustivel-km-por-mes');
   drawBarVertical('chart-litros-mes', safeArray(d.litros_mensal, 'Mes'), safeArray(d.litros_mensal, 'Litros'), {
     valueFormat: 'number',
     hoverSuffix: ' L',
@@ -380,6 +527,65 @@ async function refresh() {
     tickSuffix: '',
     decimals: 0,
   });
+  ensureExportButton('chart-litros-mes', 'combustivel-litros-por-mes');
+
+  const kpiSection = document.querySelector('.kpis');
+  const page = document.querySelector('main.container');
+  const exportCards = document.getElementById('export-comb-cards');
+  const exportPage = document.getElementById('export-comb-page');
+  const root = document.documentElement;
+  const toggleCards = document.getElementById('toggle-comb-cards');
+  const toggleCharts = document.getElementById('toggle-comb-charts');
+  const chartsSection = document.querySelector('.grid');
+  const setToggle = (btn, el, stateLabel) => {
+    if (!btn || !el) return;
+    const hidden = el.classList.contains('hidden-section');
+    btn.textContent = hidden ? `Mostrar ${stateLabel}` : `Ocultar ${stateLabel}`;
+  };
+  if (toggleCards && kpiSection) {
+    toggleCards.onclick = () => {
+      kpiSection.classList.toggle('hidden-section');
+      setToggle(toggleCards, kpiSection, 'cards');
+    };
+    setToggle(toggleCards, kpiSection, 'cards');
+  }
+  if (toggleCharts && chartsSection) {
+    toggleCharts.onclick = () => {
+      chartsSection.classList.toggle('hidden-section');
+      setToggle(toggleCharts, chartsSection, 'gráficos');
+    };
+    setToggle(toggleCharts, chartsSection, 'gráficos');
+  }
+  setupVisibility('visibility-comb', [
+    { selector: '#kpi-card-total', label: 'Total' },
+    { selector: '#kpi-card-media-mensal', label: 'Média mensal' },
+    { selector: '#kpi-card-km-total', label: 'KM total' },
+    { selector: '#kpi-card-litros', label: 'Total litros' },
+    { selector: '#kpi-card-custo-km', label: 'Custo por KM' },
+    { selector: '#kpi-card-km-litro', label: 'Média KM/L' },
+    { selector: '#kpi-card-custo-litro', label: 'Custo por litro' },
+    { selector: '#card-custo-mes', label: 'Gasto por mês' },
+    { selector: '#card-semanal', label: 'Gasto semanal' },
+    { selector: '#card-posto', label: 'Gasto por posto' },
+    { selector: '#card-combustivel', label: 'Gasto por combustível' },
+    { selector: '#card-placa', label: 'Gasto por placa' },
+    { selector: '#card-km-mes', label: 'KM por mês' },
+    { selector: '#card-litros-mes', label: 'Litros por mês' },
+  ]);
+  if (exportCards && kpiSection) {
+    exportCards.onclick = async () => {
+      root.classList.add('exporting');
+      await exportElementToPng(kpiSection, 'combustivel-cards');
+      root.classList.remove('exporting');
+    };
+  }
+  if (exportPage && page) {
+    exportPage.onclick = async () => {
+      root.classList.add('exporting');
+      await exportElementToPng(page, 'combustivel-pagina');
+      root.classList.remove('exporting');
+    };
+  }
 }
 
 const plotlyTheme = {

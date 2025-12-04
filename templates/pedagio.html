@@ -6,6 +6,7 @@
   <title>JR Dashboard - Ped&aacute;gio, Seguro e IPVA</title>
   <link rel="icon" href="{{ url_for('static', filename='logo-jr.png') }}">
   <script src="https://cdn.plot.ly/plotly-2.35.2.min.js" defer></script>
+  <script src="https://cdn.jsdelivr.net/npm/html2canvas@1.4.1/dist/html2canvas.min.js" defer></script>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;800&display=swap" rel="stylesheet">
@@ -18,7 +19,7 @@
       <h1>JR DASHBOARD &bull; Ped&aacute;gio, Seguro e IPVA</h1>
     </div>
     <div class="filters">
-      <select id="mes"></select>
+      <select id="mes" multiple></select>
       <select id="placa"></select>
       <select id="tipo"></select>
       <select id="segmento"></select>
@@ -28,44 +29,51 @@
   </header>
 
   <main class="container">
+    <div class="export-bar">
+      <button type="button" class="export-btn" id="export-ped-cards">Exportar cards (PNG)</button>
+      <button type="button" class="export-btn" id="export-ped-page">Exportar p&aacute;gina (PNG)</button>
+      <button type="button" class="toggle-btn" id="toggle-ped-cards">Ocultar cards</button>
+      <button type="button" class="toggle-btn" id="toggle-ped-charts">Ocultar gr&aacute;ficos</button>
+    </div>
+    <div class="visibility-panel" id="visibility-ped"></div>
     <p id="status-message" style="text-align:center;color:#1C2D6B;font-weight:600;margin-bottom:1.2rem;"></p>
     <section class="kpis">
-      <div class="kpi red">
+      <div class="kpi red" id="kpi-ped-total-card">
         <div class="kpi-title">Gasto total (R$)</div>
         <div id="kpi-total" class="kpi-value">--</div>
       </div>
-      <div class="kpi yellow">
+      <div class="kpi yellow" id="kpi-ped-media-card">
         <div class="kpi-title">M&eacute;dia mensal (R$)</div>
         <div id="kpi-media-mensal" class="kpi-value">--</div>
       </div>
-      <div class="kpi blue">
+      <div class="kpi blue" id="kpi-ped-pedagio-card">
         <div class="kpi-title">Gasto ped&aacute;gio</div>
         <div id="kpi-pedagio" class="kpi-value">--</div>
       </div>
-      <div class="kpi blue">
+      <div class="kpi blue" id="kpi-ped-ipva-card">
         <div class="kpi-title">Gasto IPVA</div>
         <div id="kpi-ipva" class="kpi-value">--</div>
       </div>
-      <div class="kpi blue">
+      <div class="kpi blue" id="kpi-ped-seguro-card">
         <div class="kpi-title">Gasto seguro</div>
         <div id="kpi-seguro" class="kpi-value">--</div>
       </div>
-      <div class="kpi green">
+      <div class="kpi green" id="kpi-ped-media-valores-card">
         <div class="kpi-title">M&eacute;dia de valores</div>
         <div id="kpi-media-valores" class="kpi-value">--</div>
       </div>
-      <div class="kpi blue">
+      <div class="kpi blue" id="kpi-ped-lancamentos-card">
         <div class="kpi-title">Lan&ccedil;amentos</div>
         <div id="kpi-lancamentos" class="kpi-value">--</div>
       </div>
     </section>
 
     <section class="grid">
-      <div class="card"><h2>Gasto mensal</h2><div id="chart-mensal"></div></div>
-      <div class="card"><h2>Gasto semanal (&uacute;ltimos 7 dias)</h2><div id="chart-semanal"></div></div>
-      <div class="card"><h2>Gasto por tipo</h2><div id="chart-tipo"></div></div>
-      <div class="card"><h2>Gasto por placa</h2><div id="chart-placa"></div></div>
-      <div class="card"><h2>Gasto por segmento</h2><div id="chart-segmento"></div></div>
+      <div class="card" id="card-ped-mensal"><h2>Gasto mensal</h2><div id="chart-mensal"></div></div>
+      <div class="card" id="card-ped-semanal"><h2>Gasto semanal (&uacute;ltimos 7 dias)</h2><div id="chart-semanal"></div></div>
+      <div class="card" id="card-ped-tipo"><h2>Gasto por tipo</h2><div id="chart-tipo"></div></div>
+      <div class="card" id="card-ped-placa"><h2>Gasto por placa</h2><div id="chart-placa"></div></div>
+      <div class="card" id="card-ped-segmento"><h2>Gasto por segmento</h2><div id="chart-segmento"></div></div>
     </section>
   </main>
 
@@ -77,14 +85,62 @@
 const fmtBRL = (value) => Number(value || 0).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
 const fmtNum = (value) => Number(value || 0).toLocaleString('pt-BR');
 const safeArray = (source, key) => (source && Array.isArray(source[key])) ? source[key] : [];
+function setupVisibility(panelId, items) {
+  const panel = document.getElementById(panelId);
+  if (!panel) return;
+  panel.innerHTML = '';
+  items.forEach(({ selector, label }) => {
+    const target = document.querySelector(selector);
+    if (!target) return;
+    const inputId = `${panelId}-${selector.replace(/[^a-z0-9]/gi, '')}`;
+    const wrapper = document.createElement('label');
+    const checkbox = document.createElement('input');
+    checkbox.type = 'checkbox';
+    checkbox.id = inputId;
+    checkbox.checked = !target.classList.contains('hidden-section');
+    checkbox.addEventListener('change', () => {
+      target.classList.toggle('hidden-section', !checkbox.checked);
+    });
+    const text = document.createTextNode(label);
+    wrapper.setAttribute('for', inputId);
+    wrapper.appendChild(checkbox);
+    wrapper.appendChild(text);
+    panel.appendChild(wrapper);
+  });
+}
+const ensureExportButton = (chartId, filename) => {
+  const chart = document.getElementById(chartId);
+  if (!chart) return;
+  const parent = chart.parentElement;
+  if (!parent) return;
+  parent.style.position = parent.style.position || 'relative';
+  let btn = parent.querySelector(`button.chart-export[data-for="${chartId}"]`);
+  if (!btn) {
+    btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'chart-export';
+    btn.dataset.for = chartId;
+    btn.textContent = 'PNG';
+    parent.appendChild(btn);
+  }
+  btn.onclick = () => Plotly.downloadImage(chartId, { format: 'png', filename: filename || chartId, scale: 2 });
+};
+const exportElementToPng = async (el, filename) => {
+  if (!el || typeof html2canvas !== 'function') return;
+  const bg = getComputedStyle(document.body).backgroundColor || '#f5f6fa';
+  const canvas = await html2canvas(el, { scale: 2, backgroundColor: bg, useCORS: true });
+  const link = document.createElement('a');
+  link.download = `${filename || 'export'}.png`;
+  link.href = canvas.toDataURL('image/png');
+  link.click();
+};
 
 async function fetchData() {
-  const params = new URLSearchParams({
-    mes: document.getElementById('mes').value || 'Todos',
-    placa: document.getElementById('placa').value || 'Todos',
-    tipo: document.getElementById('tipo').value || 'Todos',
-    segmento: document.getElementById('segmento').value || 'Todos'
-  });
+  const params = new URLSearchParams();
+  appendMulti(params, 'mes', getSelectValues('mes'));
+  params.append('placa', document.getElementById('placa').value || 'Todos');
+  params.append('tipo', document.getElementById('tipo').value || 'Todos');
+  params.append('segmento', document.getElementById('segmento').value || 'Todos');
   const res = await fetch('/data/pedagio?' + params.toString());
   if (!res.ok) {
     throw new Error('Falha ao carregar dados (' + res.status + ')');
@@ -109,6 +165,72 @@ function fillSelect(id, values, label) {
   if ([...el.options].some((option) => option.value === current)) {
     el.value = current;
   }
+}
+
+const getSelectValues = (id) => {
+  const el = document.getElementById(id);
+  if (!el) return [];
+  return Array.from(el.selectedOptions || []).map((opt) => opt.value);
+};
+
+function fillSelectMulti(id, values, label) {
+  const el = document.getElementById(id);
+  if (!el) return;
+  const current = getSelectValues(id);
+  el.innerHTML = '';
+  const optAll = document.createElement('option');
+  optAll.value = 'Todos';
+  optAll.textContent = `${label} (Todos)`;
+  el.appendChild(optAll);
+  (values || []).forEach((value) => {
+    const opt = document.createElement('option');
+    opt.value = value;
+    opt.textContent = value;
+    el.appendChild(opt);
+  });
+  const optionMap = new Map(Array.from(el.options || []).map((opt) => [opt.value, opt]));
+  const selection = current.filter((value) => optionMap.has(value));
+  const finalSelection = selection.length ? selection : ['Todos'];
+  finalSelection.forEach((value) => {
+    const opt = optionMap.get(value);
+    if (opt) opt.selected = true;
+  });
+}
+
+function appendMulti(params, key, values) {
+  const list = (values || []).filter((value) => value !== '');
+  const hasTodos = list.includes('Todos');
+  const cleaned = hasTodos && list.length > 1 ? list.filter((value) => value !== 'Todos') : list;
+  if (!cleaned.length || cleaned.includes('Todos')) {
+    params.append(key, 'Todos');
+    return;
+  }
+  cleaned.forEach((value) => params.append(key, value));
+}
+
+function resetMultiSelect(id) {
+  const el = document.getElementById(id);
+  if (!el) return;
+  Array.from(el.options || []).forEach((opt, idx) => {
+    opt.selected = idx === 0;
+  });
+}
+
+function enhanceMultiSelect(id, expandedSize = 10) {
+  const el = document.getElementById(id);
+  if (!el) return;
+  el.multiple = true;
+  el.size = 1;
+  const expand = () => {
+    el.classList.add('expanded');
+    el.size = Math.min(expandedSize, el.options.length);
+  };
+  const collapse = () => {
+    el.classList.remove('expanded');
+    el.size = 1;
+  };
+  el.addEventListener('focus', expand);
+  el.addEventListener('blur', collapse);
 }
 
 function drawBar(divId, labels, values, opts = {}) {
@@ -244,7 +366,7 @@ async function refresh() {
     const d = await fetchData();
 
     if (!refresh._init) {
-      fillSelect('mes', d.meses, 'M\u00EAs');
+      fillSelectMulti('mes', d.meses, 'M\u00EAs');
       fillSelect('placa', d.placas, 'Placa');
       fillSelect('tipo', d.tipos, 'Tipo');
       fillSelect('segmento', d.segmentos, 'Segmento');
@@ -252,7 +374,8 @@ async function refresh() {
         document.getElementById(id).addEventListener('change', refresh);
       });
       document.getElementById('limpar').addEventListener('click', () => {
-        ['mes', 'placa', 'tipo', 'segmento'].forEach((id) => {
+        resetMultiSelect('mes');
+        ['placa', 'tipo', 'segmento'].forEach((id) => {
           const select = document.getElementById(id);
           if (select) {
             select.value = 'Todos';
@@ -260,6 +383,7 @@ async function refresh() {
         });
         refresh();
       });
+      enhanceMultiSelect('mes');
       refresh._init = true;
     }
 
@@ -289,6 +413,7 @@ async function refresh() {
       yaxis: { title: 'R$' }
     };
     Plotly.newPlot('chart-mensal', [lineTrace], { ...plotlyTheme.layout, ...layoutMensal }, plotlyTheme.config);
+    ensureExportButton('chart-mensal', 'pedagio-gasto-mensal');
 
     const diasSemana = safeArray(d.custo_semana, 'Dia');
     const valoresSemana = safeArray(d.custo_semana, 'Custo');
@@ -304,10 +429,70 @@ async function refresh() {
       yaxis: { title: 'R$', rangemode: 'tozero' }
     };
     Plotly.newPlot('chart-semanal', [traceSemana], { ...plotlyTheme.layout, ...layoutSemana }, plotlyTheme.config);
+    ensureExportButton('chart-semanal', 'pedagio-gasto-semanal');
 
     drawPie('chart-tipo', safeArray(d.gasto_por_tipo, 'Tipo'), safeArray(d.gasto_por_tipo, 'Custo'));
+    ensureExportButton('chart-tipo', 'pedagio-gasto-por-tipo');
     drawBar('chart-placa', safeArray(d.gasto_por_placa, 'PLACA'), safeArray(d.gasto_por_placa, 'Custo'), { autoOrient: true, threshold: 8, enableScroll: true, sort: 'desc' });
+    ensureExportButton('chart-placa', 'pedagio-gasto-por-placa');
     drawBar('chart-segmento', safeArray(d.gasto_por_categoria, 'Categoria'), safeArray(d.gasto_por_categoria, 'Custo'));
+    ensureExportButton('chart-segmento', 'pedagio-gasto-por-segmento');
+
+    const kpiSection = document.querySelector('.kpis');
+    const page = document.querySelector('main.container');
+    const exportCards = document.getElementById('export-ped-cards');
+    const exportPage = document.getElementById('export-ped-page');
+    const toggleCards = document.getElementById('toggle-ped-cards');
+    const toggleCharts = document.getElementById('toggle-ped-charts');
+    const chartsSection = document.querySelector('.grid');
+    const setToggle = (btn, el, stateLabel) => {
+      if (!btn || !el) return;
+      const hidden = el.classList.contains('hidden-section');
+      btn.textContent = hidden ? `Mostrar ${stateLabel}` : `Ocultar ${stateLabel}`;
+    };
+    if (toggleCards && kpiSection) {
+      toggleCards.onclick = () => {
+        kpiSection.classList.toggle('hidden-section');
+        setToggle(toggleCards, kpiSection, 'cards');
+      };
+      setToggle(toggleCards, kpiSection, 'cards');
+    }
+    if (toggleCharts && chartsSection) {
+      toggleCharts.onclick = () => {
+        chartsSection.classList.toggle('hidden-section');
+        setToggle(toggleCharts, chartsSection, 'gráficos');
+      };
+      setToggle(toggleCharts, chartsSection, 'gráficos');
+    }
+    const root = document.documentElement;
+    setupVisibility('visibility-ped', [
+      { selector: '#kpi-ped-total-card', label: 'Gasto total' },
+      { selector: '#kpi-ped-media-card', label: 'Média mensal' },
+      { selector: '#kpi-ped-pedagio-card', label: 'Gasto pedágio' },
+      { selector: '#kpi-ped-ipva-card', label: 'Gasto IPVA' },
+      { selector: '#kpi-ped-seguro-card', label: 'Gasto seguro' },
+      { selector: '#kpi-ped-media-valores-card', label: 'Média de valores' },
+      { selector: '#kpi-ped-lancamentos-card', label: 'Lançamentos' },
+      { selector: '#card-ped-mensal', label: 'Gasto mensal' },
+      { selector: '#card-ped-semanal', label: 'Gasto semanal' },
+      { selector: '#card-ped-tipo', label: 'Gasto por tipo' },
+      { selector: '#card-ped-placa', label: 'Gasto por placa' },
+      { selector: '#card-ped-segmento', label: 'Gasto por segmento' },
+    ]);
+    if (exportCards && kpiSection) {
+      exportCards.onclick = async () => {
+        root.classList.add('exporting');
+        await exportElementToPng(kpiSection, 'pedagio-cards');
+        root.classList.remove('exporting');
+      };
+    }
+    if (exportPage && page) {
+      exportPage.onclick = async () => {
+        root.classList.add('exporting');
+        await exportElementToPng(page, 'pedagio-pagina');
+        root.classList.remove('exporting');
+      };
+    }
   } catch (error) {
     console.error(error);
     statusEl.textContent = 'Nao foi possivel carregar os dados. Verifique a planilha e recarregue a pagina.';

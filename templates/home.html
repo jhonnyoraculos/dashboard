@@ -5,6 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>JR Dashboard</title>
   <link rel="icon" href="{{ url_for('static', filename='logo-jr.png') }}">
+  <script src="https://cdn.jsdelivr.net/npm/html2canvas@1.4.1/dist/html2canvas.min.js" defer></script>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;800&display=swap" rel="stylesheet">
@@ -24,6 +25,11 @@
       <a class="home-cta" href="#dashboards">Explorar dashboards</a>
     </header>
     <section class="home-total-section">
+      <div class="export-bar">
+        <button type="button" class="export-btn" id="export-home-cards">Exportar cards (PNG)</button>
+        <button type="button" class="export-btn" id="export-home-page">Exportar p&aacute;gina (PNG)</button>
+        <button type="button" class="toggle-btn" id="toggle-home-cards">Ocultar cards</button>
+      </div>
       <div class="home-total-grid">
         <div class="home-total-card home-total-card--secondary">
           <p class="home-total-label">Gasto consolidado (todas as planilhas)</p>
@@ -50,7 +56,7 @@
         </div>
         <div class="home-filter-field">
           <label for="home-filter-mes">M&ecirc;s</label>
-          <select id="home-filter-mes">
+          <select id="home-filter-mes" multiple>
             <option value="Todos">Todos</option>
           </select>
         </div>
@@ -124,7 +130,7 @@
   <script>
     const fmtBRL = (value) => Number(value || 0).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
     const MONTH_NAMES = ['Janeiro', 'Fevereiro', 'Mar\u00E7o', 'Abril', 'Maio', 'Junho', 'Julho', 'Agosto', 'Setembro', 'Outubro', 'Novembro', 'Dezembro'];
-    const filterState = { ano: 'Todos', mes: 'Todos', initialized: false };
+    const filterState = { ano: 'Todos', meses: ['Todos'], initialized: false };
     let overviewRequestId = 0;
 
     function applyStatus(element, message, isAlert = false) {
@@ -137,21 +143,75 @@
       }
     }
 
+    const exportElementToPng = async (el, filename) => {
+      if (!el || typeof html2canvas !== 'function') return;
+      const canvas = await html2canvas(el, { scale: 2, backgroundColor: '#fff', useCORS: true });
+      const link = document.createElement('a');
+      link.download = `${filename || 'export'}.png`;
+      link.href = canvas.toDataURL('image/png');
+      link.click();
+    };
+
+    const getSelectValues = (id) => {
+      const el = document.getElementById(id);
+      if (!el) return [];
+      return Array.from(el.selectedOptions || []).map((opt) => opt.value);
+    };
+
+    function appendMulti(params, key, values) {
+      const list = (values || []).filter((value) => value !== '');
+      const hasTodos = list.includes('Todos');
+      const cleaned = hasTodos && list.length > 1 ? list.filter((value) => value !== 'Todos') : list;
+      if (!cleaned.length || cleaned.includes('Todos')) {
+        params.append(key, 'Todos');
+        return;
+      }
+      cleaned.forEach((value) => params.append(key, value));
+    }
+
+    function resetMultiSelect(id) {
+      const el = document.getElementById(id);
+      if (!el) return;
+      Array.from(el.options || []).forEach((opt, idx) => {
+        opt.selected = idx === 0;
+      });
+    }
+
+    function enhanceMultiSelect(id, expandedSize = 10) {
+      const el = document.getElementById(id);
+      if (!el) return;
+      el.multiple = true;
+      el.size = 1;
+      const expand = () => {
+        el.classList.add('expanded');
+        el.size = Math.min(expandedSize, el.options.length);
+      };
+      const collapse = () => {
+        el.classList.remove('expanded');
+        el.size = 1;
+      };
+      el.addEventListener('focus', expand);
+      el.addEventListener('blur', collapse);
+    }
+
     function monthLabel(value) {
       const num = Number(value);
       if (!Number.isFinite(num) || num < 1 || num > 12) return String(value);
       return `${String(num).padStart(2, '0')} - ${MONTH_NAMES[num - 1]}`;
     }
 
-    function describeFilterValue(ano, mes) {
+    function describeFilterValue(ano, meses = []) {
       const hasAno = Number.isFinite(ano);
-      const hasMes = Number.isFinite(mes);
-      if (!hasAno && !hasMes) return '';
-      if (hasMes && hasAno) {
-        return `Filtro aplicado: ${MONTH_NAMES[mes - 1] ?? mes}/${ano}.`;
+      const mesesValidos = (meses || []).filter((m) => Number.isFinite(m));
+      if (!hasAno && !mesesValidos.length) return '';
+      const mesesLabel = mesesValidos
+        .map((mes) => MONTH_NAMES[mes - 1] ?? mes)
+        .join(', ');
+      if (mesesValidos.length && hasAno) {
+        return `Filtro aplicado: ${mesesLabel}/${ano}.`;
       }
-      if (hasMes) {
-        return `Filtro aplicado: ${MONTH_NAMES[mes - 1] ?? mes}.`;
+      if (mesesValidos.length) {
+        return `Filtro aplicado: ${mesesLabel}.`;
       }
       return `Filtro aplicado: ${ano}.`;
     }
@@ -178,6 +238,30 @@
       }
     }
 
+    function populateFilterSelectMulti(selectId, values, formatter) {
+      const select = document.getElementById(selectId);
+      if (!select) return;
+      const current = getSelectValues(selectId);
+      select.innerHTML = '';
+      const optAll = document.createElement('option');
+      optAll.value = 'Todos';
+      optAll.textContent = 'Todos';
+      select.appendChild(optAll);
+      (values || []).forEach((value) => {
+        const option = document.createElement('option');
+        option.value = String(value);
+        option.textContent = formatter ? formatter(value) : String(value);
+        select.appendChild(option);
+      });
+      const optionMap = new Map(Array.from(select.options || []).map((opt) => [opt.value, opt]));
+      const selection = current.filter((value) => optionMap.has(value));
+      const finalSelection = selection.length ? selection : ['Todos'];
+      finalSelection.forEach((value) => {
+        const opt = optionMap.get(value);
+        if (opt) opt.selected = true;
+      });
+    }
+
     function syncFilterStateFromResponse(filtro) {
       if (typeof filtro?.ano === 'number') {
         filterState.ano = String(filtro.ano);
@@ -185,54 +269,64 @@
         filterState.ano = 'Todos';
       }
 
-      if (typeof filtro?.mes === 'number') {
-        filterState.mes = String(filtro.mes);
-      } else if (filtro && (filtro.mes === null || filtro.mes === undefined)) {
-        filterState.mes = 'Todos';
+      const mesesResp = Array.isArray(filtro?.meses) ? filtro.meses : (typeof filtro?.mes === 'number' ? [filtro.mes] : []);
+      if (mesesResp.length) {
+        filterState.meses = mesesResp.map((m) => String(m));
+      } else {
+        filterState.meses = ['Todos'];
       }
 
       if (filterState.ano === undefined) filterState.ano = 'Todos';
-      if (filterState.mes === undefined) filterState.mes = 'Todos';
+      if (!Array.isArray(filterState.meses)) filterState.meses = ['Todos'];
     }
 
     function setupOverviewFilters(data) {
       populateFilterSelect('home-filter-ano', data?.anos_disponiveis || [], (value) => String(value));
-      populateFilterSelect('home-filter-mes', data?.meses_disponiveis || [], monthLabel);
+      populateFilterSelectMulti('home-filter-mes', data?.meses_disponiveis || [], monthLabel);
       const anoSelect = document.getElementById('home-filter-ano');
       const mesSelect = document.getElementById('home-filter-mes');
       if (anoSelect) anoSelect.value = filterState.ano || 'Todos';
-      if (mesSelect) mesSelect.value = filterState.mes || 'Todos';
+      if (mesSelect) {
+        const optionMap = new Map(Array.from(mesSelect.options || []).map((opt) => [opt.value, opt]));
+        const selection = (filterState.meses || []).filter((value) => optionMap.has(value));
+        const finalSelection = selection.length ? selection : ['Todos'];
+        finalSelection.forEach((value) => {
+          const opt = optionMap.get(value);
+          if (opt) opt.selected = true;
+        });
+      }
 
       if (!filterState.initialized && anoSelect && mesSelect) {
         anoSelect.addEventListener('change', (event) => {
           filterState.ano = event.target.value || 'Todos';
           loadOverviewTotal();
         });
-        mesSelect.addEventListener('change', (event) => {
-          filterState.mes = event.target.value || 'Todos';
+        mesSelect.addEventListener('change', () => {
+          filterState.meses = getSelectValues('home-filter-mes');
           loadOverviewTotal();
         });
         const clearBtn = document.getElementById('home-filter-clear');
         if (clearBtn) {
           clearBtn.addEventListener('click', () => {
-            if (filterState.ano === 'Todos' && filterState.mes === 'Todos') return;
+            if (filterState.ano === 'Todos' && (filterState.meses || []).includes('Todos')) return;
             filterState.ano = 'Todos';
-            filterState.mes = 'Todos';
+            filterState.meses = ['Todos'];
             if (anoSelect) anoSelect.value = 'Todos';
-            if (mesSelect) mesSelect.value = 'Todos';
+            resetMultiSelect('home-filter-mes');
             loadOverviewTotal();
           });
         }
+        enhanceMultiSelect('home-filter-mes');
         filterState.initialized = true;
       }
     }
 
     function numericFilterState() {
       const ano = Number(filterState.ano);
-      const mes = Number(filterState.mes);
+      const meses = (filterState.meses || []).map((valor) => Number(valor)).filter((num) => Number.isFinite(num));
       return {
         ano: Number.isFinite(ano) ? ano : null,
-        mes: Number.isFinite(mes) ? mes : null,
+        meses,
       };
     }
 
@@ -272,7 +366,7 @@
       try {
         const params = new URLSearchParams();
         if (filterState.ano && filterState.ano !== 'Todos') params.set('ano', filterState.ano);
-        if (filterState.mes && filterState.mes !== 'Todos') params.set('mes', filterState.mes);
+        appendMulti(params, 'mes', filterState.meses || []);
         const query = params.toString();
         const res = await fetch('/data/overview' + (query ? `?${query}` : ''));
         if (!res.ok) {
@@ -296,7 +390,7 @@
         const hasProblemas = problemas.length > 0;
 
         const filtroNums = numericFilterState();
-        const filtroDescricao = describeFilterValue(filtroNums.ano, filtroNums.mes);
+        const filtroDescricao = describeFilterValue(filtroNums.ano, filtroNums.meses);
 
         if (Number.isFinite(total)) {
           const statusMsgParts = [];
@@ -337,6 +431,40 @@
     }
 
     document.addEventListener('DOMContentLoaded', loadOverviewTotal);
+    document.addEventListener('DOMContentLoaded', () => {
+      const cards = document.querySelector('.home-total-grid');
+      const page = document.querySelector('.home-wrapper');
+      const exportCards = document.getElementById('export-home-cards');
+      const exportPage = document.getElementById('export-home-page');
+      const toggleCards = document.getElementById('toggle-home-cards');
+      const root = document.documentElement;
+      const setToggle = (btn, el, label) => {
+        if (!btn || !el) return;
+        const hidden = el.classList.contains('hidden-section');
+        btn.textContent = hidden ? `Mostrar ${label}` : `Ocultar ${label}`;
+      };
+      if (toggleCards && cards) {
+        toggleCards.onclick = () => {
+          cards.classList.toggle('hidden-section');
+          setToggle(toggleCards, cards, 'cards');
+        };
+        setToggle(toggleCards, cards, 'cards');
+      }
+      if (exportCards && cards) {
+        exportCards.onclick = async () => {
+          root.classList.add('exporting');
+          await exportElementToPng(cards, 'home-cards');
+          root.classList.remove('exporting');
+        };
+      }
+      if (exportPage && page) {
+        exportPage.onclick = async () => {
+          root.classList.add('exporting');
+          await exportElementToPng(page, 'home-pagina');
+          root.classList.remove('exporting');
+        };
+      }
+    });
   </script>
 </body>
 </html>
