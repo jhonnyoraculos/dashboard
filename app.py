@@ -1,9 +1,12 @@
 from flask import Flask, render_template, jsonify, request
+import io
+import os
+import re
+import threading
+import zipfile
+import concurrent.futures
 import pandas as pd
 import unicodedata
-import os
-import threading
-import concurrent.futures
 from collections import defaultdict
 from pathlib import Path
 
@@ -435,6 +438,77 @@ def load_hoteis() -> pd.DataFrame:
     cache = _HOTEIS_CACHE
     lock = cache["lock"]
 
+    def _strip_autofilter(path: Path) -> io.BytesIO | None:
+        try:
+            with zipfile.ZipFile(path, "r") as zin:
+                mem = io.BytesIO()
+                with zipfile.ZipFile(mem, "w") as zout:
+                    for name in zin.namelist():
+                        data = zin.read(name)
+                        if name.startswith("xl/worksheets/sheet") and name.endswith(".xml"):
+                            try:
+                                text = data.decode("utf-8")
+                                text = re.sub(r"<autoFilter[^>]*?>.*?</autoFilter>", "", text, flags=re.DOTALL)
+                                text = re.sub(r"<autoFilter[^>]*/>", "", text, flags=re.DOTALL)
+                                data = text.encode("utf-8")
+                            except Exception:
+                                pass
+                        zout.writestr(name, data)
+                mem.seek(0)
+                return mem
+        except Exception as exc:  # pragma: no cover
+            print(f"Aviso: nao foi possivel limpar autoFilter da planilha de hoteis: {exc}")
+            return None
+
+    def _read_hoteis_fallback(path: Path) -> pd.DataFrame | None:
+        try:
+            from openpyxl import load_workbook
+        except Exception as exc:  # pragma: no cover - dependencia externa
+            print(f"Aviso: fallback de hoteis indisponivel ({exc})")
+            return None
+
+        try:
+            wb = load_workbook(path, data_only=True, read_only=True)
+        except Exception as exc:  # pragma: no cover - leitura quebrada
+            print(f"Aviso: falha ao ler planilha de hoteis (fallback): {exc}")
+            return None
+
+        sheet_name = "HOTEIS" if "HOTEIS" in wb.sheetnames else wb.sheetnames[0]
+        ws = wb[sheet_name]
+
+        header_idx = None
+        header_row = None
+        try:
+            all_rows = list(ws.iter_rows(values_only=True))
+        except Exception as exc:  # pragma: no cover
+            print(f"Aviso: falha ao percorrer planilha de hoteis (fallback): {exc}")
+            return None
+
+        for idx, row in enumerate(all_rows):
+            normalized = {_normalize_ascii(value).upper() for value in row if value is not None}
+            if {"DATA", "VALOR"}.issubset(normalized):
+                header_idx = idx
+                header_row = list(row)
+                break
+            if idx >= 20:
+                break
+
+        if header_row is None or header_idx is None:
+            print("Aviso: cabecalho de hoteis nao encontrado no fallback.")
+            return None
+
+        max_len = len(header_row)
+        data_rows = []
+        for row in all_rows[header_idx + 1 :]:
+            if all(cell is None for cell in row):
+                continue
+            data_rows.append(list(row[:max_len]))
+
+        if not data_rows:
+            return pd.DataFrame(columns=header_row)
+
+        return pd.DataFrame(data_rows, columns=header_row)
+
     with lock:
         try:
             mtime = DATA_HOTEIS.stat().st_mtime
@@ -462,9 +536,19 @@ def load_hoteis() -> pd.DataFrame:
             return _empty()
         except Exception as exc:
             print(f"Aviso: falha ao ler planilha de hoteis: {exc}")
-            if cached is not None:
-                return cached.copy()
-            return _empty()
+            df = None
+            buffer_clean = _strip_autofilter(DATA_HOTEIS)
+            if buffer_clean is not None:
+                try:
+                    df = pd.read_excel(buffer_clean, sheet_name=0, header=4)
+                except Exception as exc_clean:  # pragma: no cover - leitura fallback
+                    print(f"Aviso: falha ao ler planilha de hoteis (limpa): {exc_clean}")
+            if df is None:
+                df = _read_hoteis_fallback(DATA_HOTEIS)
+            if df is None:
+                if cached is not None:
+                    return cached.copy()
+                return _empty()
 
         df = _clean_columns(df)
 
@@ -499,6 +583,8 @@ def load_hoteis() -> pd.DataFrame:
 
 def agg_hoteis(df: pd.DataFrame) -> dict:
     reservas = df[df["Data"].notna()].copy() if "Data" in df.columns else df.copy()
+    if "Data" in reservas.columns:
+        reservas["Data"] = pd.to_datetime(reservas["Data"], errors="coerce")
     valor_total = float(reservas["Valor"].fillna(0).sum()) if "Valor" in reservas else 0.0
     reservas_total = int(reservas.shape[0])
     meses_distintos = reservas["Mes"].dropna().unique() if "Mes" in reservas else []

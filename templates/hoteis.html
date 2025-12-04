@@ -111,6 +111,22 @@ function drawBarVertical(divId, x, y) {
   Plotly.newPlot(divId, data, { ...plotlyTheme.layout, ...layout }, plotlyTheme.config);
 }
 
+function drawBarHorizontal(divId, categories, values) {
+  const data = [{
+    type: 'bar',
+    orientation: 'h',
+    y: categories || [],
+    x: values || [],
+    marker: { color: '#1C2D6B' }
+  }];
+  const layout = {
+    margin: { l: 150, r: 30, t: 30, b: 40 },
+    yaxis: { automargin: true, tickfont: { size: 10 }, autorange: 'reversed' },
+    xaxis: { tickfont: { size: 10 }, rangemode: 'tozero' }
+  };
+  Plotly.newPlot(divId, data, { ...plotlyTheme.layout, ...layout }, plotlyTheme.config);
+}
+
 async function refresh() {
   const d = await fetchData();
 
@@ -185,8 +201,8 @@ async function refresh() {
   };
   Plotly.newPlot('chart-semanal', [traceSemana], { ...plotlyTheme.layout, ...layoutSemana }, plotlyTheme.config);
 
-  drawBarVertical('chart-cidade', safeArray(d.valor_por_cidade, 'Cidade'), safeArray(d.valor_por_cidade, 'Valor'));
-  drawBarVertical('chart-hotel', topN(d.valor_por_hotel, 'Hotel', 12), topN(d.valor_por_hotel, 'Valor', 12));
+  drawBarHorizontal('chart-cidade', safeArray(d.valor_por_cidade, 'Cidade'), safeArray(d.valor_por_cidade, 'Valor'));
+  drawBarHorizontal('chart-hotel', topN(d.valor_por_hotel, 'Hotel', 12), topN(d.valor_por_hotel, 'Valor', 12));
 }
 
 const plotlyTheme = {
