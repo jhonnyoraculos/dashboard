@@ -517,15 +517,15 @@ def agg_hoteis(df: pd.DataFrame) -> dict:
         reservas = reservas.assign(_NaoPlanejada=flag_series.astype("int64"))
     else:
         reservas = reservas.assign(_NaoPlanejada=0)
+    reservas_nao_planejadas = 0
     if "Data" in reservas.columns and "Valor" in reservas.columns:
-        mask_sabado = reservas["Data"].dt.dayofweek.isin([4, 5])
+        mask_sabado = reservas["Data"].dt.dayofweek.isin([4, 5]).fillna(False)
+        mask_nao_planejada = reservas["_NaoPlanejada"] == 1
+        mask_nao_planejada_total = mask_nao_planejada | mask_sabado
+
         valor_sabado = float(reservas.loc[mask_sabado, "Valor"].fillna(0).sum())
-        valor_nao_planejado = float(
-            reservas.loc[
-                (reservas["_NaoPlanejada"] == 1)
-                | reservas["Data"].dt.dayofweek.isin([4, 5])
-            ]["Valor"].fillna(0).sum()
-        )
+        valor_nao_planejado = float(reservas.loc[mask_nao_planejada_total, "Valor"].fillna(0).sum())
+        reservas_nao_planejadas = int(mask_nao_planejada_total.sum())
     else:
         valor_sabado = 0.0
         valor_nao_planejado = 0.0
@@ -565,6 +565,7 @@ def agg_hoteis(df: pd.DataFrame) -> dict:
         "valor_semana": semanal,
         "valor_sabado": valor_sabado,
         "valor_nao_planejado": valor_nao_planejado,
+        "reservas_nao_planejadas": reservas_nao_planejadas,
     }
 
 

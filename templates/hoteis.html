@@ -36,6 +36,10 @@
         <div class="kpi-title">Reservas</div>
         <div id="kpi-reservas" class="kpi-value">--</div>
       </div>
+      <div class="kpi">
+        <div class="kpi-title">Reservas n&atilde;o planejadas</div>
+        <div id="kpi-reservas-nao-planejadas" class="kpi-value">--</div>
+      </div>
       <div class="kpi yellow">
         <div class="kpi-title">M&eacute;dia por reserva</div>
         <div id="kpi-ticket" class="kpi-value">--</div>
@@ -129,6 +133,7 @@ async function refresh() {
 
   document.getElementById('kpi-valor').textContent = fmtBRL(d.valor_total);
   document.getElementById('kpi-reservas').textContent = fmtNum(d.reservas_total);
+  document.getElementById('kpi-reservas-nao-planejadas').textContent = fmtNum(d.reservas_nao_planejadas);
   document.getElementById('kpi-ticket').textContent = fmtBRL(d.valor_medio_reserva);
   document.getElementById('kpi-media-mensal').textContent = fmtBRL(d.media_mensal);
   document.getElementById('kpi-sabado').textContent = fmtBRL(d.valor_sabado);
