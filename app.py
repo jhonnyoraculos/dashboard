@@ -95,6 +95,61 @@ def _years_from_sheet_names(sheet_names) -> list[int]:
     return sorted(years)
 
 
+def _sheet_year(name: str) -> int | None:
+    match = re.search(r"(20\d{2})", str(name))
+    if match:
+        return int(match.group(1))
+    return None
+
+
+def _apply_sheet_year(
+    df: pd.DataFrame,
+    *,
+    year_col: str = "_SheetYear",
+    date_col: str | None = "Data",
+    mes_col: str | None = "Mes",
+) -> pd.DataFrame:
+    if year_col not in df.columns:
+        return df
+    year_series = pd.to_numeric(df[year_col], errors="coerce")
+    if year_series.isna().all():
+        return df
+
+    if date_col and date_col in df.columns:
+        dt = pd.to_datetime(df[date_col], errors="coerce")
+        valid = dt.notna() & year_series.notna()
+        if valid.any():
+            parts = pd.DataFrame({
+                "year": year_series[valid].astype(int),
+                "month": dt.loc[valid].dt.month,
+                "day": dt.loc[valid].dt.day,
+            })
+            new_dt = pd.to_datetime(parts, errors="coerce")
+            dt = dt.copy()
+            dt.loc[valid] = new_dt
+            df[date_col] = dt
+
+    if mes_col and mes_col in df.columns:
+        mes_dt = pd.to_datetime(df[mes_col], errors="coerce")
+        month_source = mes_dt.dt.month
+        if date_col and date_col in df.columns:
+            dt = pd.to_datetime(df[date_col], errors="coerce")
+            month_source = month_source.fillna(dt.dt.month)
+        valid_month = month_source.notna() & year_series.notna()
+        if valid_month.any():
+            parts = pd.DataFrame({
+                "year": year_series[valid_month].astype(int),
+                "month": month_source[valid_month].astype(int),
+                "day": 1,
+            })
+            new_mes_dt = pd.to_datetime(parts, errors="coerce")
+            mes_dt = mes_dt.copy()
+            mes_dt.loc[valid_month] = new_mes_dt
+            df[mes_col] = mes_dt.dt.to_period("M").astype(str)
+
+    return df
+
+
 def _parse_int(value, *, min_value: int | None = None, max_value: int | None = None) -> int | None:
     if value in (None, "", "Todos"):
         return None
@@ -320,12 +375,15 @@ def load_combustivel() -> pd.DataFrame:
             return _empty()
 
         frames = []
-        for sheet_df in sheets.values():
+        for sheet_name, sheet_df in sheets.items():
             if sheet_df is None or sheet_df.empty:
                 continue
             cleaned = _clean_columns(sheet_df)
             if cleaned.empty:
                 continue
+            sheet_year = _sheet_year(sheet_name)
+            if sheet_year is not None:
+                cleaned["_SheetYear"] = sheet_year
             frames.append(cleaned)
         if not frames:
             return _empty()
@@ -337,6 +395,7 @@ def load_combustivel() -> pd.DataFrame:
         })
 
         df["Data"] = pd.to_datetime(df.get("Data"), errors="coerce")
+        df = _apply_sheet_year(df, date_col="Data", mes_col=None)
         for col in ["Km Rodados", "Litros", "Custo"]:
             df[col] = pd.to_numeric(df.get(col), errors="coerce")
 
@@ -440,12 +499,15 @@ def load_manutencao() -> pd.DataFrame:
             return _empty()
 
         frames = []
-        for sheet_df in sheets.values():
+        for sheet_name, sheet_df in sheets.items():
             if sheet_df is None or sheet_df.empty:
                 continue
             cleaned = _clean_columns(sheet_df)
             if cleaned.empty:
                 continue
+            sheet_year = _sheet_year(sheet_name)
+            if sheet_year is not None:
+                cleaned["_SheetYear"] = sheet_year
             frames.append(cleaned)
         if not frames:
             return _empty()
@@ -462,6 +524,7 @@ def load_manutencao() -> pd.DataFrame:
             mes_dt = pd.to_datetime(df["Mes"], errors="coerce")
             df["Data"] = df["Data"].combine_first(mes_dt)
 
+        df = _apply_sheet_year(df, date_col="Data", mes_col=None)
         df["Mes"] = df["Data"].dt.to_period("M").astype(str)
         df["Custo"] = pd.to_numeric(df.get("Custo"), errors="coerce")
 
@@ -547,7 +610,7 @@ def load_hoteis() -> pd.DataFrame:
 
     def _concat_hoteis_sheets(sheets: dict) -> pd.DataFrame | None:
         frames = []
-        for sheet_df in sheets.values():
+        for sheet_name, sheet_df in sheets.items():
             if sheet_df is None or sheet_df.empty:
                 continue
             normalized = {
@@ -557,6 +620,10 @@ def load_hoteis() -> pd.DataFrame:
             }
             if not {"DATA", "VALOR"}.issubset(normalized):
                 continue
+            sheet_year = _sheet_year(sheet_name)
+            if sheet_year is not None:
+                sheet_df = sheet_df.copy()
+                sheet_df["_SheetYear"] = sheet_year
             frames.append(sheet_df)
         if not frames:
             return None
@@ -694,6 +761,7 @@ def load_hoteis() -> pd.DataFrame:
         })
 
         df["Data"] = pd.to_datetime(df.get("Data"), errors="coerce")
+        df = _apply_sheet_year(df, date_col="Data", mes_col=None)
         df["Valor"] = pd.to_numeric(df.get("Valor"), errors="coerce")
         df["Dias"] = pd.to_numeric(df.get("Dias"), errors="coerce")
 
@@ -829,7 +897,7 @@ def load_pedagio() -> pd.DataFrame:
 
         expected_core = {'TIPO', 'CUSTO'}
         frames = []
-        for raw in raw_sheets.values():
+        for sheet_name, raw in raw_sheets.items():
             header_idx = None
             for idx in range(min(len(raw), 10)):
                 row = raw.iloc[idx]
@@ -852,6 +920,9 @@ def load_pedagio() -> pd.DataFrame:
             df_sheet = _clean_columns(df_sheet)
             if df_sheet.empty:
                 continue
+            sheet_year = _sheet_year(sheet_name)
+            if sheet_year is not None:
+                df_sheet["_SheetYear"] = sheet_year
             frames.append(df_sheet)
 
         if not frames:
@@ -928,6 +999,7 @@ def load_pedagio() -> pd.DataFrame:
             df['Data'] = pd.to_datetime(df['Data'], errors='coerce')
             empty_mes = df['Mes'].isna() | (df['Mes'] == '')
             df.loc[empty_mes, 'Mes'] = df.loc[empty_mes, 'Data'].dt.to_period('M').astype('string')
+        df = _apply_sheet_year(df, date_col="Data", mes_col="Mes")
 
         vex_col = next((col for col in df.columns if col.lower() == 'vex'), None)
         if vex_col:
