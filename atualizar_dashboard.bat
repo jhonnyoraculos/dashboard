@@ -3,8 +3,7 @@ title Atualizar projeto JR Dashboard
 color 0a
 
 echo ============================================
-echo  Atualizando e enviando para o GitHub
-echo  (commita tudo que estiver alterado)
+echo  Atualizando o projeto e enviando ao GitHub
 echo ============================================
 echo.
 
@@ -37,7 +36,7 @@ git push origin main
 
 echo.
 echo ============================================
-echo  Pronto. Atualizacao enviada ao GitHub.
+echo  Fim. Atualizacao concluida com sucesso!
 echo ============================================
 echo.
 pause
