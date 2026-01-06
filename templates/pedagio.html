@@ -19,6 +19,7 @@
       <h1>JR DASHBOARD &bull; Ped&aacute;gio, Seguro e IPVA</h1>
     </div>
     <div class="filters">
+      <select id="ano"></select>
       <select id="mes" multiple></select>
       <select id="placa"></select>
       <select id="tipo"></select>
@@ -83,6 +84,7 @@
 
 <script>
 const fmtBRL = (value) => Number(value || 0).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
+const currentYear = String(new Date().getFullYear());
 const fmtNum = (value) => Number(value || 0).toLocaleString('pt-BR');
 const safeArray = (source, key) => (source && Array.isArray(source[key])) ? source[key] : [];
 function setupVisibility(panelId, items) {
@@ -137,6 +139,7 @@ const exportElementToPng = async (el, filename) => {
 
 async function fetchData() {
   const params = new URLSearchParams();
+  params.append('ano', document.getElementById('ano').value || 'Todos');
   appendMulti(params, 'mes', getSelectValues('mes'));
   params.append('placa', document.getElementById('placa').value || 'Todos');
   params.append('tipo', document.getElementById('tipo').value || 'Todos');
@@ -365,15 +368,23 @@ async function refresh() {
     setLoading(true);
     const d = await fetchData();
 
+    fillSelect('ano', d.anos, 'Ano');
+    fillSelectMulti('mes', d.meses, 'M\u00EAs');
+
     if (!refresh._init) {
-      fillSelectMulti('mes', d.meses, 'M\u00EAs');
+      const anoSelect = document.getElementById('ano');
       fillSelect('placa', d.placas, 'Placa');
       fillSelect('tipo', d.tipos, 'Tipo');
       fillSelect('segmento', d.segmentos, 'Segmento');
-      ['mes', 'placa', 'tipo', 'segmento'].forEach((id) => {
+      ['ano', 'mes', 'placa', 'tipo', 'segmento'].forEach((id) => {
         document.getElementById(id).addEventListener('change', refresh);
       });
       document.getElementById('limpar').addEventListener('click', () => {
+        if (anoSelect && [...anoSelect.options].some((opt) => opt.value === currentYear)) {
+          anoSelect.value = currentYear;
+        } else if (anoSelect) {
+          anoSelect.value = 'Todos';
+        }
         resetMultiSelect('mes');
         ['placa', 'tipo', 'segmento'].forEach((id) => {
           const select = document.getElementById(id);
@@ -385,6 +396,10 @@ async function refresh() {
       });
       enhanceMultiSelect('mes');
       refresh._init = true;
+      if (anoSelect && [...anoSelect.options].some((opt) => opt.value === currentYear)) {
+        anoSelect.value = currentYear;
+        return refresh();
+      }
     }
 
     const mediaValores = Number(d.media_valores ?? d.ticket_medio ?? 0);

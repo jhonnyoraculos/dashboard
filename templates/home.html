@@ -28,7 +28,6 @@
       <div class="export-bar">
         <button type="button" class="export-btn" id="export-home-cards">Exportar cards (PNG)</button>
         <button type="button" class="export-btn" id="export-home-page">Exportar p&aacute;gina (PNG)</button>
-        <button type="button" class="toggle-btn" id="toggle-home-cards">Ocultar cards</button>
       </div>
       <div class="home-total-grid">
         <div class="home-total-card home-total-card--secondary">
@@ -130,7 +129,8 @@
   <script>
     const fmtBRL = (value) => Number(value || 0).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
     const MONTH_NAMES = ['Janeiro', 'Fevereiro', 'Mar\u00E7o', 'Abril', 'Maio', 'Junho', 'Julho', 'Agosto', 'Setembro', 'Outubro', 'Novembro', 'Dezembro'];
-    const filterState = { ano: 'Todos', meses: ['Todos'], initialized: false };
+    const currentYear = String(new Date().getFullYear());
+    const filterState = { ano: currentYear, meses: ['Todos'], initialized: false };
     let overviewRequestId = 0;
 
     function applyStatus(element, message, isAlert = false) {
@@ -285,7 +285,13 @@
       populateFilterSelectMulti('home-filter-mes', data?.meses_disponiveis || [], monthLabel);
       const anoSelect = document.getElementById('home-filter-ano');
       const mesSelect = document.getElementById('home-filter-mes');
-      if (anoSelect) anoSelect.value = filterState.ano || 'Todos';
+      if (anoSelect) {
+        const hasCurrent = [...anoSelect.options].some((option) => option.value === filterState.ano);
+        if (!hasCurrent) {
+          filterState.ano = 'Todos';
+        }
+        anoSelect.value = filterState.ano || 'Todos';
+      }
       if (mesSelect) {
         const optionMap = new Map(Array.from(mesSelect.options || []).map((opt) => [opt.value, opt]));
         const selection = (filterState.meses || []).filter((value) => optionMap.has(value));
@@ -308,10 +314,11 @@
         const clearBtn = document.getElementById('home-filter-clear');
         if (clearBtn) {
           clearBtn.addEventListener('click', () => {
-            if (filterState.ano === 'Todos' && (filterState.meses || []).includes('Todos')) return;
-            filterState.ano = 'Todos';
+            if (filterState.ano === currentYear && (filterState.meses || []).includes('Todos')) return;
+            const hasCurrent = anoSelect && [...anoSelect.options].some((option) => option.value === currentYear);
+            filterState.ano = hasCurrent ? currentYear : 'Todos';
             filterState.meses = ['Todos'];
-            if (anoSelect) anoSelect.value = 'Todos';
+            if (anoSelect) anoSelect.value = filterState.ano;
             resetMultiSelect('home-filter-mes');
             loadOverviewTotal();
           });
@@ -436,20 +443,7 @@
       const page = document.querySelector('.home-wrapper');
       const exportCards = document.getElementById('export-home-cards');
       const exportPage = document.getElementById('export-home-page');
-      const toggleCards = document.getElementById('toggle-home-cards');
       const root = document.documentElement;
-      const setToggle = (btn, el, label) => {
-        if (!btn || !el) return;
-        const hidden = el.classList.contains('hidden-section');
-        btn.textContent = hidden ? `Mostrar ${label}` : `Ocultar ${label}`;
-      };
-      if (toggleCards && cards) {
-        toggleCards.onclick = () => {
-          cards.classList.toggle('hidden-section');
-          setToggle(toggleCards, cards, 'cards');
-        };
-        setToggle(toggleCards, cards, 'cards');
-      }
       if (exportCards && cards) {
         exportCards.onclick = async () => {
           root.classList.add('exporting');

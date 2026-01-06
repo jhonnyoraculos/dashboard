@@ -79,6 +79,22 @@ def _unique_sorted(df: pd.DataFrame, column: str) -> list:
     return sorted(series.astype(str).str.strip().unique().tolist())
 
 
+def _unique_years(df: pd.DataFrame) -> list[int]:
+    if "Mes" not in df.columns:
+        return []
+    periodos = pd.to_datetime(df["Mes"], errors="coerce")
+    anos = sorted({int(ano) for ano in periodos.dt.year.dropna().unique()})
+    return anos
+
+
+def _years_from_sheet_names(sheet_names) -> list[int]:
+    years = set()
+    for name in sheet_names or []:
+        for match in re.findall(r"(20\d{2})", str(name)):
+            years.add(int(match))
+    return sorted(years)
+
+
 def _parse_int(value, *, min_value: int | None = None, max_value: int | None = None) -> int | None:
     if value in (None, "", "Todos"):
         return None
@@ -290,7 +306,8 @@ def load_combustivel() -> pd.DataFrame:
             return cached.copy()
 
         try:
-            df = pd.read_excel(DATA_COMB, sheet_name=0, header=1)
+            sheets = pd.read_excel(DATA_COMB, sheet_name=None, header=1)
+            sheet_years = _years_from_sheet_names(sheets.keys())
         except PermissionError:
             print("Aviso: sem permissao para ler planilha de combustivel. Verifique se o arquivo esta aberto.")
             if cached is not None:
@@ -302,7 +319,17 @@ def load_combustivel() -> pd.DataFrame:
                 return cached.copy()
             return _empty()
 
-        df = _clean_columns(df)
+        frames = []
+        for sheet_df in sheets.values():
+            if sheet_df is None or sheet_df.empty:
+                continue
+            cleaned = _clean_columns(sheet_df)
+            if cleaned.empty:
+                continue
+            frames.append(cleaned)
+        if not frames:
+            return _empty()
+        df = pd.concat(frames, ignore_index=True)
 
         df = df.rename(columns={
             "COMBUSTIVEL": "Combustivel",
@@ -327,6 +354,7 @@ def load_combustivel() -> pd.DataFrame:
         else:
             df["Categoria"] = "Transporte"
 
+        df.attrs["anos_sheets"] = sheet_years
         cache["mtime"] = mtime
         cache["df"] = df.copy()
         return df
@@ -398,7 +426,8 @@ def load_manutencao() -> pd.DataFrame:
             return cached.copy()
 
         try:
-            df = pd.read_excel(DATA_MANU, sheet_name=0, header=1)
+            sheets = pd.read_excel(DATA_MANU, sheet_name=None, header=1)
+            sheet_years = _years_from_sheet_names(sheets.keys())
         except PermissionError:
             print("Aviso: sem permissao para ler planilha de manutencao. Verifique se o arquivo esta aberto.")
             if cached is not None:
@@ -410,7 +439,17 @@ def load_manutencao() -> pd.DataFrame:
                 return cached.copy()
             return _empty()
 
-        df = _clean_columns(df)
+        frames = []
+        for sheet_df in sheets.values():
+            if sheet_df is None or sheet_df.empty:
+                continue
+            cleaned = _clean_columns(sheet_df)
+            if cleaned.empty:
+                continue
+            frames.append(cleaned)
+        if not frames:
+            return _empty()
+        df = pd.concat(frames, ignore_index=True)
 
         df = df.rename(columns={
             "PLACAS": "PLACA",
@@ -438,6 +477,7 @@ def load_manutencao() -> pd.DataFrame:
         else:
             df["Categoria"] = "Transporte"
 
+        df.attrs["anos_sheets"] = sheet_years
         cache["mtime"] = mtime
         cache["df"] = df.copy()
         return df
@@ -505,6 +545,23 @@ def load_hoteis() -> pd.DataFrame:
             print(f"Aviso: nao foi possivel limpar autoFilter da planilha de hoteis: {exc}")
             return None
 
+    def _concat_hoteis_sheets(sheets: dict) -> pd.DataFrame | None:
+        frames = []
+        for sheet_df in sheets.values():
+            if sheet_df is None or sheet_df.empty:
+                continue
+            normalized = {
+                _normalize_ascii(col).upper()
+                for col in sheet_df.columns
+                if col is not None
+            }
+            if not {"DATA", "VALOR"}.issubset(normalized):
+                continue
+            frames.append(sheet_df)
+        if not frames:
+            return None
+        return pd.concat(frames, ignore_index=True)
+
     def _read_hoteis_fallback(path: Path) -> pd.DataFrame | None:
         try:
             from openpyxl import load_workbook
@@ -518,41 +575,51 @@ def load_hoteis() -> pd.DataFrame:
             print(f"Aviso: falha ao ler planilha de hoteis (fallback): {exc}")
             return None
 
-        sheet_name = "HOTEIS" if "HOTEIS" in wb.sheetnames else wb.sheetnames[0]
-        ws = wb[sheet_name]
+        sheet_names = [
+            name for name in wb.sheetnames
+            if "HOTEIS" in _normalize_ascii(name).upper()
+        ]
+        if not sheet_names:
+            sheet_names = [wb.sheetnames[0]]
 
-        header_idx = None
-        header_row = None
-        try:
-            all_rows = list(ws.iter_rows(values_only=True))
-        except Exception as exc:  # pragma: no cover
-            print(f"Aviso: falha ao percorrer planilha de hoteis (fallback): {exc}")
-            return None
+        frames = []
+        for sheet_name in sheet_names:
+            ws = wb[sheet_name]
+            header_idx = None
+            header_row = None
+            try:
+                all_rows = list(ws.iter_rows(values_only=True))
+            except Exception as exc:  # pragma: no cover
+                print(f"Aviso: falha ao percorrer planilha de hoteis (fallback): {exc}")
+                continue
 
-        for idx, row in enumerate(all_rows):
-            normalized = {_normalize_ascii(value).upper() for value in row if value is not None}
-            if {"DATA", "VALOR"}.issubset(normalized):
-                header_idx = idx
-                header_row = list(row)
-                break
-            if idx >= 20:
-                break
+            for idx, row in enumerate(all_rows):
+                normalized = {_normalize_ascii(value).upper() for value in row if value is not None}
+                if {"DATA", "VALOR"}.issubset(normalized):
+                    header_idx = idx
+                    header_row = list(row)
+                    break
+                if idx >= 20:
+                    break
 
-        if header_row is None or header_idx is None:
+            if header_row is None or header_idx is None:
+                continue
+
+            max_len = len(header_row)
+            data_rows = []
+            for row in all_rows[header_idx + 1 :]:
+                if all(cell is None for cell in row):
+                    continue
+                data_rows.append(list(row[:max_len]))
+
+            if data_rows:
+                frames.append(pd.DataFrame(data_rows, columns=header_row))
+
+        if not frames:
             print("Aviso: cabecalho de hoteis nao encontrado no fallback.")
             return None
 
-        max_len = len(header_row)
-        data_rows = []
-        for row in all_rows[header_idx + 1 :]:
-            if all(cell is None for cell in row):
-                continue
-            data_rows.append(list(row[:max_len]))
-
-        if not data_rows:
-            return pd.DataFrame(columns=header_row)
-
-        return pd.DataFrame(data_rows, columns=header_row)
+        return pd.concat(frames, ignore_index=True)
 
     with lock:
         try:
@@ -572,8 +639,11 @@ def load_hoteis() -> pd.DataFrame:
         if cached is not None and cache.get("mtime") == mtime:
             return cached.copy()
 
+        sheet_years: list[int] = []
         try:
-            df = pd.read_excel(DATA_HOTEIS, sheet_name=0, header=4)
+            sheets = pd.read_excel(DATA_HOTEIS, sheet_name=None, header=4)
+            sheet_years = _years_from_sheet_names(sheets.keys())
+            df = _concat_hoteis_sheets(sheets)
         except PermissionError:
             print("Aviso: sem permissao para ler planilha de hoteis. Verifique se o arquivo esta aberto.")
             if cached is not None:
@@ -585,7 +655,9 @@ def load_hoteis() -> pd.DataFrame:
             buffer_clean = _strip_autofilter(DATA_HOTEIS)
             if buffer_clean is not None:
                 try:
-                    df = pd.read_excel(buffer_clean, sheet_name=0, header=4)
+                    sheets = pd.read_excel(buffer_clean, sheet_name=None, header=4)
+                    sheet_years = _years_from_sheet_names(sheets.keys())
+                    df = _concat_hoteis_sheets(sheets)
                 except Exception as exc_clean:  # pragma: no cover - leitura fallback
                     print(f"Aviso: falha ao ler planilha de hoteis (limpa): {exc_clean}")
             if df is None:
@@ -594,6 +666,18 @@ def load_hoteis() -> pd.DataFrame:
                 if cached is not None:
                     return cached.copy()
                 return _empty()
+
+        if df is None:
+            df = _read_hoteis_fallback(DATA_HOTEIS)
+            if df is None:
+                if cached is not None:
+                    return cached.copy()
+                return _empty()
+        if not sheet_years:
+            try:
+                sheet_years = _years_from_sheet_names(pd.ExcelFile(DATA_HOTEIS).sheet_names)
+            except Exception:
+                sheet_years = []
 
         df = _clean_columns(df)
 
@@ -621,6 +705,7 @@ def load_hoteis() -> pd.DataFrame:
             if col in df.columns:
                 df[col] = df[col].astype("string").str.strip()
 
+        df.attrs["anos_sheets"] = sheet_years
         cache["mtime"] = mtime
         cache["df"] = df.copy()
         return df.copy()
@@ -727,7 +812,8 @@ def load_pedagio() -> pd.DataFrame:
             return cached_df.copy(deep=False)
 
         try:
-            raw = pd.read_excel(DATA_PEDAGIO, sheet_name=0, header=None, engine='openpyxl')
+            raw_sheets = pd.read_excel(DATA_PEDAGIO, sheet_name=None, header=None, engine='openpyxl')
+            sheet_years = _years_from_sheet_names(raw_sheets.keys())
         except PermissionError:
             print('Aviso: sem permissao para ler planilha de pedagio/seguro/IPVA. Verifique se o arquivo esta aberto.')
             cached_df = cache.get('df')
@@ -742,27 +828,37 @@ def load_pedagio() -> pd.DataFrame:
             return _empty()
 
         expected_core = {'TIPO', 'CUSTO'}
-        header_idx = None
-        for idx in range(min(len(raw), 10)):
-            row = raw.iloc[idx]
-            normalized = set()
-            for value in row.tolist():
-                if pd.isna(value):
-                    continue
-                normalized.add(_normalize_ascii(value).upper())
-            has_placa = any(label in normalized for label in ('PLACA', 'PLACAS'))
-            if has_placa and expected_core.issubset(normalized):
-                header_idx = idx
-                break
+        frames = []
+        for raw in raw_sheets.values():
+            header_idx = None
+            for idx in range(min(len(raw), 10)):
+                row = raw.iloc[idx]
+                normalized = set()
+                for value in row.tolist():
+                    if pd.isna(value):
+                        continue
+                    normalized.add(_normalize_ascii(value).upper())
+                has_placa = any(label in normalized for label in ('PLACA', 'PLACAS'))
+                if has_placa and expected_core.issubset(normalized):
+                    header_idx = idx
+                    break
 
-        if header_idx is None:
+            if header_idx is None:
+                continue
+
+            df_sheet = raw.iloc[header_idx + 1 :].copy()
+            df_sheet.columns = raw.iloc[header_idx]
+            df_sheet = df_sheet.dropna(how='all').reset_index(drop=True)
+            df_sheet = _clean_columns(df_sheet)
+            if df_sheet.empty:
+                continue
+            frames.append(df_sheet)
+
+        if not frames:
             print('Aviso: cabecalho da planilha de pedagio/seguro/IPVA nao encontrado.')
             return _empty()
 
-        df = raw.iloc[header_idx + 1 :].copy()
-        df.columns = raw.iloc[header_idx]
-        df = df.dropna(how='all').reset_index(drop=True)
-        df = _clean_columns(df)
+        df = pd.concat(frames, ignore_index=True)
 
         rename_map = {}
         for col in df.columns:
@@ -843,6 +939,7 @@ def load_pedagio() -> pd.DataFrame:
         df = df[df['Custo'].notna()].copy()
         df['Tipo'] = df['Tipo'].fillna('Outros')
 
+        df.attrs["anos_sheets"] = sheet_years
         result = df.copy()
         cache['mtime'] = mtime
         cache['df'] = result
@@ -926,14 +1023,13 @@ def pedagio_page():
 def data_comb():
     df = load_combustivel()
 
+    ano = _parse_int(request.args.get("ano"))
     meses = _parse_mes_list(request.args.getlist("mes"))
     placa = request.args.get("placa")
     posto = request.args.get("posto")
     combustivel = request.args.get("combustivel")
     segmento = request.args.get("segmento")
 
-    if meses:
-        df = df[df["Mes"].isin(meses)]
     if placa and placa != "Todos":
         df = df[df["PLACA"] == placa]
     if posto and posto != "Todos":
@@ -943,20 +1039,34 @@ def data_comb():
     if segmento and segmento != "Todos" and "Categoria" in df.columns:
         df = df[df["Categoria"] == segmento]
 
-    return jsonify(agg_combustivel(df))
+    anos_disponiveis = _unique_years(df)
+    sheet_years = df.attrs.get("anos_sheets", [])
+    if sheet_years:
+        anos_disponiveis = sorted({*anos_disponiveis, *sheet_years})
+    df_meses = _filter_by_period(df, ano=ano) if ano is not None else df
+    meses_disponiveis = _unique_sorted(df_meses, "Mes")
+
+    if ano is not None:
+        df = _filter_by_period(df, ano=ano)
+    if meses:
+        df = df[df["Mes"].isin(meses)]
+
+    resultado = agg_combustivel(df)
+    resultado["anos"] = anos_disponiveis
+    resultado["meses"] = meses_disponiveis
+    return jsonify(resultado)
 
 
 @app.route("/data/manutencao")
 def data_manu():
     df = load_manutencao()
 
+    ano = _parse_int(request.args.get("ano"))
     meses = _parse_mes_list(request.args.getlist("mes"))
     placa = request.args.get("placa")
     oficina = request.args.get("oficina")
     segmento = request.args.get("segmento")
 
-    if meses:
-        df = df[df["Mes"].isin(meses)]
     if placa and placa != "Todos":
         df = df[df["PLACA"] == placa]
     if oficina and oficina != "Todos":
@@ -964,7 +1074,22 @@ def data_manu():
     if segmento and segmento != "Todos" and "Categoria" in df.columns:
         df = df[df["Categoria"] == segmento]
 
-    return jsonify(agg_manutencao(df))
+    anos_disponiveis = _unique_years(df)
+    sheet_years = df.attrs.get("anos_sheets", [])
+    if sheet_years:
+        anos_disponiveis = sorted({*anos_disponiveis, *sheet_years})
+    df_meses = _filter_by_period(df, ano=ano) if ano is not None else df
+    meses_disponiveis = _unique_sorted(df_meses, "Mes")
+
+    if ano is not None:
+        df = _filter_by_period(df, ano=ano)
+    if meses:
+        df = df[df["Mes"].isin(meses)]
+
+    resultado = agg_manutencao(df)
+    resultado["anos"] = anos_disponiveis
+    resultado["meses"] = meses_disponiveis
+    return jsonify(resultado)
 
 
 @app.route("/data/hoteis")
@@ -973,20 +1098,33 @@ def data_hoteis():
     totais_gerais = agg_hoteis(df_total)
     df = df_total.copy()
 
+    ano = _parse_int(request.args.get("ano"))
     meses = _parse_mes_list(request.args.getlist("mes"))
     cidade = request.args.get("cidade")
     hotel = request.args.get("hotel")
 
-    if meses:
-        df = df[df["Mes"].isin(meses)]
     if cidade and cidade != "Todos":
         df = df[df["Cidade"] == cidade]
     if hotel and hotel != "Todos":
         df = df[df["Hotel"] == hotel]
 
+    anos_disponiveis = _unique_years(df)
+    sheet_years = df.attrs.get("anos_sheets", [])
+    if sheet_years:
+        anos_disponiveis = sorted({*anos_disponiveis, *sheet_years})
+    df_meses = _filter_by_period(df, ano=ano) if ano is not None else df
+    meses_disponiveis = _unique_sorted(df_meses, "Mes")
+
+    if ano is not None:
+        df = _filter_by_period(df, ano=ano)
+    if meses:
+        df = df[df["Mes"].isin(meses)]
+
     resultado = agg_hoteis(df)
     resultado["valor_sabado_total"] = totais_gerais.get("valor_sabado", 0.0)
     resultado["valor_nao_planejado_total"] = totais_gerais.get("valor_nao_planejado", 0.0)
+    resultado["anos"] = anos_disponiveis
+    resultado["meses"] = meses_disponiveis
     return jsonify(resultado)
 
 
@@ -994,13 +1132,12 @@ def data_hoteis():
 def data_pedagio():
     df = load_pedagio()
 
+    ano = _parse_int(request.args.get("ano"))
     meses = _parse_mes_list(request.args.getlist("mes"))
     placa = request.args.get("placa")
     tipo = request.args.get("tipo")
     segmento = request.args.get("segmento")
 
-    if meses:
-        df = df[df["Mes"].isin(meses)]
     if placa and placa != "Todos":
         df = df[df["PLACA"] == placa]
     if tipo and tipo != "Todos":
@@ -1008,7 +1145,22 @@ def data_pedagio():
     if segmento and segmento != "Todos" and "Categoria" in df.columns:
         df = df[df["Categoria"] == segmento]
 
-    return jsonify(agg_pedagio(df))
+    anos_disponiveis = _unique_years(df)
+    sheet_years = df.attrs.get("anos_sheets", [])
+    if sheet_years:
+        anos_disponiveis = sorted({*anos_disponiveis, *sheet_years})
+    df_meses = _filter_by_period(df, ano=ano) if ano is not None else df
+    meses_disponiveis = _unique_sorted(df_meses, "Mes")
+
+    if ano is not None:
+        df = _filter_by_period(df, ano=ano)
+    if meses:
+        df = df[df["Mes"].isin(meses)]
+
+    resultado = agg_pedagio(df)
+    resultado["anos"] = anos_disponiveis
+    resultado["meses"] = meses_disponiveis
+    return jsonify(resultado)
 
 
 def _warm_data_caches(*, blocking: bool = False) -> None:
@@ -1055,13 +1207,14 @@ def _safe_total(
     try:
         df = loader()
     except PermissionError:
-        return {"status": "erro", "motivo": "permissao", "valor": None, "categorias": None}
+        return {"status": "erro", "motivo": "permissao", "valor": None, "categorias": None, "anos_sheets": []}
     except FileNotFoundError:
-        return {"status": "erro", "motivo": "arquivo_nao_encontrado", "valor": None, "categorias": None}
+        return {"status": "erro", "motivo": "arquivo_nao_encontrado", "valor": None, "categorias": None, "anos_sheets": []}
     except Exception as exc:  # pragma: no cover
-        return {"status": "erro", "motivo": str(exc), "valor": None, "categorias": None}
+        return {"status": "erro", "motivo": str(exc), "valor": None, "categorias": None, "anos_sheets": []}
 
     periodos_disponiveis: list[str] = []
+    anos_sheets = df.attrs.get("anos_sheets", [])
     if "Mes" in df.columns:
         period_series = pd.to_datetime(df["Mes"], errors="coerce").dt.to_period("M")
         valores_periodo = {str(periodo) for periodo in period_series.dropna().unique()}
@@ -1072,7 +1225,7 @@ def _safe_total(
     try:
         resumo = aggregator(df)
     except Exception as exc:  # pragma: no cover
-        return {"status": "erro", "motivo": str(exc), "valor": None, "categorias": None}
+        return {"status": "erro", "motivo": str(exc), "valor": None, "categorias": None, "anos_sheets": anos_sheets}
 
     valor = float(resumo.get(key, 0.0)) if resumo else 0.0
     categorias = None
@@ -1099,6 +1252,7 @@ def _safe_total(
         "valor": valor,
         "categorias": categorias,
         "periodos": periodos_disponiveis,
+        "anos_sheets": anos_sheets,
     }
 
 
@@ -1128,6 +1282,7 @@ def compute_overview_totals(*, ano: int | None = None, mes: int | None = None, m
     total_geral = 0.0
     segmento_totais = defaultdict(float)
     periodos_unicos: set[str] = set()
+    anos_extra: set[int] = set()
 
     use_threads = ano is None and mes is None
     if use_threads:
@@ -1161,11 +1316,22 @@ def compute_overview_totals(*, ano: int | None = None, mes: int | None = None, m
             for periodo in resultado.get("periodos") or []:
                 if periodo:
                     periodos_unicos.add(periodo)
+            for ano_sheet in resultado.get("anos_sheets") or []:
+                try:
+                    anos_extra.add(int(ano_sheet))
+                except (TypeError, ValueError):
+                    continue
 
     segmentos_dict = {categoria: float(valor) for categoria, valor in segmento_totais.items()}
     periodos_ordenados = sorted(periodos_unicos)
     anos_disponiveis = sorted({int(p.split("-")[0]) for p in periodos_ordenados if "-" in p})
-    meses_disponiveis = sorted({int(p.split("-")[1]) for p in periodos_ordenados if "-" in p})
+    if anos_extra:
+        anos_disponiveis = sorted(set(anos_disponiveis) | anos_extra)
+    periodos_base = periodos_ordenados
+    if ano is not None:
+        prefix = f"{ano}-"
+        periodos_base = [periodo for periodo in periodos_ordenados if periodo.startswith(prefix)]
+    meses_disponiveis = sorted({int(p.split("-")[1]) for p in periodos_base if "-" in p})
 
     detalhes["total_geral"] = float(total_geral)
     detalhes["segmentos"] = segmentos_dict

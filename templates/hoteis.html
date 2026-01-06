@@ -19,6 +19,7 @@
       <h1>JR DASHBOARD &bull; Reservas de Hot&eacute;is</h1>
     </div>
     <div class="filters">
+      <select id="ano"></select>
       <select id="mes" multiple></select>
       <select id="cidade"></select>
       <select id="hotel"></select>
@@ -80,6 +81,7 @@
 
 <script>
 const fmtBRL = (value) => Number(value || 0).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
+const currentYear = String(new Date().getFullYear());
 const fmtNum = (value) => Number(value || 0).toLocaleString('pt-BR');
 const safeArray = (source, key) => (source && Array.isArray(source[key])) ? source[key] : [];
 const topN = (source, key, limit = 10) => safeArray(source, key).slice(0, limit);
@@ -150,6 +152,7 @@ function setupVisibility(panelId, items) {
 
 async function fetchData() {
   const params = new URLSearchParams();
+  params.append('ano', document.getElementById('ano').value || 'Todos');
   appendMulti(params, 'mes', getSelectValues('mes'));
   params.append('cidade', document.getElementById('cidade').value || 'Todos');
   params.append('hotel', document.getElementById('hotel').value || 'Todos');
@@ -267,15 +270,23 @@ function drawBarHorizontal(divId, categories, values) {
 async function refresh() {
   const d = await fetchData();
 
+  fillSelect('ano', d.anos, 'Ano');
+  fillSelectMulti('mes', d.meses, 'M\u00EAs');
+
   if (!refresh._init) {
-    fillSelectMulti('mes', d.meses, 'M\u00EAs');
+    const anoSelect = document.getElementById('ano');
     fillSelect('cidade', d.cidades, 'Cidade');
     fillSelect('hotel', d.hoteis, 'Hotel/Pousada');
-    const filterIds = ['mes', 'cidade', 'hotel'];
+    const filterIds = ['ano', 'mes', 'cidade', 'hotel'];
     filterIds.forEach((id) => {
       document.getElementById(id).addEventListener('change', refresh);
     });
     document.getElementById('limpar').addEventListener('click', () => {
+      if (anoSelect && [...anoSelect.options].some((opt) => opt.value === currentYear)) {
+        anoSelect.value = currentYear;
+      } else if (anoSelect) {
+        anoSelect.value = 'Todos';
+      }
       resetMultiSelect('mes');
       ['cidade', 'hotel'].forEach((id) => {
         document.getElementById(id).value = 'Todos';
@@ -284,6 +295,10 @@ async function refresh() {
     });
     enhanceMultiSelect('mes');
     refresh._init = true;
+    if (anoSelect && [...anoSelect.options].some((opt) => opt.value === currentYear)) {
+      anoSelect.value = currentYear;
+      return refresh();
+    }
   }
 
   document.getElementById('kpi-valor').textContent = fmtBRL(d.valor_total);

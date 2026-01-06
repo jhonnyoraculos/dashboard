@@ -19,6 +19,7 @@
       <h1>JR DASHBOARD &bull; Manuten&ccedil;&atilde;o</h1>
     </div>
     <div class="filters">
+      <select id="ano"></select>
       <select id="mes" multiple></select>
       <select id="placa"></select>
       <select id="oficina"></select>
@@ -69,6 +70,7 @@
 
 <script>
 const fmtBRL = (value) => Number(value || 0).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
+const currentYear = String(new Date().getFullYear());
 const fmtNum = (value) => Number(value || 0).toLocaleString('pt-BR');
 const safeArray = (source, key) => (source && Array.isArray(source[key])) ? source[key] : [];
 const ensureExportButton = (chartId, filename) => {
@@ -138,6 +140,7 @@ function setupVisibility(panelId, items) {
 
 async function fetchData() {
   const params = new URLSearchParams();
+  params.append('ano', document.getElementById('ano').value || 'Todos');
   appendMulti(params, 'mes', getSelectValues('mes'));
   params.append('placa', document.getElementById('placa').value || 'Todos');
   params.append('oficina', document.getElementById('oficina').value || 'Todos');
@@ -259,15 +262,23 @@ function drawBarHorizontal(divId, categories, values) {
 async function refresh() {
   const d = await fetchData();
 
+  fillSelect('ano', d.anos, 'Ano');
+  fillSelectMulti('mes', d.meses, 'M\u00EAs');
+
   if (!refresh._init) {
-    fillSelectMulti('mes', d.meses, 'M\u00EAs');
+    const anoSelect = document.getElementById('ano');
     fillSelect('placa', d.placas, 'Placa');
     fillSelect('oficina', d.oficinas, 'Oficina');
     fillSelect('segmento', d.segmentos, 'Categoria');
-    ['mes', 'placa', 'oficina', 'segmento'].forEach((id) => {
+    ['ano', 'mes', 'placa', 'oficina', 'segmento'].forEach((id) => {
       document.getElementById(id).addEventListener('change', refresh);
     });
     document.getElementById('limpar').addEventListener('click', () => {
+      if (anoSelect && [...anoSelect.options].some((opt) => opt.value === currentYear)) {
+        anoSelect.value = currentYear;
+      } else if (anoSelect) {
+        anoSelect.value = 'Todos';
+      }
       resetMultiSelect('mes');
       ['placa', 'oficina', 'segmento'].forEach((id) => {
         document.getElementById(id).value = 'Todos';
@@ -276,6 +287,10 @@ async function refresh() {
     });
     enhanceMultiSelect('mes');
     refresh._init = true;
+    if (anoSelect && [...anoSelect.options].some((opt) => opt.value === currentYear)) {
+      anoSelect.value = currentYear;
+      return refresh();
+    }
   }
 
   document.getElementById('kpi-custo').textContent = fmtBRL(d.custo_total);
