@@ -339,6 +339,72 @@ def load_combustivel() -> pd.DataFrame:
             "Categoria",
         ])
 
+    def _read_km_rodados(path: Path) -> pd.DataFrame:
+        try:
+            raw = pd.read_excel(path, sheet_name="KM RODADOS", header=None, dtype=str)
+        except Exception:
+            return pd.DataFrame(columns=["Mes", "PLACA", "Km Rodados"])
+
+        header_idx = None
+        for idx in range(min(len(raw), 10)):
+            row = raw.iloc[idx]
+            normalized = set()
+            for value in row:
+                if pd.isna(value):
+                    continue
+                normalized.add(_normalize_ascii(value).upper())
+            has_mes = "MES" in normalized or "MÊS" in normalized
+            has_placa = "PLACA" in normalized or "PLACAS" in normalized
+            has_km = any("KM" in value for value in normalized)
+            if has_mes and has_placa and has_km:
+                header_idx = idx
+                break
+
+        if header_idx is None:
+            return pd.DataFrame(columns=["Mes", "PLACA", "Km Rodados"])
+
+        df_km = raw.iloc[header_idx + 1 :].copy()
+        df_km.columns = raw.iloc[header_idx]
+        df_km = _clean_columns(df_km)
+        if df_km.empty:
+            return pd.DataFrame(columns=["Mes", "PLACA", "Km Rodados"])
+
+        rename_map = {}
+        for col in df_km.columns:
+            col_norm = _normalize_ascii(col).upper()
+            if col_norm in {"MES", "MÊS"}:
+                rename_map[col] = "Mes"
+            elif col_norm in {"PLACA", "PLACAS"}:
+                rename_map[col] = "PLACA"
+            elif "KM" in col_norm:
+                rename_map[col] = "Km Rodados"
+        if rename_map:
+            df_km = df_km.rename(columns=rename_map)
+
+        if "Mes" not in df_km.columns or "Km Rodados" not in df_km.columns:
+            return pd.DataFrame(columns=["Mes", "PLACA", "Km Rodados"])
+
+        df_km["PLACA"] = df_km.get("PLACA").astype("string").str.strip().str.upper()
+        df_km["Km Rodados"] = pd.to_numeric(df_km.get("Km Rodados"), errors="coerce")
+
+        mes_raw = df_km["Mes"]
+        mes_dt = pd.to_datetime(mes_raw, errors="coerce")
+        if mes_dt.isna().any():
+            mes_norm = (
+                mes_raw.astype("string")
+                .str.strip()
+                .str.replace(".", "/", regex=False)
+                .str.replace("-", "/", regex=False)
+                .str.replace(" ", "", regex=False)
+                .str.lower()
+            )
+            mes_dt_alt = pd.to_datetime(mes_norm, errors="coerce", format="%b/%y")
+            mes_dt = mes_dt.combine_first(mes_dt_alt)
+
+        df_km["Mes"] = mes_dt.dt.to_period("M").astype(str)
+        df_km = df_km.dropna(subset=["Mes", "Km Rodados"])
+        return df_km[["Mes", "PLACA", "Km Rodados"]].copy()
+
     cache = _COMBUSTIVEL_CACHE
     lock = cache["lock"]
 
@@ -381,6 +447,8 @@ def load_combustivel() -> pd.DataFrame:
             cleaned = _clean_columns(sheet_df)
             if cleaned.empty:
                 continue
+            if "Data" not in cleaned.columns:
+                continue
             sheet_year = _sheet_year(sheet_name)
             if sheet_year is not None:
                 cleaned["_SheetYear"] = sheet_year
@@ -414,14 +482,18 @@ def load_combustivel() -> pd.DataFrame:
             df["Categoria"] = "Transporte"
 
         df.attrs["anos_sheets"] = sheet_years
+        cache["km_rodados_mensal"] = _read_km_rodados(DATA_COMB)
         cache["mtime"] = mtime
         cache["df"] = df.copy()
         return df
 
 
-def agg_combustivel(df: pd.DataFrame) -> dict:
+def agg_combustivel(df: pd.DataFrame, *, km_override: pd.DataFrame | None = None) -> dict:
     custo_total = float(df["Custo"].sum()) if "Custo" in df else 0.0
-    km_total = float(df["Km Rodados"].sum()) if "Km Rodados" in df else 0.0
+    if km_override is not None and "Km Rodados" in km_override.columns:
+        km_total = float(km_override["Km Rodados"].sum())
+    else:
+        km_total = float(df["Km Rodados"].sum()) if "Km Rodados" in df else 0.0
     litros_total = float(df["Litros"].sum()) if "Litros" in df else 0.0
     custo_por_km = (custo_total / km_total) if km_total else 0.0
     km_por_litro = (km_total / litros_total) if litros_total else 0.0
@@ -438,7 +510,7 @@ def agg_combustivel(df: pd.DataFrame) -> dict:
         "km_por_litro": km_por_litro,
         "custo_por_litro": custo_por_litro,
         "custo_mensal": _group_sum(df, "Mes", sort_by="group"),
-        "km_mensal": _group_sum(df, "Mes", "Km Rodados", sort_by="group"),
+        "km_mensal": _group_sum(km_override, "Mes", "Km Rodados", sort_by="group") if km_override is not None else _group_sum(df, "Mes", "Km Rodados", sort_by="group"),
         "litros_mensal": _group_sum(df, "Mes", "Litros", sort_by="group"),
         "gasto_por_posto": _group_sum(df, "POSTOS"),
         "gasto_por_combustivel": _group_sum(df, "Combustivel"),
@@ -1094,6 +1166,7 @@ def pedagio_page():
 @app.route("/data/combustivel")
 def data_comb():
     df = load_combustivel()
+    km_rodados = _COMBUSTIVEL_CACHE.get("km_rodados_mensal")
 
     ano = _parse_int(request.args.get("ano"))
     meses = _parse_mes_list(request.args.getlist("mes"))
@@ -1123,7 +1196,23 @@ def data_comb():
     if meses:
         df = df[df["Mes"].isin(meses)]
 
-    resultado = agg_combustivel(df)
+    km_override = None
+    if isinstance(km_rodados, pd.DataFrame) and not km_rodados.empty:
+        km_override = km_rodados.copy()
+        if placa and placa != "Todos":
+            km_override = km_override[km_override["PLACA"] == placa]
+        if ano is not None:
+            km_override = km_override[pd.to_datetime(km_override["Mes"], errors="coerce").dt.year == ano]
+        if meses:
+            km_override = km_override[km_override["Mes"].isin(meses)]
+        if not df.empty and "Mes" in df.columns and "PLACA" in df.columns:
+            allowed = df[["Mes", "PLACA"]].dropna().drop_duplicates()
+            if not allowed.empty:
+                km_override = km_override.merge(allowed, on=["Mes", "PLACA"], how="inner")
+        if km_override.empty:
+            km_override = None
+
+    resultado = agg_combustivel(df, km_override=km_override if ano == 2026 else None)
     resultado["anos"] = anos_disponiveis
     resultado["meses"] = meses_disponiveis
     return jsonify(resultado)
