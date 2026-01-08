@@ -593,12 +593,43 @@ def load_manutencao() -> pd.DataFrame:
 
         df["Data"] = pd.to_datetime(df.get("Data"), errors="coerce")
         if "Mes" in df.columns:
-            mes_dt = pd.to_datetime(df["Mes"], errors="coerce")
+            mes_raw = df["Mes"]
+            mes_dt = pd.to_datetime(mes_raw, errors="coerce")
+            if mes_dt.isna().any():
+                mes_norm = (
+                    mes_raw.astype("string")
+                    .str.strip()
+                    .str.lower()
+                    .str.replace(".", "/", regex=False)
+                    .str.replace("-", "/", regex=False)
+                    .str.replace(" ", "", regex=False)
+                )
+                month_map = {
+                    "jan": "01",
+                    "fev": "02",
+                    "mar": "03",
+                    "abr": "04",
+                    "mai": "05",
+                    "jun": "06",
+                    "jul": "07",
+                    "ago": "08",
+                    "set": "09",
+                    "out": "10",
+                    "nov": "11",
+                    "dez": "12",
+                }
+                for abbr, num in month_map.items():
+                    mes_norm = mes_norm.str.replace(abbr, num, regex=False)
+                mes_dt_alt = pd.to_datetime(mes_norm, errors="coerce", format="%m/%y")
+                mes_dt_alt = mes_dt_alt.combine_first(
+                    pd.to_datetime(mes_norm, errors="coerce", format="%m/%Y")
+                )
+                mes_dt = mes_dt.combine_first(mes_dt_alt)
             df["Data"] = df["Data"].combine_first(mes_dt)
 
         df = _apply_sheet_year(df, date_col="Data", mes_col=None)
         df["Mes"] = df["Data"].dt.to_period("M").astype(str)
-        df["Custo"] = pd.to_numeric(df.get("Custo"), errors="coerce")
+        df["Custo"] = _to_numeric_currency(df.get("Custo"))
 
         df = df.dropna(subset=["Mes", "Custo"]).copy()
         for col in ["PLACA", "OFICINA"]:
