@@ -85,6 +85,41 @@ const currentYear = String(new Date().getFullYear());
 const fmtNum = (value) => Number(value || 0).toLocaleString('pt-BR');
 const safeArray = (source, key) => (source && Array.isArray(source[key])) ? source[key] : [];
 const topN = (source, key, limit = 10) => safeArray(source, key).slice(0, limit);
+const MONTH_MAP = {
+  jan: '01',
+  fev: '02',
+  mar: '03',
+  abr: '04',
+  mai: '05',
+  jun: '06',
+  jul: '07',
+  ago: '08',
+  set: '09',
+  out: '10',
+  nov: '11',
+  dez: '12'
+};
+const formatMonthKey = (value) => {
+  if (!value) return '';
+  if (value instanceof Date && !Number.isNaN(value.getTime())) {
+    return `${value.getFullYear()}-${String(value.getMonth() + 1).padStart(2, '0')}`;
+  }
+  const text = String(value).trim();
+  if (!text) return '';
+  const isoMatch = text.match(/(20\d{2})[-/](\d{2})/);
+  if (isoMatch) return `${isoMatch[1]}-${isoMatch[2]}`;
+  const brMatch = text.toLowerCase().match(/^([a-z]{3})\/?(\d{2,4})/);
+  if (brMatch) {
+    const mm = MONTH_MAP[brMatch[1]];
+    const year = brMatch[2].length === 2 ? `20${brMatch[2]}` : brMatch[2];
+    if (mm) return `${year}-${mm}`;
+  }
+  const asDate = new Date(text);
+  if (!Number.isNaN(asDate.getTime())) {
+    return `${asDate.getFullYear()}-${String(asDate.getMonth() + 1).padStart(2, '0')}`;
+  }
+  return text;
+};
 const ensureExportButton = (chartId, filename) => {
   const chart = document.getElementById(chartId);
   if (!chart) return;
@@ -309,7 +344,7 @@ async function refresh() {
   document.getElementById('kpi-sabado').textContent = fmtBRL(d.valor_sabado);
   document.getElementById('kpi-nao-planejado').textContent = fmtBRL(d.valor_nao_planejado);
 
-  const meses = safeArray(d.valor_mensal, 'Mes');
+  const meses = safeArray(d.valor_mensal, 'Mes').map(formatMonthKey);
   const valoresMensal = safeArray(d.valor_mensal, 'Valor');
   const traceMensal = {
     type: 'scatter',
@@ -320,7 +355,7 @@ async function refresh() {
     marker: { color: '#BE1E2D', size: 7 },
     hovertemplate: '<b>%{x}</b><br>R$ %{y:,.2f}<extra></extra>'
   };
-  const layoutMensal = { margin: { l: 60, r: 20, t: 40, b: 60 }, xaxis: { tickangle: -30 }, yaxis: { title: 'R$' } };
+  const layoutMensal = { margin: { l: 60, r: 20, t: 40, b: 60 }, xaxis: { tickangle: -30, type: 'category' }, yaxis: { title: 'R$' } };
   Plotly.newPlot('chart-mensal', [traceMensal], { ...plotlyTheme.layout, ...layoutMensal }, plotlyTheme.config);
   ensureExportButton('chart-mensal', 'hoteis-valor-mensal');
 
