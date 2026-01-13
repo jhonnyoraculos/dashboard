@@ -124,6 +124,16 @@ const formatMonthKey = (value) => {
   }
   return text;
 };
+const MONTH_LABELS = ['jan', 'fev', 'mar', 'abr', 'mai', 'jun', 'jul', 'ago', 'set', 'out', 'nov', 'dez'];
+const formatMonthLabel = (value, includeYear = true) => {
+  const key = formatMonthKey(value);
+  const match = key.match(/(20\d{2})-(\d{2})/);
+  if (!match) return key;
+  const monthIndex = Number(match[2]) - 1;
+  const label = MONTH_LABELS[monthIndex] || match[2];
+  if (!includeYear) return label;
+  return `${label}/${match[1].slice(-2)}`;
+};
 const ensureExportButton = (chartId, filename) => {
   const chart = document.getElementById(chartId);
   if (!chart) return;
@@ -515,7 +525,8 @@ async function refresh() {
   document.getElementById('kpi-km-litro').textContent = `${Number(d.km_por_litro || 0).toFixed(2)} km/L`;
   document.getElementById('kpi-custo-litro').textContent = 'R$ ' + Number(d.custo_por_litro || 0).toFixed(2);
 
-  const meses = safeArray(d.custo_mensal, 'Mes').map(formatMonthKey);
+  const incluiAno = (document.getElementById('ano')?.value || 'Todos') === 'Todos';
+  const meses = safeArray(d.custo_mensal, 'Mes').map((mes) => formatMonthLabel(mes, incluiAno));
   const custos = safeArray(d.custo_mensal, 'Custo');
 
   const traceLine = {
@@ -562,7 +573,7 @@ async function refresh() {
   const gastoPlaca = safeArray(d.gasto_por_placa, 'Custo');
   drawBarVertical('chart-placa', placas, gastoPlaca, { autoOrient: true, threshold: 10, sort: 'desc', enableScroll: true });
   ensureExportButton('chart-placa', 'combustivel-gasto-por-placa');
-  drawBarVertical('chart-km-mes', safeArray(d.km_mensal, 'Mes').map(formatMonthKey), safeArray(d.km_mensal, 'Km Rodados'), {
+  drawBarVertical('chart-km-mes', safeArray(d.km_mensal, 'Mes').map((mes) => formatMonthLabel(mes, incluiAno)), safeArray(d.km_mensal, 'Km Rodados'), {
     valueFormat: 'number',
     hoverSuffix: ' km',
     tickPrefix: '',
@@ -570,7 +581,7 @@ async function refresh() {
     decimals: 0,
   });
   ensureExportButton('chart-km-mes', 'combustivel-km-por-mes');
-  drawBarVertical('chart-litros-mes', safeArray(d.litros_mensal, 'Mes').map(formatMonthKey), safeArray(d.litros_mensal, 'Litros'), {
+  drawBarVertical('chart-litros-mes', safeArray(d.litros_mensal, 'Mes').map((mes) => formatMonthLabel(mes, incluiAno)), safeArray(d.litros_mensal, 'Litros'), {
     valueFormat: 'number',
     hoverSuffix: ' L',
     tickPrefix: '',

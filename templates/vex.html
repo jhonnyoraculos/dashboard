@@ -1,9 +1,9 @@
-﻿<!doctype html>
+<!doctype html>
 <html lang="pt-BR">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>JR Dashboard - Manuten&ccedil;&atilde;o</title>
+  <title>JR Dashboard - Vex</title>
   <link rel="icon" href="{{ url_for('static', filename='logo-jr.png') }}">
   <script src="https://cdn.plot.ly/plotly-2.35.2.min.js" defer></script>
   <script src="https://cdn.jsdelivr.net/npm/html2canvas@1.4.1/dist/html2canvas.min.js" defer></script>
@@ -16,14 +16,12 @@
   <header class="topbar">
     <div class="brand">
       <img src="{{ url_for('static', filename='logo-jr.png') }}" alt="JR" class="logo">
-      <h1>JR DASHBOARD &bull; Manuten&ccedil;&atilde;o</h1>
+      <h1>JR DASHBOARD &bull; Vex</h1>
     </div>
     <div class="filters">
       <select id="ano"></select>
       <select id="mes" multiple></select>
       <select id="placa"></select>
-      <select id="oficina"></select>
-      <select id="segmento"></select>
       <button id="limpar">Limpar filtros</button>
       <a href="{{ url_for('home') }}" class="back-btn">&larr; Voltar</a>
     </div>
@@ -31,47 +29,55 @@
 
   <main class="container">
     <div class="export-bar">
-      <button type="button" class="export-btn" id="export-manu-cards">Exportar cards (PNG)</button>
-      <button type="button" class="export-btn" id="export-manu-page">Exportar p&aacute;gina (PNG)</button>
-      <button type="button" class="toggle-btn" id="toggle-manu-cards">Ocultar cards</button>
-      <button type="button" class="toggle-btn" id="toggle-manu-charts">Ocultar gr&aacute;ficos</button>
+      <button type="button" class="export-btn" id="export-vex-cards">Exportar cards (PNG)</button>
+      <button type="button" class="export-btn" id="export-vex-page">Exportar p&aacute;gina (PNG)</button>
+      <button type="button" class="toggle-btn" id="toggle-vex-cards">Ocultar cards</button>
+      <button type="button" class="toggle-btn" id="toggle-vex-charts">Ocultar gr&aacute;ficos</button>
     </div>
-    <div class="visibility-panel" id="visibility-manu"></div>
+    <div class="visibility-panel" id="visibility-vex"></div>
+
     <section class="kpis">
-      <div class="kpi red" id="kpi-manu-total">
-        <div class="kpi-title">Custo total (R$)</div>
-        <div id="kpi-custo" class="kpi-value">--</div>
+      <div class="kpi red" id="kpi-vex-total">
+        <div class="kpi-title">Gasto Vex total (R$)</div>
+        <div id="kpi-total" class="kpi-value">--</div>
       </div>
-      <div class="kpi blue" id="kpi-manu-servicos">
-        <div class="kpi-title">Servi&ccedil;os</div>
-        <div id="kpi-servicos" class="kpi-value">--</div>
+      <div class="kpi blue" id="kpi-vex-comb">
+        <div class="kpi-title">Combust&iacute;vel Vex (R$)</div>
+        <div id="kpi-comb" class="kpi-value">--</div>
       </div>
-      <div class="kpi green" id="kpi-manu-ticket">
-        <div class="kpi-title">Ticket m&eacute;dio</div>
-        <div id="kpi-ticket" class="kpi-value">--</div>
+      <div class="kpi green" id="kpi-vex-manu">
+        <div class="kpi-title">Manuten&ccedil;&atilde;o Vex (R$)</div>
+        <div id="kpi-manu" class="kpi-value">--</div>
       </div>
-      <div class="kpi yellow" id="kpi-manu-media">
-        <div class="kpi-title">M&eacute;dia mensal (R$)</div>
-        <div id="kpi-media-mensal" class="kpi-value">--</div>
+      <div class="kpi yellow" id="kpi-vex-ped">
+        <div class="kpi-title">Ped&aacute;gio/Seguro Vex (R$)</div>
+        <div id="kpi-ped" class="kpi-value">--</div>
       </div>
     </section>
 
     <section class="grid">
-      <div class="card" id="card-manu-placa"><h2>Gasto por placa</h2><div id="chart-placa"></div></div>
-      <div class="card" id="card-manu-oficina"><h2>Gasto por oficina</h2><div id="chart-oficina"></div></div>
-      <div class="card" id="card-manu-mensal"><h2>Gasto mensal</h2><div id="chart-mensal"></div></div>
-      <div class="card" id="card-manu-semanal"><h2>Gasto semanal (&uacute;ltimos 7 dias)</h2><div id="chart-semanal"></div></div>
+      <div class="card" id="card-vex-mensal">
+        <h2>Gasto Vex mensal</h2>
+        <div id="chart-vex-mensal"></div>
+      </div>
+      <div class="card" id="card-vex-area">
+        <h2>Gasto Vex por &aacute;rea</h2>
+        <div id="chart-vex-area"></div>
+      </div>
+      <div class="card" id="card-vex-placa">
+        <h2>Gasto Vex por placa</h2>
+        <div id="chart-vex-placa"></div>
+      </div>
     </section>
   </main>
 
   <footer class="footer">
-    Atualizado automaticamente a partir da planilha em <code>data/manutencao.xlsx</code>. &copy; JR
+    Dados Vex consolidados a partir das planilhas em <code>/data</code>. &copy; JR
   </footer>
 
 <script>
 const fmtBRL = (value) => Number(value || 0).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
 const currentYear = String(new Date().getFullYear());
-const fmtNum = (value) => Number(value || 0).toLocaleString('pt-BR');
 const safeArray = (source, key) => (source && Array.isArray(source[key])) ? source[key] : [];
 const MONTH_MAP = {
   jan: '01',
@@ -118,6 +124,7 @@ const formatMonthLabel = (value, includeYear = true) => {
   if (!includeYear) return label;
   return `${label}/${match[1].slice(-2)}`;
 };
+
 const ensureExportButton = (chartId, filename) => {
   const chart = document.getElementById(chartId);
   if (!chart) return;
@@ -135,6 +142,7 @@ const ensureExportButton = (chartId, filename) => {
   }
   btn.onclick = () => Plotly.downloadImage(chartId, { format: 'png', filename: filename || chartId, scale: 2 });
 };
+
 // Export helper: clona o elemento dentro de um wrapper com padding/largura fixa para capturar a sombra no PNG.
 const exportElementToPng = async (el, filename) => {
   if (!el || typeof html2canvas !== 'function') return;
@@ -146,7 +154,7 @@ const exportElementToPng = async (el, filename) => {
   wrapper.style.padding = '20px';
   wrapper.style.background = bg;
   wrapper.style.display = 'block';
-  wrapper.style.width = `${rect.width + 40}px`; // padding + área para sombra
+  wrapper.style.width = `${rect.width + 40}px`;
   wrapper.style.boxSizing = 'border-box';
   wrapper.style.position = 'relative';
   wrapper.appendChild(clone);
@@ -163,8 +171,8 @@ function setupVisibility(panelId, items) {
   const panel = document.getElementById(panelId);
   if (!panel) return;
   panel.innerHTML = '';
-  items.forEach(({ selector, label, cardSelector }) => {
-    const target = document.querySelector(cardSelector || selector);
+  items.forEach(({ selector, label }) => {
+    const target = document.querySelector(selector);
     if (!target) return;
     const inputId = `${panelId}-${selector.replace(/[^a-z0-9]/gi, '')}`;
     const wrapper = document.createElement('label');
@@ -188,9 +196,7 @@ async function fetchData() {
   params.append('ano', document.getElementById('ano').value || 'Todos');
   appendMulti(params, 'mes', getSelectValues('mes'));
   params.append('placa', document.getElementById('placa').value || 'Todos');
-  params.append('oficina', document.getElementById('oficina').value || 'Todos');
-  params.append('segmento', document.getElementById('segmento').value || 'Todos');
-  const res = await fetch('/data/manutencao?' + params.toString());
+  const res = await fetch('/data/vex?' + params.toString());
   return await res.json();
 }
 
@@ -279,29 +285,67 @@ function enhanceMultiSelect(id, expandedSize = 10) {
   el.addEventListener('blur', collapse);
 }
 
-function drawBarVertical(divId, x, y) {
-  const data = [{ type: 'bar', x: x || [], y: y || [], marker: { color: '#1C2D6B' } }];
+function drawLine(divId, labels, values) {
+  const data = [{
+    type: 'scatter',
+    mode: 'lines+markers',
+    x: labels || [],
+    y: values || [],
+    line: { color: '#1C2D6B', width: 3 },
+    marker: { color: '#BE1E2D', size: 7 },
+    hovertemplate: '<b>%{x}</b><br>R$ %{y:,.2f}<extra></extra>'
+  }];
   const layout = {
-    margin: { l: 50, r: 20, t: 20, b: 60 },
-    xaxis: { tickangle: -25, tickfont: { size: 10 }, automargin: true }
+    margin: { l: 60, r: 20, t: 40, b: 60 },
+    xaxis: { tickangle: -30, type: 'category' },
+    yaxis: { title: 'R$' }
   };
   Plotly.newPlot(divId, data, { ...plotlyTheme.layout, ...layout }, plotlyTheme.config);
 }
 
-function drawBarHorizontal(divId, categories, values) {
+function drawBar(divId, labels, values) {
+  const data = [{
+    type: 'bar',
+    x: labels || [],
+    y: values || [],
+    marker: { color: '#1C2D6B' },
+    hovertemplate: '<b>%{x}</b><br>R$ %{y:,.2f}<extra></extra>'
+  }];
+  const layout = {
+    margin: { l: 60, r: 20, t: 30, b: 70 },
+    xaxis: { tickangle: -20 },
+    yaxis: { title: 'R$' }
+  };
+  Plotly.newPlot(divId, data, { ...plotlyTheme.layout, ...layout }, plotlyTheme.config);
+}
+
+function drawBarHorizontal(divId, labels, values, options = {}) {
   const data = [{
     type: 'bar',
     orientation: 'h',
-    y: categories || [],
+    y: labels || [],
     x: values || [],
-    marker: { color: '#1C2D6B' }
+    marker: { color: '#1C2D6B' },
+    hovertemplate: '<b>%{y}</b><br>R$ %{x:,.2f}<extra></extra>'
   }];
+  const count = (labels || []).length;
+  const height = Math.max(320, count * 28);
   const layout = {
-    margin: { l: 150, r: 30, t: 20, b: 40 },
-    yaxis: { automargin: true, tickfont: { size: 10 }, autorange: 'reversed' },
-    xaxis: { tickfont: { size: 10 }, rangemode: 'tozero' }
+    margin: { l: 130, r: 60, t: 20, b: 60 },
+    height,
+    xaxis: { title: 'R$', tickprefix: 'R$ ', automargin: true },
+    yaxis: { automargin: true, autorange: 'reversed', tickfont: { size: 11 } },
+    hovermode: 'closest'
   };
   Plotly.newPlot(divId, data, { ...plotlyTheme.layout, ...layout }, plotlyTheme.config);
+  const container = document.getElementById(divId);
+  if (container && options.enableScroll) {
+    container.style.overflowY = 'auto';
+    container.style.maxHeight = options.maxHeight || '420px';
+    container.style.overflowX = 'hidden';
+    container.style.paddingRight = '12px';
+    container.style.boxSizing = 'border-box';
+  }
 }
 
 async function refresh() {
@@ -309,13 +353,11 @@ async function refresh() {
 
   fillSelect('ano', d.anos, 'Ano');
   fillSelectMulti('mes', d.meses, 'M\u00EAs');
+  fillSelect('placa', d.placas, 'Placa');
 
   if (!refresh._init) {
     const anoSelect = document.getElementById('ano');
-    fillSelect('placa', d.placas, 'Placa');
-    fillSelect('oficina', d.oficinas, 'Oficina');
-    fillSelect('segmento', d.segmentos, 'Categoria');
-    ['ano', 'mes', 'placa', 'oficina', 'segmento'].forEach((id) => {
+    ['ano', 'mes', 'placa'].forEach((id) => {
       document.getElementById(id).addEventListener('change', refresh);
     });
     document.getElementById('limpar').addEventListener('click', () => {
@@ -325,9 +367,7 @@ async function refresh() {
         anoSelect.value = 'Todos';
       }
       resetMultiSelect('mes');
-      ['placa', 'oficina', 'segmento'].forEach((id) => {
-        document.getElementById(id).value = 'Todos';
-      });
+      document.getElementById('placa').value = 'Todos';
       refresh();
     });
     enhanceMultiSelect('mes');
@@ -338,93 +378,73 @@ async function refresh() {
     }
   }
 
-  document.getElementById('kpi-custo').textContent = fmtBRL(d.custo_total);
-  document.getElementById('kpi-servicos').textContent = fmtNum(d.total_servicos);
-  document.getElementById('kpi-ticket').textContent = fmtBRL(d.media_servico);
-  document.getElementById('kpi-media-mensal').textContent = fmtBRL(d.media_mensal);
+  document.getElementById('kpi-total').textContent = fmtBRL(d.total_vex);
+  document.getElementById('kpi-comb').textContent = fmtBRL(d.combustivel_total);
+  document.getElementById('kpi-manu').textContent = fmtBRL(d.manutencao_total);
+  document.getElementById('kpi-ped').textContent = fmtBRL(d.pedagio_total);
 
-  drawBarHorizontal('chart-placa', safeArray(d.gasto_por_placa, 'PLACA'), safeArray(d.gasto_por_placa, 'Custo'));
-  ensureExportButton('chart-placa', 'manutencao-gasto-por-placa');
-  drawBarHorizontal('chart-oficina', safeArray(d.gasto_por_oficina, 'OFICINA'), safeArray(d.gasto_por_oficina, 'Custo'));
-  ensureExportButton('chart-oficina', 'manutencao-gasto-por-oficina');
+  const anoSelecionado = document.getElementById('ano')?.value || 'Todos';
+  const incluiAno = anoSelecionado === 'Todos';
+  const meses = safeArray(d.mensal_total, 'Mes').map((mes) => formatMonthLabel(mes, incluiAno));
+  const valores = safeArray(d.mensal_total, 'Valor');
+  drawLine('chart-vex-mensal', meses, valores);
+  ensureExportButton('chart-vex-mensal', 'vex-mensal');
 
-  const incluiAno = (document.getElementById('ano')?.value || 'Todos') === 'Todos';
-  const meses = safeArray(d.custo_mensal, 'Mes').map((mes) => formatMonthLabel(mes, incluiAno));
-  const custos = safeArray(d.custo_mensal, 'Custo');
-  const trace = {
-    type: 'scatter',
-    mode: 'lines+markers',
-    x: meses,
-    y: custos,
-    line: { color: '#1C2D6B', width: 3 },
-    marker: { color: '#BE1E2D', size: 7 },
-    hovertemplate: '<b>%{x}</b><br>R$ %{y:,.2f}<extra></extra>'
-  };
-  const layoutMensal = { margin: { l: 60, r: 20, t: 40, b: 60 }, xaxis: { tickangle: -30, type: 'category' }, yaxis: { title: 'R$' } };
-  Plotly.newPlot('chart-mensal', [trace], { ...plotlyTheme.layout, ...layoutMensal }, plotlyTheme.config);
-  ensureExportButton('chart-mensal', 'manutencao-gasto-mensal');
+  drawBar('chart-vex-area', safeArray(d.por_area, 'Area'), safeArray(d.por_area, 'Valor'));
+  ensureExportButton('chart-vex-area', 'vex-por-area');
 
-  const diasSemana = safeArray(d.custo_semana, 'Dia');
-  const custoSemana = safeArray(d.custo_semana, 'Custo');
-  const traceSemana = {
-    type: 'bar',
-    x: diasSemana,
-    y: custoSemana,
-    marker: { color: '#1C2D6B' },
-    hovertemplate: '<b>%{x}</b><br>R$ %{y:,.2f}<extra></extra>'
-  };
-  const layoutSemana = { margin: { l: 60, r: 20, t: 40, b: 50 }, yaxis: { title: 'R$', rangemode: 'tozero' } };
-  Plotly.newPlot('chart-semanal', [traceSemana], { ...plotlyTheme.layout, ...layoutSemana }, plotlyTheme.config);
-  ensureExportButton('chart-semanal', 'manutencao-gasto-semanal');
+  drawBarHorizontal(
+    'chart-vex-placa',
+    safeArray(d.gasto_por_placa, 'PLACA'),
+    safeArray(d.gasto_por_placa, 'Valor'),
+    { enableScroll: true, maxHeight: '420px' }
+  );
+  ensureExportButton('chart-vex-placa', 'vex-por-placa');
+}
 
+function setupExports() {
   const kpiSection = document.querySelector('.kpis');
-  const page = document.querySelector('main.container');
-  const exportCards = document.getElementById('export-manu-cards');
-  const exportPage = document.getElementById('export-manu-page');
+  const page = document.querySelector('.container');
+  const exportCards = document.getElementById('export-vex-cards');
+  const exportPage = document.getElementById('export-vex-page');
   const root = document.documentElement;
-  const toggleCards = document.getElementById('toggle-manu-cards');
-  const toggleCharts = document.getElementById('toggle-manu-charts');
-  const chartsSection = document.querySelector('.grid');
-  const setToggle = (btn, el, stateLabel) => {
-    if (!btn || !el) return;
-    const hidden = el.classList.contains('hidden-section');
-    btn.textContent = hidden ? `Mostrar ${stateLabel}` : `Ocultar ${stateLabel}`;
-  };
+  const toggleCards = document.getElementById('toggle-vex-cards');
+  const toggleCharts = document.getElementById('toggle-vex-charts');
+
   if (toggleCards && kpiSection) {
     toggleCards.onclick = () => {
       kpiSection.classList.toggle('hidden-section');
-      setToggle(toggleCards, kpiSection, 'cards');
     };
-    setToggle(toggleCards, kpiSection, 'cards');
   }
-  if (toggleCharts && chartsSection) {
+  if (toggleCharts) {
     toggleCharts.onclick = () => {
-      chartsSection.classList.toggle('hidden-section');
-      setToggle(toggleCharts, chartsSection, 'gráficos');
+      document.querySelectorAll('.grid .card').forEach((el) => {
+        el.classList.toggle('hidden-section');
+      });
     };
-    setToggle(toggleCharts, chartsSection, 'gráficos');
   }
-  setupVisibility('visibility-manu', [
-    { selector: '#kpi-manu-total', label: 'Custo total' },
-    { selector: '#kpi-manu-servicos', label: 'Serviços' },
-    { selector: '#kpi-manu-ticket', label: 'Ticket médio' },
-    { selector: '#kpi-manu-media', label: 'Média mensal' },
-    { selector: '#card-manu-placa', label: 'Gasto por placa' },
-    { selector: '#card-manu-oficina', label: 'Gasto por oficina' },
-    { selector: '#card-manu-mensal', label: 'Gasto mensal' },
-    { selector: '#card-manu-semanal', label: 'Gasto semanal' },
+
+  setupVisibility('visibility-vex', [
+    { selector: '#kpi-vex-total', label: 'Total Vex' },
+    { selector: '#kpi-vex-comb', label: 'Combust\u00EDvel Vex' },
+    { selector: '#kpi-vex-manu', label: 'Manuten\u00E7\u00E3o Vex' },
+    { selector: '#kpi-vex-ped', label: 'Ped\u00E1gio Vex' },
+    { selector: '#card-vex-mensal', label: 'Gasto Vex mensal' },
+    { selector: '#card-vex-area', label: 'Gasto Vex por \u00E1rea' },
+    { selector: '#card-vex-placa', label: 'Gasto Vex por placa' },
   ]);
+
   if (exportCards && kpiSection) {
     exportCards.onclick = async () => {
       root.classList.add('exporting');
-      await exportElementToPng(kpiSection, 'manutencao-cards');
+      await exportElementToPng(kpiSection, 'vex-cards');
       root.classList.remove('exporting');
     };
   }
   if (exportPage && page) {
     exportPage.onclick = async () => {
       root.classList.add('exporting');
-      await exportElementToPng(page, 'manutencao-pagina');
+      await exportElementToPng(page, 'vex-pagina');
       root.classList.remove('exporting');
     };
   }
@@ -446,6 +466,7 @@ const plotlyTheme = {
 };
 
 window.addEventListener('DOMContentLoaded', refresh);
+window.addEventListener('DOMContentLoaded', setupExports);
 </script>
 </body>
 </html>

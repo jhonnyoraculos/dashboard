@@ -122,6 +122,16 @@ const formatMonthKey = (value) => {
   }
   return text;
 };
+const MONTH_LABELS = ['jan', 'fev', 'mar', 'abr', 'mai', 'jun', 'jul', 'ago', 'set', 'out', 'nov', 'dez'];
+const formatMonthLabel = (value, includeYear = true) => {
+  const key = formatMonthKey(value);
+  const match = key.match(/(20\d{2})-(\d{2})/);
+  if (!match) return key;
+  const monthIndex = Number(match[2]) - 1;
+  const label = MONTH_LABELS[monthIndex] || match[2];
+  if (!includeYear) return label;
+  return `${label}/${match[1].slice(-2)}`;
+};
 function setupVisibility(panelId, items) {
   const panel = document.getElementById(panelId);
   if (!panel) return;
@@ -446,7 +456,8 @@ async function refresh() {
     document.getElementById('kpi-media-valores').textContent = fmtBRL(mediaValores);
     document.getElementById('kpi-lancamentos').textContent = fmtNum(d.total_lancamentos);
 
-    const meses = safeArray(d.custo_mensal, 'Mes').map(formatMonthKey);
+    const incluiAno = (document.getElementById('ano')?.value || 'Todos') === 'Todos';
+    const meses = safeArray(d.custo_mensal, 'Mes').map((mes) => formatMonthLabel(mes, incluiAno));
     const custos = safeArray(d.custo_mensal, 'Custo').map((value) => Number(value));
     const lineTrace = {
       type: 'scatter',

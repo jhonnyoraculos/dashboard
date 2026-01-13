@@ -164,6 +164,31 @@ def _parse_int(value, *, min_value: int | None = None, max_value: int | None = N
     return parsed
 
 
+def _normalize_categoria(series: pd.Series) -> pd.Series:
+    if series is None:
+        return pd.Series(dtype="string")
+    return (
+        series.astype("string")
+        .fillna("")
+        .str.strip()
+        .str.lower()
+    )
+
+
+def _exclude_vex(df: pd.DataFrame) -> pd.DataFrame:
+    if "Categoria" not in df.columns:
+        return df
+    mask = _normalize_categoria(df["Categoria"]) != "vex"
+    return df.loc[mask].copy()
+
+
+def _only_vex(df: pd.DataFrame) -> pd.DataFrame:
+    if "Categoria" not in df.columns:
+        return df.iloc[0:0].copy()
+    mask = _normalize_categoria(df["Categoria"]) == "vex"
+    return df.loc[mask].copy()
+
+
 def _filter_by_period(
     df: pd.DataFrame,
     *,
@@ -1194,9 +1219,15 @@ def pedagio_page():
     return render_template("pedagio.html")
 
 
+@app.route("/vex")
+def vex_page():
+    return render_template("vex.html")
+
+
 @app.route("/data/combustivel")
 def data_comb():
     df = load_combustivel()
+    df = _exclude_vex(df)
     km_rodados = _COMBUSTIVEL_CACHE.get("km_rodados_mensal")
 
     ano = _parse_int(request.args.get("ano"))
@@ -1252,6 +1283,7 @@ def data_comb():
 @app.route("/data/manutencao")
 def data_manu():
     df = load_manutencao()
+    df = _exclude_vex(df)
 
     ano = _parse_int(request.args.get("ano"))
     meses = _parse_mes_list(request.args.getlist("mes"))
@@ -1287,6 +1319,7 @@ def data_manu():
 @app.route("/data/hoteis")
 def data_hoteis():
     df_total = load_hoteis()
+    df_total = _exclude_vex(df_total)
     totais_gerais = agg_hoteis(df_total)
     df = df_total.copy()
 
@@ -1323,6 +1356,7 @@ def data_hoteis():
 @app.route("/data/pedagio")
 def data_pedagio():
     df = load_pedagio()
+    df = _exclude_vex(df)
 
     ano = _parse_int(request.args.get("ano"))
     meses = _parse_mes_list(request.args.getlist("mes"))
@@ -1353,6 +1387,126 @@ def data_pedagio():
     resultado["anos"] = anos_disponiveis
     resultado["meses"] = meses_disponiveis
     return jsonify(resultado)
+
+
+@app.route("/data/vex")
+def data_vex():
+    ano = _parse_int(request.args.get("ano"))
+    meses = _parse_mes_list(request.args.getlist("mes"))
+    placa = request.args.get("placa")
+
+    df_comb = _only_vex(load_combustivel())
+    df_manu = _only_vex(load_manutencao())
+    df_hoteis = load_hoteis().iloc[0:0].copy()
+    df_ped = _only_vex(load_pedagio())
+
+    anos_disponiveis: set[int] = set()
+    for df_src in (df_comb, df_manu, df_hoteis, df_ped):
+        anos_disponiveis.update(_unique_years(df_src))
+        anos_disponiveis.update(df_src.attrs.get("anos_sheets", []))
+    anos_list = sorted(anos_disponiveis)
+
+    def _meses_disponiveis(*dfs: pd.DataFrame) -> list[str]:
+        frames = [df for df in dfs if not df.empty and "Mes" in df.columns]
+        if not frames:
+            return []
+        merged = pd.concat(frames, ignore_index=True)
+        return _unique_sorted(merged, "Mes")
+
+    df_meses_base = [df for df in (df_comb, df_manu, df_hoteis, df_ped)]
+    if ano is not None:
+        df_meses_base = [_filter_by_period(df, ano=ano) for df in df_meses_base]
+    meses_disponiveis = _meses_disponiveis(*df_meses_base)
+
+    df_placas_base = [df for df in (df_comb, df_manu, df_ped)]
+    if ano is not None:
+        df_placas_base = [_filter_by_period(df, ano=ano) for df in df_placas_base]
+    if meses:
+        df_placas_base = [df[df["Mes"].isin(meses)] for df in df_placas_base]
+    placas_disponiveis: list[str] = []
+    if df_placas_base:
+        placas_set = set()
+        for df in df_placas_base:
+            if "PLACA" in df.columns:
+                placas_set.update(df["PLACA"].dropna().astype(str).str.strip().unique().tolist())
+        placas_disponiveis = sorted(placas_set)
+
+    def _apply_filters(df: pd.DataFrame) -> pd.DataFrame:
+        if ano is not None:
+            df = _filter_by_period(df, ano=ano)
+        if meses:
+            df = df[df["Mes"].isin(meses)]
+        if placa and placa != "Todos" and "PLACA" in df.columns:
+            df = df[df["PLACA"] == placa]
+        return df
+
+    df_comb = _apply_filters(df_comb)
+    df_manu = _apply_filters(df_manu)
+    df_hoteis = _apply_filters(df_hoteis)
+    df_ped = _apply_filters(df_ped)
+
+    total_comb = float(df_comb["Custo"].sum()) if "Custo" in df_comb else 0.0
+    total_manu = float(df_manu["Custo"].sum()) if "Custo" in df_manu else 0.0
+    total_hoteis = 0.0
+    total_ped = float(df_ped["Custo"].sum()) if "Custo" in df_ped else 0.0
+    total_vex = total_comb + total_manu + total_hoteis + total_ped
+
+    mensal_comb = _group_sum(df_comb, "Mes", "Custo", sort_by="group")
+    mensal_manu = _group_sum(df_manu, "Mes", "Custo", sort_by="group")
+    mensal_hoteis = {"Mes": [], "Valor": []}
+    mensal_ped = _group_sum(df_ped, "Mes", "Custo", sort_by="group")
+
+    monthly_map: dict[str, float] = {}
+    for src, key in (
+        (mensal_comb, "Custo"),
+        (mensal_manu, "Custo"),
+        (mensal_ped, "Custo"),
+    ):
+        meses_src = src.get("Mes", [])
+        valores_src = src.get(key, [])
+        for mes, valor in zip(meses_src, valores_src):
+            monthly_map[mes] = monthly_map.get(mes, 0.0) + float(valor or 0)
+
+    meses_sorted = sorted(monthly_map.keys())
+    mensal_total = {
+        "Mes": meses_sorted,
+        "Valor": [round(monthly_map[mes], 2) for mes in meses_sorted],
+    }
+
+    por_area = {
+        "Area": ["Combustivel", "Manutencao", "Pedagio"],
+        "Valor": [round(total_comb, 2), round(total_manu, 2), round(total_ped, 2)],
+    }
+
+    placa_totais: dict[str, float] = {}
+    for df_src, col_valor in ((df_comb, "Custo"), (df_manu, "Custo"), (df_ped, "Custo")):
+        if df_src.empty or "PLACA" not in df_src.columns or col_valor not in df_src.columns:
+            continue
+        df_val = df_src.dropna(subset=["PLACA"]).copy()
+        df_val[col_valor] = pd.to_numeric(df_val[col_valor], errors="coerce")
+        for placa_val, total in df_val.groupby("PLACA")[col_valor].sum().items():
+            key = str(placa_val).strip()
+            placa_totais[key] = placa_totais.get(key, 0.0) + float(total or 0.0)
+
+    placas_ordenadas = sorted(placa_totais.items(), key=lambda item: item[1], reverse=True)
+    gasto_por_placa = {
+        "PLACA": [item[0] for item in placas_ordenadas],
+        "Valor": [round(item[1], 2) for item in placas_ordenadas],
+    }
+
+    return jsonify({
+        "anos": anos_list,
+        "meses": meses_disponiveis,
+        "placas": placas_disponiveis,
+        "total_vex": round(total_vex, 2),
+        "combustivel_total": round(total_comb, 2),
+        "manutencao_total": round(total_manu, 2),
+        "hoteis_total": round(total_hoteis, 2),
+        "pedagio_total": round(total_ped, 2),
+        "mensal_total": mensal_total,
+        "por_area": por_area,
+        "gasto_por_placa": gasto_por_placa,
+    })
 
 
 def _warm_data_caches(*, blocking: bool = False) -> None:

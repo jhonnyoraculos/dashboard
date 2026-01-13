@@ -120,6 +120,16 @@ const formatMonthKey = (value) => {
   }
   return text;
 };
+const MONTH_LABELS = ['jan', 'fev', 'mar', 'abr', 'mai', 'jun', 'jul', 'ago', 'set', 'out', 'nov', 'dez'];
+const formatMonthLabel = (value, includeYear = true) => {
+  const key = formatMonthKey(value);
+  const match = key.match(/(20\d{2})-(\d{2})/);
+  if (!match) return key;
+  const monthIndex = Number(match[2]) - 1;
+  const label = MONTH_LABELS[monthIndex] || match[2];
+  if (!includeYear) return label;
+  return `${label}/${match[1].slice(-2)}`;
+};
 const ensureExportButton = (chartId, filename) => {
   const chart = document.getElementById(chartId);
   if (!chart) return;
@@ -344,7 +354,8 @@ async function refresh() {
   document.getElementById('kpi-sabado').textContent = fmtBRL(d.valor_sabado);
   document.getElementById('kpi-nao-planejado').textContent = fmtBRL(d.valor_nao_planejado);
 
-  const meses = safeArray(d.valor_mensal, 'Mes').map(formatMonthKey);
+  const incluiAno = (document.getElementById('ano')?.value || 'Todos') === 'Todos';
+  const meses = safeArray(d.valor_mensal, 'Mes').map((mes) => formatMonthLabel(mes, incluiAno));
   const valoresMensal = safeArray(d.valor_mensal, 'Valor');
   const traceMensal = {
     type: 'scatter',
