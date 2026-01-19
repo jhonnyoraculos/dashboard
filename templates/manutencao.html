@@ -118,6 +118,53 @@ const formatMonthLabel = (value, includeYear = true) => {
   if (!includeYear) return label;
   return `${label}/${match[1].slice(-2)}`;
 };
+const parseMonthSortKey = (value, fallbackYear = null) => {
+  const key = formatMonthKey(value);
+  const match = key.match(/(20\d{2})-(\d{2})/);
+  if (match) {
+    return { year: Number(match[1]), month: Number(match[2]) };
+  }
+  const text = String(value || '').trim().toLowerCase();
+  if (!text) return null;
+  const abbrMatch = text.match(/([a-z]{3})/);
+  const monthStr = abbrMatch ? MONTH_MAP[abbrMatch[1]] : null;
+  if (!monthStr) return null;
+  let year = null;
+  const yearMatch = text.match(/(\d{2,4})/);
+  if (yearMatch) {
+    year = yearMatch[1];
+  } else if (fallbackYear !== null && fallbackYear !== undefined && fallbackYear !== '') {
+    year = String(fallbackYear);
+  }
+  if (!year) return null;
+  const yearNum = Number(year.length === 2 ? `20${year}` : year);
+  if (!Number.isFinite(yearNum)) return null;
+  return { year: yearNum, month: Number(monthStr) };
+};
+const sortMonthlySeries = (meses, valores, includeYear = true, fallbackYear = null) => {
+  const items = (meses || []).map((mes, idx) => ({
+    mes,
+    sortKey: parseMonthSortKey(mes, fallbackYear),
+    idx,
+    valor: Array.isArray(valores) ? valores[idx] : undefined
+  }));
+  const getOrderValue = (item) => {
+    if (!item.sortKey) return null;
+    return includeYear ? (item.sortKey.year * 100 + item.sortKey.month) : item.sortKey.month;
+  };
+  const ordered = [...items].sort((a, b) => {
+    const aVal = getOrderValue(a);
+    const bVal = getOrderValue(b);
+    if (aVal !== null && bVal !== null) return aVal - bVal;
+    if (aVal !== null) return -1;
+    if (bVal !== null) return 1;
+    return a.idx - b.idx;
+  });
+  return {
+    labels: ordered.map((item) => formatMonthLabel(item.mes, includeYear)),
+    values: ordered.map((item) => item.valor)
+  };
+};
 const ensureExportButton = (chartId, filename) => {
   const chart = document.getElementById(chartId);
   if (!chart) return;
@@ -348,9 +395,17 @@ async function refresh() {
   drawBarHorizontal('chart-oficina', safeArray(d.gasto_por_oficina, 'OFICINA'), safeArray(d.gasto_por_oficina, 'Custo'));
   ensureExportButton('chart-oficina', 'manutencao-gasto-por-oficina');
 
-  const incluiAno = (document.getElementById('ano')?.value || 'Todos') === 'Todos';
-  const meses = safeArray(d.custo_mensal, 'Mes').map((mes) => formatMonthLabel(mes, incluiAno));
-  const custos = safeArray(d.custo_mensal, 'Custo');
+  const anoSelecionado = document.getElementById('ano')?.value || 'Todos';
+  const incluiAno = anoSelecionado === 'Todos';
+  const fallbackYear = incluiAno ? null : anoSelecionado;
+  const mensalSeries = sortMonthlySeries(
+    safeArray(d.custo_mensal, 'Mes'),
+    safeArray(d.custo_mensal, 'Custo'),
+    incluiAno,
+    fallbackYear
+  );
+  const meses = mensalSeries.labels;
+  const custos = mensalSeries.values;
   const trace = {
     type: 'scatter',
     mode: 'lines+markers',
