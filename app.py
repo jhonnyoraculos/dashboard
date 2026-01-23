@@ -900,6 +900,8 @@ def load_hoteis() -> pd.DataFrame:
         for col in ["Motorista", "Ajudante", "Cidade", "Hotel", "Tipo", "Categoria"]:
             if col in df.columns:
                 df[col] = df[col].astype("string").str.strip()
+        # Hotéis não usam categoria; sempre considerar como Transporte.
+        df["Categoria"] = "Transporte"
 
         df.attrs["anos_sheets"] = sheet_years
         cache["mtime"] = mtime
