@@ -1401,6 +1401,7 @@ def data_vex():
     df_manu = _only_vex(load_manutencao())
     df_hoteis = load_hoteis().iloc[0:0].copy()
     df_ped = _only_vex(load_pedagio())
+    km_rodados = _COMBUSTIVEL_CACHE.get("km_rodados_mensal")
 
     anos_disponiveis: set[int] = set()
     for df_src in (df_comb, df_manu, df_hoteis, df_ped):
@@ -1447,7 +1448,29 @@ def data_vex():
     df_hoteis = _apply_filters(df_hoteis)
     df_ped = _apply_filters(df_ped)
 
+    km_override = None
+    if ano == 2026 and isinstance(km_rodados, pd.DataFrame) and not km_rodados.empty:
+        km_override = km_rodados.copy()
+        if ano is not None:
+            km_override = km_override[pd.to_datetime(km_override["Mes"], errors="coerce").dt.year == ano]
+        if meses:
+            km_override = km_override[km_override["Mes"].isin(meses)]
+        if placa and placa != "Todos":
+            km_override = km_override[km_override["PLACA"] == placa]
+        if not df_comb.empty and "Mes" in df_comb.columns and "PLACA" in df_comb.columns:
+            allowed = df_comb[["Mes", "PLACA"]].dropna().drop_duplicates()
+            if not allowed.empty:
+                km_override = km_override.merge(allowed, on=["Mes", "PLACA"], how="inner")
+
     total_comb = float(df_comb["Custo"].sum()) if "Custo" in df_comb else 0.0
+    if km_override is not None and "Km Rodados" in km_override.columns:
+        km_total = float(km_override["Km Rodados"].sum())
+    else:
+        km_total = float(df_comb["Km Rodados"].sum()) if "Km Rodados" in df_comb else 0.0
+    litros_total = float(df_comb["Litros"].sum()) if "Litros" in df_comb else 0.0
+    km_por_litro = (km_total / litros_total) if litros_total else 0.0
+    custo_por_km = (total_comb / km_total) if km_total else 0.0
+    custo_por_litro = (total_comb / litros_total) if litros_total else 0.0
     total_manu = float(df_manu["Custo"].sum()) if "Custo" in df_manu else 0.0
     total_hoteis = 0.0
     total_ped = float(df_ped["Custo"].sum()) if "Custo" in df_ped else 0.0
@@ -1505,6 +1528,11 @@ def data_vex():
         "manutencao_total": round(total_manu, 2),
         "hoteis_total": round(total_hoteis, 2),
         "pedagio_total": round(total_ped, 2),
+        "km_total": round(km_total, 2),
+        "litros_total": round(litros_total, 2),
+        "km_por_litro": round(km_por_litro, 3),
+        "custo_por_km": round(custo_por_km, 4),
+        "custo_por_litro": round(custo_por_litro, 4),
         "mensal_total": mensal_total,
         "por_area": por_area,
         "gasto_por_placa": gasto_por_placa,

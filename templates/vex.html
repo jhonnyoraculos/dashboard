@@ -45,6 +45,26 @@
         <div class="kpi-title">Combust&iacute;vel Vex (R$)</div>
         <div id="kpi-comb" class="kpi-value">--</div>
       </div>
+      <div class="kpi blue" id="kpi-vex-km">
+        <div class="kpi-title">KM total</div>
+        <div id="kpi-km" class="kpi-value">--</div>
+      </div>
+      <div class="kpi blue" id="kpi-vex-litros">
+        <div class="kpi-title">Total litros</div>
+        <div id="kpi-litros" class="kpi-value">--</div>
+      </div>
+      <div class="kpi green" id="kpi-vex-custo-km">
+        <div class="kpi-title">Custo m&eacute;dio por KM</div>
+        <div id="kpi-custo-km" class="kpi-value">--</div>
+      </div>
+      <div class="kpi green" id="kpi-vex-km-litro">
+        <div class="kpi-title">M&eacute;dia KM/L</div>
+        <div id="kpi-km-litro" class="kpi-value">--</div>
+      </div>
+      <div class="kpi green" id="kpi-vex-custo-litro">
+        <div class="kpi-title">Custo m&eacute;dio por litro</div>
+        <div id="kpi-custo-litro" class="kpi-value">--</div>
+      </div>
       <div class="kpi green" id="kpi-vex-manu">
         <div class="kpi-title">Manuten&ccedil;&atilde;o Vex (R$)</div>
         <div id="kpi-manu" class="kpi-value">--</div>
@@ -77,6 +97,7 @@
 
 <script>
 const fmtBRL = (value) => Number(value || 0).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
+const fmtNum = (value) => Number(value || 0).toLocaleString('pt-BR');
 const currentYear = String(new Date().getFullYear());
 const safeArray = (source, key) => (source && Array.isArray(source[key])) ? source[key] : [];
 const MONTH_MAP = {
@@ -426,9 +447,14 @@ async function refresh() {
   }
 
   document.getElementById('kpi-total').textContent = fmtBRL(d.total_vex);
-  document.getElementById('kpi-comb').textContent = fmtBRL(d.combustivel_total);
-  document.getElementById('kpi-manu').textContent = fmtBRL(d.manutencao_total);
-  document.getElementById('kpi-ped').textContent = fmtBRL(d.pedagio_total);
+    document.getElementById('kpi-comb').textContent = fmtBRL(d.combustivel_total);
+    document.getElementById('kpi-km').textContent = fmtNum(d.km_total);
+    document.getElementById('kpi-litros').textContent = fmtNum(d.litros_total);
+    document.getElementById('kpi-custo-km').textContent = fmtBRL(d.custo_por_km);
+    document.getElementById('kpi-km-litro').textContent = Number(d.km_por_litro || 0).toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+    document.getElementById('kpi-custo-litro').textContent = fmtBRL(d.custo_por_litro);
+    document.getElementById('kpi-manu').textContent = fmtBRL(d.manutencao_total);
+    document.getElementById('kpi-ped').textContent = fmtBRL(d.pedagio_total);
 
   const anoSelecionado = document.getElementById('ano')?.value || 'Todos';
   const incluiAno = anoSelecionado === 'Todos';
@@ -478,13 +504,18 @@ function setupExports() {
     };
   }
 
-  setupVisibility('visibility-vex', [
-    { selector: '#kpi-vex-total', label: 'Total Vex' },
-    { selector: '#kpi-vex-comb', label: 'Combust\u00EDvel Vex' },
-    { selector: '#kpi-vex-manu', label: 'Manuten\u00E7\u00E3o Vex' },
-    { selector: '#kpi-vex-ped', label: 'Ped\u00E1gio Vex' },
-    { selector: '#card-vex-mensal', label: 'Gasto Vex mensal' },
-    { selector: '#card-vex-area', label: 'Gasto Vex por \u00E1rea' },
+    setupVisibility('visibility-vex', [
+      { selector: '#kpi-vex-total', label: 'Total Vex' },
+      { selector: '#kpi-vex-comb', label: 'Combust\u00EDvel Vex' },
+      { selector: '#kpi-vex-km', label: 'KM Vex' },
+      { selector: '#kpi-vex-litros', label: 'Total litros' },
+      { selector: '#kpi-vex-custo-km', label: 'Custo por KM' },
+      { selector: '#kpi-vex-km-litro', label: 'M\u00E9dia KM/L' },
+      { selector: '#kpi-vex-custo-litro', label: 'Custo por litro' },
+      { selector: '#kpi-vex-manu', label: 'Manuten\u00E7\u00E3o Vex' },
+      { selector: '#kpi-vex-ped', label: 'Ped\u00E1gio Vex' },
+      { selector: '#card-vex-mensal', label: 'Gasto Vex mensal' },
+      { selector: '#card-vex-area', label: 'Gasto Vex por \u00E1rea' },
     { selector: '#card-vex-placa', label: 'Gasto Vex por placa' },
   ]);
 
