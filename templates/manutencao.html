@@ -71,6 +71,7 @@
 <script>
 const fmtBRL = (value) => Number(value || 0).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
 const currentYear = String(new Date().getFullYear());
+const currentMonth = new Date().getMonth() + 1;
 const fmtNum = (value) => Number(value || 0).toLocaleString('pt-BR');
 const safeArray = (source, key) => (source && Array.isArray(source[key])) ? source[key] : [];
 const MONTH_MAP = {
@@ -377,12 +378,17 @@ async function refresh() {
       });
       refresh();
     });
-    enhanceMultiSelect('mes');
-    refresh._init = true;
-    if (anoSelect && [...anoSelect.options].some((opt) => opt.value === currentYear)) {
-      anoSelect.value = currentYear;
-      return refresh();
-    }
+      enhanceMultiSelect('mes');
+      refresh._init = true;
+      const currentMesValue = `${currentYear}-${String(currentMonth).padStart(2, '0')}`;
+      if (anoSelect && [...anoSelect.options].some((opt) => opt.value === currentYear)) {
+        anoSelect.value = currentYear;
+        const mesSelect = document.getElementById('mes');
+        if (mesSelect && [...mesSelect.options].some((opt) => opt.value === currentMesValue)) {
+          Array.from(mesSelect.options).forEach((opt) => { opt.selected = opt.value === currentMesValue; });
+        }
+        return refresh();
+      }
   }
 
   document.getElementById('kpi-custo').textContent = fmtBRL(d.custo_total);
