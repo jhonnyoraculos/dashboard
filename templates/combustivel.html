@@ -302,7 +302,7 @@ function fillSelectMulti(id, values, label) {
   });
   const optionMap = new Map(Array.from(el.options || []).map((opt) => [opt.value, opt]));
   const selection = current.filter((value) => optionMap.has(value));
-  const finalSelection = selection.length ? selection : ['Todos'];
+  const finalSelection = selection.length ? selection : [];
   finalSelection.forEach((value) => {
     const opt = optionMap.get(value);
     if (opt) opt.selected = true;
@@ -341,6 +341,26 @@ function enhanceMultiSelect(id, expandedSize = 10) {
     el.classList.remove('expanded');
     el.size = 1;
   };
+  el.addEventListener('mousedown', (event) => {
+    const option = event.target;
+    if (!option || option.tagName !== 'OPTION') return;
+    event.preventDefault();
+    el.focus();
+    const options = Array.from(el.options || []);
+    if (!options.length) return;
+    const allOption = options[0];
+    if (option.value === 'Todos') {
+      const nonAll = options.slice(1);
+      const shouldSelectAll = !allOption.selected || nonAll.some((opt) => !opt.selected);
+      options.forEach((opt) => { opt.selected = shouldSelectAll; });
+    } else {
+      option.selected = !option.selected;
+      const nonAll = options.slice(1);
+      const allSelected = nonAll.length > 0 && nonAll.every((opt) => opt.selected);
+      allOption.selected = allSelected;
+    }
+    el.dispatchEvent(new Event('change', { bubbles: true }));
+  });
   el.addEventListener('focus', expand);
   el.addEventListener('blur', collapse);
 }
