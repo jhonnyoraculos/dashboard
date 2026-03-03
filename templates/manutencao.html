@@ -315,6 +315,12 @@ function enhanceMultiSelect(id, expandedSize = 10) {
   if (!el) return;
   el.multiple = true;
   el.size = 1;
+  let manualSelectionHandled = false;
+  const isMobileViewport = () => window.matchMedia('(max-width: 768px)').matches;
+  const emitSelectionEvents = () => {
+    el.dispatchEvent(new Event('change', { bubbles: true }));
+    el.dispatchEvent(new Event('input', { bubbles: true }));
+  };
   const expand = () => {
     el.classList.add('expanded');
     el.size = Math.min(expandedSize, el.options.length);
@@ -323,10 +329,11 @@ function enhanceMultiSelect(id, expandedSize = 10) {
     el.classList.remove('expanded');
     el.size = 1;
   };
-  el.addEventListener('mousedown', (event) => {
+  el.addEventListener('pointerdown', (event) => {
     const option = event.target;
     if (!option || option.tagName !== 'OPTION') return;
     event.preventDefault();
+    manualSelectionHandled = true;
     el.focus();
     const options = Array.from(el.options || []);
     if (!options.length) return;
@@ -341,7 +348,27 @@ function enhanceMultiSelect(id, expandedSize = 10) {
       const allSelected = nonAll.length > 0 && nonAll.every((opt) => opt.selected);
       allOption.selected = allSelected;
     }
-    el.dispatchEvent(new Event('change', { bubbles: true }));
+    emitSelectionEvents();
+    if (isMobileViewport()) {
+      // On mobile, close immediately after touch so filters apply without extra tap outside.
+      requestAnimationFrame(() => {
+        el.blur();
+        collapse();
+      });
+    }
+  });
+  el.addEventListener('pointerup', () => {
+    if (manualSelectionHandled) {
+      manualSelectionHandled = false;
+      return;
+    }
+    setTimeout(() => {
+      emitSelectionEvents();
+      if (isMobileViewport()) {
+        el.blur();
+        collapse();
+      }
+    }, 0);
   });
   el.addEventListener('focus', expand);
   el.addEventListener('blur', collapse);
@@ -384,7 +411,12 @@ async function refresh() {
     fillSelect('oficina', d.oficinas, 'Oficina');
     fillSelect('segmento', d.segmentos, 'Categoria');
     ['ano', 'mes', 'placa', 'oficina', 'segmento'].forEach((id) => {
-      document.getElementById(id).addEventListener('change', refresh);
+      const control = document.getElementById(id);
+      if (!control) return;
+      control.addEventListener('change', refresh);
+      if (id === 'mes') {
+        control.addEventListener('input', refresh);
+      }
     });
     document.getElementById('limpar').addEventListener('click', () => {
       if (anoSelect && [...anoSelect.options].some((opt) => opt.value === currentYear)) {

@@ -706,3 +706,180 @@ body.home-body{
     width:100%;
   }
 }
+
+/* ---------- MOBILE OVERHAUL (FILTROS) ---------- */
+@media (max-width: 1024px){
+  .topbar{
+    padding:14px 16px;
+    gap:12px;
+  }
+  .brand{
+    width:100%;
+    min-width:0;
+  }
+  .brand h1{
+    font-size:clamp(20px, 4.5vw, 28px);
+    line-height:1.2;
+    white-space:normal;
+    word-break:break-word;
+  }
+  .filters{
+    width:100%;
+    display:grid;
+    grid-template-columns:repeat(2, minmax(0, 1fr));
+    gap:10px;
+    align-items:stretch;
+  }
+  .filters > *{
+    min-width:0 !important;
+    width:100% !important;
+  }
+  .filters select,
+  .filters button,
+  .filters .back-btn{
+    min-height:44px;
+    height:44px;
+    padding:10px 12px;
+    font-size:16px;
+    border-radius:12px;
+    box-shadow:0 3px 8px rgba(0,0,0,.1);
+  }
+  .filters #limpar{
+    grid-column:1 / -1;
+  }
+  .filters .back-btn{
+    grid-column:1 / -1;
+  }
+  .filters select[multiple]{
+    height:44px;
+    min-height:44px;
+  }
+  .filters select[multiple].expanded{
+    height:auto;
+    min-height:170px;
+    max-height:240px;
+    overflow-y:auto;
+    position:relative;
+    z-index:20;
+  }
+
+  .container{
+    padding:20px 14px;
+  }
+  .kpis{
+    gap:14px;
+    grid-template-columns:repeat(auto-fit, minmax(170px, 1fr));
+  }
+  .kpi{
+    padding:16px;
+  }
+  .grid{
+    gap:14px;
+    grid-template-columns:1fr;
+  }
+  .card{
+    padding:16px;
+  }
+  .card > div[id^="chart"]{
+    min-height:240px;
+  }
+
+  .export-bar{
+    gap:8px;
+  }
+  .export-btn,
+  .toggle-btn{
+    min-height:42px;
+    padding:10px 12px;
+    font-size:15px;
+    flex:1 1 calc(50% - 6px);
+  }
+  .visibility-panel{
+    gap:8px;
+  }
+  .visibility-panel label{
+    width:100%;
+    justify-content:flex-start;
+    min-height:40px;
+    font-size:13px;
+  }
+}
+
+@media (max-width: 640px){
+  .filters{
+    grid-template-columns:1fr;
+  }
+  .filters #limpar,
+  .filters .back-btn{
+    grid-column:auto;
+  }
+  .logo{
+    width:38px;
+    height:38px;
+  }
+  .brand h1{
+    font-size:clamp(18px, 6vw, 23px);
+  }
+
+  .export-btn,
+  .toggle-btn{
+    flex:1 1 100%;
+  }
+  .chart-export{
+    top:10px;
+    right:10px;
+    min-height:34px;
+    padding:6px 10px;
+  }
+  .kpi .kpi-value{
+    font-size:clamp(24px, 7vw, 34px);
+  }
+  .footer{
+    padding:16px 12px;
+    font-size:12px;
+  }
+
+  .home-wrapper{
+    padding:20px 12px 36px;
+    gap:24px;
+  }
+  .home-header{
+    padding:20px;
+    gap:16px;
+  }
+  .home-subtitle{
+    font-size:15px;
+  }
+  .home-total-section{
+    padding:16px;
+  }
+  .home-total-grid{
+    gap:10px;
+  }
+  .home-total-filters{
+    margin-top:12px;
+    display:grid;
+    grid-template-columns:1fr;
+    gap:8px;
+    width:100%;
+  }
+  .home-filter-field{
+    width:100%;
+  }
+  .home-filter-field select,
+  .home-filter-clear{
+    width:100%;
+    min-height:42px;
+    height:42px;
+    font-size:15px;
+    border-radius:12px;
+  }
+  .home-filter-field select[multiple]{
+    min-height:42px;
+    height:42px;
+  }
+  .home-filter-field select[multiple].expanded{
+    min-height:170px;
+    max-height:240px;
+  }
+}

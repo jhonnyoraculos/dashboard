@@ -196,6 +196,12 @@
       if (!el) return;
       el.multiple = true;
       el.size = 1;
+      let manualSelectionHandled = false;
+      const isMobileViewport = () => window.matchMedia('(max-width: 768px)').matches;
+      const emitSelectionEvents = () => {
+        el.dispatchEvent(new Event('change', { bubbles: true }));
+        el.dispatchEvent(new Event('input', { bubbles: true }));
+      };
       const expand = () => {
         el.classList.add('expanded');
         el.size = Math.min(expandedSize, el.options.length);
@@ -204,10 +210,11 @@
         el.classList.remove('expanded');
         el.size = 1;
       };
-      el.addEventListener('mousedown', (event) => {
+      el.addEventListener('pointerdown', (event) => {
         const option = event.target;
         if (!option || option.tagName !== 'OPTION') return;
         event.preventDefault();
+        manualSelectionHandled = true;
         el.focus();
         const options = Array.from(el.options || []);
         if (!options.length) return;
@@ -222,7 +229,27 @@
           const allSelected = nonAll.length > 0 && nonAll.every((opt) => opt.selected);
           allOption.selected = allSelected;
         }
-        el.dispatchEvent(new Event('change', { bubbles: true }));
+        emitSelectionEvents();
+        if (isMobileViewport()) {
+          // On mobile, close immediately after touch so filters apply without extra tap outside.
+          requestAnimationFrame(() => {
+            el.blur();
+            collapse();
+          });
+        }
+      });
+      el.addEventListener('pointerup', () => {
+        if (manualSelectionHandled) {
+          manualSelectionHandled = false;
+          return;
+        }
+        setTimeout(() => {
+          emitSelectionEvents();
+          if (isMobileViewport()) {
+            el.blur();
+            collapse();
+          }
+        }, 0);
       });
       el.addEventListener('focus', expand);
       el.addEventListener('blur', collapse);
@@ -341,10 +368,12 @@
           filterState.ano = event.target.value || 'Todos';
           loadOverviewTotal();
         });
-        mesSelect.addEventListener('change', () => {
+        const handleMonthChange = () => {
           filterState.meses = getSelectValues('home-filter-mes');
           loadOverviewTotal();
-        });
+        };
+        mesSelect.addEventListener('change', handleMonthChange);
+        mesSelect.addEventListener('input', handleMonthChange);
         const clearBtn = document.getElementById('home-filter-clear');
         if (clearBtn) {
           clearBtn.addEventListener('click', () => {
