@@ -391,20 +391,95 @@ function drawBarVertical(divId, x, y) {
   Plotly.newPlot(divId, data, { ...plotlyTheme.layout, ...layout }, plotlyTheme.config);
 }
 
-function drawBarHorizontal(divId, categories, values) {
+function drawBarHorizontal(divId, categories, values, options = {}) {
+  const rawLabels = Array.isArray(categories) ? categories : [];
+  const rawValues = (values || []).map((value) => Number(value || 0));
+  let combined = rawLabels.map((label, index) => ({
+    label,
+    value: Number.isFinite(rawValues[index]) ? rawValues[index] : 0
+  }));
+  if (options.excludeZero === true) {
+    combined = combined.filter((item) => item.value > 0);
+  }
+  if (options.sort === 'desc') {
+    combined.sort((a, b) => b.value - a.value);
+  } else if (options.sort === 'asc') {
+    combined.sort((a, b) => a.value - b.value);
+  }
+  const plottingLabels = combined.map((item) => item.label);
+  const numericValues = combined.map((item) => item.value);
+  const showValues = options.showValues === true;
+  const hideXAxisTicks = options.hideXAxisTicks === true;
+  const enableScroll = options.enableScroll === true;
+  const formatValue = typeof options.valueFormatter === 'function'
+    ? options.valueFormatter
+    : (value) => `R$ ${Number(value || 0).toLocaleString('pt-BR', { minimumFractionDigits: 0, maximumFractionDigits: 2 })}`;
+  const maxValue = numericValues.length ? Math.max(...numericValues) : 0;
+  const rangeMax = maxValue > 0 ? maxValue * (showValues ? 1.35 : 1.05) : 1;
+  const longestLabel = plottingLabels.reduce((max, label) => Math.max(max, String(label || '').length), 0);
+  const leftMargin = Math.min(180, Math.max(95, 55 + longestLabel * 4));
+  const textValues = showValues ? numericValues.map((value) => formatValue(value)) : undefined;
+  const longestText = showValues && Array.isArray(textValues)
+    ? textValues.reduce((max, text) => Math.max(max, String(text || '').length), 0)
+    : 0;
+  const rightMargin = showValues
+    ? Math.min(120, Math.max(70, 20 + longestText * 4))
+    : 30;
+  const rowHeight = Number(options.rowHeight) > 0 ? Number(options.rowHeight) : 28;
+  const visibleRows = Number(options.visibleRows) > 0 ? Number(options.visibleRows) : null;
+  const topMargin = 26;
+  const bottomMargin = 36;
+  const totalRows = plottingLabels.length;
+  const rowsInView = visibleRows ? Math.min(totalRows, visibleRows) : totalRows;
+  const height = enableScroll
+    ? Math.max(260, topMargin + bottomMargin + totalRows * rowHeight)
+    : 320;
+  const viewportHeight = enableScroll
+    ? Math.max(220, topMargin + bottomMargin + rowsInView * rowHeight)
+    : null;
   const data = [{
     type: 'bar',
     orientation: 'h',
-    y: categories || [],
-    x: values || [],
-    marker: { color: '#1C2D6B' }
+    y: plottingLabels,
+    x: numericValues,
+    marker: { color: '#1C2D6B' },
+    text: textValues,
+    textposition: showValues ? 'outside' : 'none',
+    textfont: showValues ? { size: 11, color: '#1C2D6B' } : undefined,
+    cliponaxis: false,
   }];
   const layout = {
-    margin: { l: 150, r: 30, t: 30, b: 40 },
+    margin: { l: leftMargin, r: rightMargin, t: topMargin, b: bottomMargin },
+    height,
     yaxis: { automargin: true, tickfont: { size: 10 }, autorange: 'reversed' },
-    xaxis: { tickfont: { size: 10 }, rangemode: 'tozero' }
+    xaxis: {
+      tickfont: { size: 10 },
+      rangemode: 'tozero',
+      range: [0, rangeMax],
+      gridcolor: '#e5e7eb',
+      showticklabels: !hideXAxisTicks,
+      ticks: hideXAxisTicks ? '' : undefined,
+      showgrid: !hideXAxisTicks,
+      zeroline: !hideXAxisTicks
+    }
   };
   Plotly.newPlot(divId, data, { ...plotlyTheme.layout, ...layout }, plotlyTheme.config);
+  const container = document.getElementById(divId);
+  if (container) {
+    if (enableScroll) {
+      container.style.overflowY = 'auto';
+      container.style.maxHeight = options.maxHeight || `${viewportHeight}px`;
+      container.style.overflowX = 'hidden';
+      container.style.paddingRight = '10px';
+      container.style.boxSizing = 'border-box';
+    } else {
+      container.style.overflowY = '';
+      container.style.maxHeight = '';
+      container.style.overflowX = '';
+      container.style.paddingRight = '';
+      container.style.boxSizing = '';
+    }
+  }
 }
 
 async function refresh() {
@@ -516,9 +591,23 @@ async function refresh() {
   Plotly.newPlot('chart-semanal', [traceSemana], { ...plotlyTheme.layout, ...layoutSemana }, plotlyTheme.config);
   ensureExportButton('chart-semanal', 'hoteis-valor-semanal');
 
-  drawBarHorizontal('chart-cidade', safeArray(d.valor_por_cidade, 'Cidade'), safeArray(d.valor_por_cidade, 'Valor'));
+  drawBarHorizontal('chart-cidade', safeArray(d.valor_por_cidade, 'Cidade'), safeArray(d.valor_por_cidade, 'Valor'), {
+    showValues: true,
+    hideXAxisTicks: true,
+    enableScroll: true,
+    visibleRows: 10,
+    sort: 'desc',
+    excludeZero: true
+  });
   ensureExportButton('chart-cidade', 'hoteis-valor-por-cidade');
-  drawBarHorizontal('chart-hotel', topN(d.valor_por_hotel, 'Hotel', 12), topN(d.valor_por_hotel, 'Valor', 12));
+  drawBarHorizontal('chart-hotel', safeArray(d.valor_por_hotel, 'Hotel'), safeArray(d.valor_por_hotel, 'Valor'), {
+    showValues: true,
+    hideXAxisTicks: true,
+    enableScroll: true,
+    visibleRows: 10,
+    sort: 'desc',
+    excludeZero: true
+  });
   ensureExportButton('chart-hotel', 'hoteis-valor-por-hotel');
 
   const kpiSection = document.querySelector('.kpis');

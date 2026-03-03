@@ -383,20 +383,55 @@ function drawBarVertical(divId, x, y) {
   Plotly.newPlot(divId, data, { ...plotlyTheme.layout, ...layout }, plotlyTheme.config);
 }
 
-function drawBarHorizontal(divId, categories, values) {
+function drawBarHorizontal(divId, categories, values, options = {}) {
+  const numericValues = (values || []).map((value) => Number(value || 0));
+  const showValues = options.showValues === true;
+  const formatValue = typeof options.valueFormatter === 'function'
+    ? options.valueFormatter
+    : (value) => `R$ ${Number(value || 0).toLocaleString('pt-BR', { maximumFractionDigits: 0 })}`;
+  const maxValue = numericValues.length ? Math.max(...numericValues) : 0;
+  const rangeMax = maxValue > 0 ? maxValue * (showValues ? 1.3 : 1.05) : 1;
+  const longestLabel = (categories || []).reduce((max, label) => Math.max(max, String(label || '').length), 0);
+  const leftMargin = Math.min(210, Math.max(95, 60 + longestLabel * 5));
+  const count = (categories || []).length;
+  const height = options.enableScroll ? Math.max(320, count * 28) : 320;
   const data = [{
     type: 'bar',
     orientation: 'h',
     y: categories || [],
-    x: values || [],
-    marker: { color: '#1C2D6B' }
+    x: numericValues,
+    marker: { color: '#1C2D6B' },
+    text: showValues
+      ? numericValues.map((value) => formatValue(value))
+      : undefined,
+    textposition: showValues ? 'outside' : 'none',
+    textfont: showValues ? { size: 11, color: '#1C2D6B' } : undefined,
+    cliponaxis: false,
   }];
   const layout = {
-    margin: { l: 150, r: 30, t: 20, b: 40 },
+    margin: { l: leftMargin, r: showValues ? 95 : 30, t: 16, b: 36 },
+    height,
     yaxis: { automargin: true, tickfont: { size: 10 }, autorange: 'reversed' },
-    xaxis: { tickfont: { size: 10 }, rangemode: 'tozero' }
+    xaxis: { tickfont: { size: 10 }, rangemode: 'tozero', range: [0, rangeMax], gridcolor: '#e5e7eb' },
+    bargap: 0.2
   };
   Plotly.newPlot(divId, data, { ...plotlyTheme.layout, ...layout }, plotlyTheme.config);
+  const container = document.getElementById(divId);
+  if (container) {
+    if (options.enableScroll) {
+      container.style.overflowY = 'auto';
+      container.style.maxHeight = options.maxHeight || '420px';
+      container.style.overflowX = 'hidden';
+      container.style.paddingRight = '12px';
+      container.style.boxSizing = 'border-box';
+    } else {
+      container.style.overflowY = '';
+      container.style.maxHeight = '';
+      container.style.overflowX = '';
+      container.style.paddingRight = '';
+      container.style.boxSizing = '';
+    }
+  }
 }
 
 async function refresh() {
@@ -448,9 +483,16 @@ async function refresh() {
   document.getElementById('kpi-ticket').textContent = fmtBRL(d.media_servico);
   document.getElementById('kpi-media-mensal').textContent = fmtBRL(d.media_mensal);
 
-  drawBarHorizontal('chart-placa', safeArray(d.gasto_por_placa, 'PLACA'), safeArray(d.gasto_por_placa, 'Custo'));
+  drawBarHorizontal('chart-placa', safeArray(d.gasto_por_placa, 'PLACA'), safeArray(d.gasto_por_placa, 'Custo'), {
+    showValues: true,
+    enableScroll: true,
+    maxHeight: '420px'
+  });
   ensureExportButton('chart-placa', 'manutencao-gasto-por-placa');
-  drawBarHorizontal('chart-oficina', safeArray(d.gasto_por_oficina, 'OFICINA'), safeArray(d.gasto_por_oficina, 'Custo'));
+  drawBarHorizontal('chart-oficina', safeArray(d.gasto_por_oficina, 'OFICINA'), safeArray(d.gasto_por_oficina, 'Custo'), {
+    enableScroll: true,
+    maxHeight: '420px'
+  });
   ensureExportButton('chart-oficina', 'manutencao-gasto-por-oficina');
 
   const anoSelecionado = document.getElementById('ano')?.value || 'Todos';

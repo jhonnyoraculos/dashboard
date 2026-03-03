@@ -436,20 +436,29 @@ function drawBar(divId, labels, values) {
 }
 
 function drawBarHorizontal(divId, labels, values, options = {}) {
+  const numericValues = (values || []).map((value) => Number(value || 0));
+  const showValues = options.showValues === true;
+  const maxValue = numericValues.length ? Math.max(...numericValues) : 0;
+  const rangeMax = maxValue > 0 ? maxValue * (showValues ? 1.3 : 1.05) : 1;
   const data = [{
     type: 'bar',
     orientation: 'h',
     y: labels || [],
-    x: values || [],
+    x: numericValues,
     marker: { color: '#1C2D6B' },
-    hovertemplate: '<b>%{y}</b><br>R$ %{x:,.2f}<extra></extra>'
+    hovertemplate: '<b>%{y}</b><br>R$ %{x:,.2f}<extra></extra>',
+    text: showValues
+      ? numericValues.map((value) => `R$ ${Number(value || 0).toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`)
+      : undefined,
+    textposition: showValues ? 'outside' : 'none',
+    cliponaxis: false,
   }];
   const count = (labels || []).length;
   const height = Math.max(320, count * 28);
   const layout = {
-    margin: { l: 130, r: 60, t: 20, b: 60 },
+    margin: { l: 130, r: showValues ? 85 : 60, t: 20, b: 60 },
     height,
-    xaxis: { title: 'R$', tickprefix: 'R$ ', automargin: true },
+    xaxis: { title: 'R$', tickprefix: 'R$ ', automargin: true, range: [0, rangeMax] },
     yaxis: { automargin: true, autorange: 'reversed', tickfont: { size: 11 } },
     hovermode: 'closest'
   };
@@ -535,7 +544,7 @@ async function refresh() {
     'chart-vex-placa',
     safeArray(d.gasto_por_placa, 'PLACA'),
     safeArray(d.gasto_por_placa, 'Valor'),
-    { enableScroll: true, maxHeight: '420px' }
+    { enableScroll: true, maxHeight: '420px', showValues: true }
   );
   ensureExportButton('chart-vex-placa', 'vex-por-placa');
 }

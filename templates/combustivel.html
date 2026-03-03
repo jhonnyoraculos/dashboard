@@ -444,11 +444,15 @@ function drawBarVertical(divId, labelsSource, valuesSource, options = {}) {
   const plottingValues = combined.map((item) => item.value);
   const count = plottingLabels.length;
   const useHorizontal = opts.autoOrient && count > opts.threshold;
-  const maxValue = plottingValues.length ? Math.max(...plottingValues) : 0;
-  const rangeMax = maxValue > 0 ? maxValue * 1.05 : 1;
-  const longestLabel = plottingLabels.reduce((max, label) => Math.max(max, (label || '').length), 0);
   const showText = opts.showText === true;
+  const maxValue = plottingValues.length ? Math.max(...plottingValues) : 0;
+  const rangePadding = showText ? (useHorizontal ? 1.4 : 1.15) : 1.05;
+  const rangeMax = maxValue > 0 ? maxValue * rangePadding : 1;
+  const longestLabel = plottingLabels.reduce((max, label) => Math.max(max, (label || '').length), 0);
   const textValues = showText ? plottingValues.map((value) => formatValue(value)) : undefined;
+  const longestText = showText && Array.isArray(textValues)
+    ? textValues.reduce((max, text) => Math.max(max, String(text || '').length), 0)
+    : 0;
 
   const baseTrace = {
     type: 'bar',
@@ -464,6 +468,10 @@ function drawBarVertical(divId, labelsSource, valuesSource, options = {}) {
   const container = document.getElementById(divId);
 
   if (useHorizontal) {
+    const leftMargin = Math.min(210, Math.max(95, 60 + longestLabel * 5));
+    const rightMargin = showText
+      ? Math.min(140, Math.max(80, 24 + longestText * 5))
+      : 40;
     data = [{
       ...baseTrace,
       orientation: 'h',
@@ -473,7 +481,7 @@ function drawBarVertical(divId, labelsSource, valuesSource, options = {}) {
     }];
 
     layout = {
-      margin: { l: Math.min(180, 70 + longestLabel * 6), r: 40, t: 10, b: 40 },
+      margin: { l: leftMargin, r: rightMargin, t: 10, b: 40 },
       height: Math.max(320, count * 32),
       xaxis: {
         rangemode: 'tozero',
@@ -499,10 +507,14 @@ function drawBarVertical(divId, labelsSource, valuesSource, options = {}) {
         container.style.overflowY = 'auto';
         container.style.maxHeight = opts.maxHeight;
         container.style.overflowX = 'hidden';
+        container.style.paddingRight = '12px';
+        container.style.boxSizing = 'border-box';
       } else {
         container.style.overflowY = '';
         container.style.maxHeight = '';
         container.style.overflowX = '';
+        container.style.paddingRight = '';
+        container.style.boxSizing = '';
       }
     }
   } else {
@@ -684,7 +696,14 @@ async function refresh() {
   ensureExportButton('chart-comb', 'combustivel-gasto-por-combustivel');
   const placas = safeArray(d.gasto_por_placa, 'PLACA');
   const gastoPlaca = safeArray(d.gasto_por_placa, 'Custo');
-  drawBarVertical('chart-placa', placas, gastoPlaca, { autoOrient: true, threshold: 10, sort: 'desc', enableScroll: true });
+  drawBarVertical('chart-placa', placas, gastoPlaca, {
+    autoOrient: true,
+    threshold: 10,
+    sort: 'desc',
+    enableScroll: true,
+    showText: true,
+    textFormatter: (value) => `R$ ${Number(value || 0).toLocaleString('pt-BR', { maximumFractionDigits: 0 })}`,
+  });
   ensureExportButton('chart-placa', 'combustivel-gasto-por-placa');
   const kmSeries = sortMonthlySeries(
     safeArray(d.km_mensal, 'Mes'),

@@ -382,6 +382,8 @@ function drawBar(divId, labels, values, opts = {}) {
     const num = Number(val);
     return Number.isFinite(num) ? num : 0;
   });
+  const showValues = opts.showValues === true;
+  const formatCurrency = (value) => `R$ ${Number(value || 0).toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
   const count = plottingLabels.length;
   const sortMode = opts.sort;
   const autoOrient = opts.autoOrient ?? false;
@@ -402,18 +404,23 @@ function drawBar(divId, labels, values, opts = {}) {
   let data;
   let layout;
   if (useHorizontal) {
+    const maxValue = plottingValues.length ? Math.max(...plottingValues) : 0;
+    const rangeMax = maxValue > 0 ? maxValue * (showValues ? 1.3 : 1.05) : 1;
     const height = Math.max(320, count * 32);
     data = [{
       type: 'bar',
       x: plottingValues,
       y: plottingLabels,
       orientation: 'h',
-      marker: { color: '#1C2D6B' }
+      marker: { color: '#1C2D6B' },
+      text: showValues ? plottingValues.map((value) => formatCurrency(value)) : undefined,
+      textposition: showValues ? 'outside' : 'none',
+      cliponaxis: false,
     }];
     layout = {
-      margin: { l: 120, r: 40, t: 20, b: 40 },
+      margin: { l: 120, r: showValues ? 85 : 40, t: 20, b: 40 },
       height,
-      xaxis: { title: 'R$', tickprefix: 'R$ ' },
+      xaxis: { title: 'R$', tickprefix: 'R$ ', range: [0, rangeMax] },
       yaxis: { automargin: true, autorange: 'reversed', tickfont: { size: 11 } },
       hovermode: 'closest'
     };
@@ -430,16 +437,21 @@ function drawBar(divId, labels, values, opts = {}) {
       }
     }
   } else {
+    const maxValue = plottingValues.length ? Math.max(...plottingValues) : 0;
+    const rangeMax = maxValue > 0 ? maxValue * (showValues ? 1.15 : 1.05) : 1;
     data = [{
       type: 'bar',
       x: plottingLabels,
       y: plottingValues,
-      marker: { color: '#1C2D6B' }
+      marker: { color: '#1C2D6B' },
+      text: showValues ? plottingValues.map((value) => formatCurrency(value)) : undefined,
+      textposition: showValues ? 'outside' : 'none',
+      cliponaxis: false,
     }];
     layout = {
-      margin: { l: 60, r: 20, t: 30, b: 70 },
+      margin: { l: 60, r: 20, t: 30, b: showValues ? 90 : 70 },
       xaxis: { tickangle: -30, automargin: true },
-      yaxis: { title: 'R$' },
+      yaxis: { title: 'R$', range: [0, rangeMax], rangemode: 'tozero' },
       hovermode: 'closest'
     };
     const container = document.getElementById(divId);
@@ -607,7 +619,7 @@ async function refresh() {
 
     drawPie('chart-tipo', safeArray(d.gasto_por_tipo, 'Tipo'), safeArray(d.gasto_por_tipo, 'Custo'));
     ensureExportButton('chart-tipo', 'pedagio-gasto-por-tipo');
-    drawBar('chart-placa', safeArray(d.gasto_por_placa, 'PLACA'), safeArray(d.gasto_por_placa, 'Custo'), { autoOrient: true, threshold: 8, enableScroll: true, sort: 'desc' });
+    drawBar('chart-placa', safeArray(d.gasto_por_placa, 'PLACA'), safeArray(d.gasto_por_placa, 'Custo'), { autoOrient: true, threshold: 8, enableScroll: true, sort: 'desc', showValues: true });
     ensureExportButton('chart-placa', 'pedagio-gasto-por-placa');
     drawBar('chart-segmento', safeArray(d.gasto_por_categoria, 'Categoria'), safeArray(d.gasto_por_categoria, 'Custo'));
     ensureExportButton('chart-segmento', 'pedagio-gasto-por-segmento');
