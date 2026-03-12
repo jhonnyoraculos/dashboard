@@ -402,19 +402,31 @@ function enhanceMultiSelect(id, expandedSize = 10) {
 }
 
 function drawLine(divId, labels, values) {
+  const numericValues = (values || []).map((value) => Number(value || 0));
+  const valoresLinha = numericValues.filter((valor) => Number.isFinite(valor));
+  const minLinha = valoresLinha.length ? Math.min(...valoresLinha) : 0;
+  const maxLinha = valoresLinha.length ? Math.max(...valoresLinha) : 0;
+  const faixaLinha = maxLinha - minLinha;
+  const paddingLinha = faixaLinha > 0 ? faixaLinha * 0.14 : Math.max(1, Math.abs(maxLinha || 0) * 0.08);
+  const yMinLinha = Math.max(0, minLinha - paddingLinha);
+  const yMaxLinha = maxLinha + paddingLinha;
   const data = [{
     type: 'scatter',
-    mode: 'lines+markers',
+    mode: 'lines+markers+text',
     x: labels || [],
-    y: values || [],
+    y: numericValues,
     line: { color: '#1C2D6B', width: 3 },
     marker: { color: '#BE1E2D', size: 7 },
+    text: numericValues.map((valor) => `R$ ${Number(valor || 0).toLocaleString('pt-BR', { maximumFractionDigits: 0 })}`),
+    textposition: 'top center',
+    textfont: { size: 10, color: '#1C2D6B' },
+    cliponaxis: false,
     hovertemplate: '<b>%{x}</b><br>R$ %{y:,.2f}<extra></extra>'
   }];
   const layout = {
-    margin: { l: 60, r: 20, t: 40, b: 60 },
+    margin: { l: 60, r: 60, t: 58, b: 60 },
     xaxis: { tickangle: -30, type: 'category' },
-    yaxis: { title: 'R$' }
+    yaxis: { title: 'R$', range: [yMinLinha, yMaxLinha], automargin: true }
   };
   Plotly.newPlot(divId, data, { ...plotlyTheme.layout, ...layout }, plotlyTheme.config);
 }

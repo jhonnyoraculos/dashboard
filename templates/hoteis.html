@@ -545,16 +545,31 @@ async function refresh() {
   );
   const meses = mensalSeries.labels;
   const valoresMensal = mensalSeries.values;
+  const valoresLinha = valoresMensal.map((valor) => Number(valor)).filter((valor) => Number.isFinite(valor));
+  const minLinha = valoresLinha.length ? Math.min(...valoresLinha) : 0;
+  const maxLinha = valoresLinha.length ? Math.max(...valoresLinha) : 0;
+  const faixaLinha = maxLinha - minLinha;
+  const paddingLinha = faixaLinha > 0 ? faixaLinha * 0.14 : Math.max(1, Math.abs(maxLinha || 0) * 0.08);
+  const yMinLinha = Math.max(0, minLinha - paddingLinha);
+  const yMaxLinha = maxLinha + paddingLinha;
   const traceMensal = {
     type: 'scatter',
-    mode: 'lines+markers',
+    mode: 'lines+markers+text',
     x: meses,
     y: valoresMensal,
     line: { color: '#1C2D6B', width: 3 },
     marker: { color: '#BE1E2D', size: 7 },
+    text: valoresMensal.map((valor) => `R$ ${Number(valor || 0).toLocaleString('pt-BR', { maximumFractionDigits: 0 })}`),
+    textposition: 'top center',
+    textfont: { size: 10, color: '#1C2D6B' },
+    cliponaxis: false,
     hovertemplate: '<b>%{x}</b><br>R$ %{y:,.2f}<extra></extra>'
   };
-  const layoutMensal = { margin: { l: 60, r: 20, t: 40, b: 60 }, xaxis: { tickangle: -30, type: 'category' }, yaxis: { title: 'R$' } };
+  const layoutMensal = {
+    margin: { l: 60, r: 60, t: 58, b: 60 },
+    xaxis: { tickangle: -30, type: 'category' },
+    yaxis: { title: 'R$', range: [yMinLinha, yMaxLinha], automargin: true }
+  };
   Plotly.newPlot('chart-mensal', [traceMensal], { ...plotlyTheme.layout, ...layoutMensal }, plotlyTheme.config);
   ensureExportButton('chart-mensal', 'hoteis-valor-mensal');
 

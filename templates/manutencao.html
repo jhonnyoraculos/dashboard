@@ -386,33 +386,59 @@ function drawBarVertical(divId, x, y) {
 function drawBarHorizontal(divId, categories, values, options = {}) {
   const numericValues = (values || []).map((value) => Number(value || 0));
   const showValues = options.showValues === true;
+  const hideXAxisTicks = options.hideXAxisTicks === true;
+  const maxValueLabels = Number(options.maxValueLabels) > 0 ? Number(options.maxValueLabels) : null;
+  const labelMaxLength = Number(options.labelMaxLength) > 0 ? Number(options.labelMaxLength) : null;
+  const rangePadding = Number(options.rangePadding) > 0
+    ? Number(options.rangePadding)
+    : (showValues ? 1.3 : 1.05);
+  const rightMarginOption = Number(options.rightMargin) > 0 ? Number(options.rightMargin) : null;
   const formatValue = typeof options.valueFormatter === 'function'
     ? options.valueFormatter
     : (value) => `R$ ${Number(value || 0).toLocaleString('pt-BR', { maximumFractionDigits: 0 })}`;
+  const formatLabel = (label) => {
+    const text = String(label || '');
+    if (!labelMaxLength || text.length <= labelMaxLength) return text;
+    return `${text.slice(0, Math.max(1, labelMaxLength - 1))}\u2026`;
+  };
+  const plottingLabels = (categories || []).map((label) => formatLabel(label));
   const maxValue = numericValues.length ? Math.max(...numericValues) : 0;
-  const rangeMax = maxValue > 0 ? maxValue * (showValues ? 1.3 : 1.05) : 1;
-  const longestLabel = (categories || []).reduce((max, label) => Math.max(max, String(label || '').length), 0);
+  const rangeMax = maxValue > 0 ? maxValue * rangePadding : 1;
+  const longestLabel = plottingLabels.reduce((max, label) => Math.max(max, String(label || '').length), 0);
   const leftMargin = Math.min(210, Math.max(95, 60 + longestLabel * 5));
-  const count = (categories || []).length;
+  const count = plottingLabels.length;
   const height = options.enableScroll ? Math.max(320, count * 28) : 320;
+  const rightMargin = rightMarginOption || (showValues ? 95 : 30);
   const data = [{
     type: 'bar',
     orientation: 'h',
-    y: categories || [],
+    y: plottingLabels,
     x: numericValues,
     marker: { color: '#1C2D6B' },
     text: showValues
-      ? numericValues.map((value) => formatValue(value))
+      ? numericValues.map((value, index) => {
+          if (!maxValueLabels || index < maxValueLabels) return formatValue(value);
+          return '';
+        })
       : undefined,
     textposition: showValues ? 'outside' : 'none',
     textfont: showValues ? { size: 11, color: '#1C2D6B' } : undefined,
     cliponaxis: false,
   }];
   const layout = {
-    margin: { l: leftMargin, r: showValues ? 95 : 30, t: 16, b: 36 },
+    margin: { l: leftMargin, r: rightMargin, t: 16, b: 36 },
     height,
     yaxis: { automargin: true, tickfont: { size: 10 }, autorange: 'reversed' },
-    xaxis: { tickfont: { size: 10 }, rangemode: 'tozero', range: [0, rangeMax], gridcolor: '#e5e7eb' },
+    xaxis: {
+      tickfont: { size: 10 },
+      rangemode: 'tozero',
+      range: [0, rangeMax],
+      gridcolor: '#e5e7eb',
+      showticklabels: !hideXAxisTicks,
+      ticks: hideXAxisTicks ? '' : undefined,
+      showgrid: !hideXAxisTicks,
+      zeroline: !hideXAxisTicks
+    },
     bargap: 0.2
   };
   Plotly.newPlot(divId, data, { ...plotlyTheme.layout, ...layout }, plotlyTheme.config);
@@ -483,13 +509,25 @@ async function refresh() {
   document.getElementById('kpi-ticket').textContent = fmtBRL(d.media_servico);
   document.getElementById('kpi-media-mensal').textContent = fmtBRL(d.media_mensal);
 
-  drawBarHorizontal('chart-placa', safeArray(d.gasto_por_placa, 'PLACA'), safeArray(d.gasto_por_placa, 'Custo'), {
+  const placaLabels = safeArray(d.gasto_por_placa, 'PLACA');
+  const placaValores = safeArray(d.gasto_por_placa, 'Custo');
+  drawBarHorizontal('chart-placa', placaLabels, placaValores, {
     showValues: true,
     enableScroll: true,
     maxHeight: '420px'
   });
   ensureExportButton('chart-placa', 'manutencao-gasto-por-placa');
-  drawBarHorizontal('chart-oficina', safeArray(d.gasto_por_oficina, 'OFICINA'), safeArray(d.gasto_por_oficina, 'Custo'), {
+
+  const oficinaLabels = safeArray(d.gasto_por_oficina, 'OFICINA');
+  const oficinaValores = safeArray(d.gasto_por_oficina, 'Custo');
+  drawBarHorizontal('chart-oficina', oficinaLabels, oficinaValores, {
+    showValues: true,
+    maxValueLabels: 5,
+    hideXAxisTicks: true,
+    labelMaxLength: 18,
+    rangePadding: 1.15,
+    rightMargin: 72,
+    valueFormatter: (value) => `R$ ${Number(value || 0).toLocaleString('pt-BR', { maximumFractionDigits: 0 })}`,
     enableScroll: true,
     maxHeight: '420px'
   });
@@ -506,16 +544,31 @@ async function refresh() {
   );
   const meses = mensalSeries.labels;
   const custos = mensalSeries.values;
+  const valoresLinha = custos.map((valor) => Number(valor)).filter((valor) => Number.isFinite(valor));
+  const minLinha = valoresLinha.length ? Math.min(...valoresLinha) : 0;
+  const maxLinha = valoresLinha.length ? Math.max(...valoresLinha) : 0;
+  const faixaLinha = maxLinha - minLinha;
+  const paddingLinha = faixaLinha > 0 ? faixaLinha * 0.14 : Math.max(1, Math.abs(maxLinha || 0) * 0.08);
+  const yMinLinha = Math.max(0, minLinha - paddingLinha);
+  const yMaxLinha = maxLinha + paddingLinha;
   const trace = {
     type: 'scatter',
-    mode: 'lines+markers',
+    mode: 'lines+markers+text',
     x: meses,
     y: custos,
     line: { color: '#1C2D6B', width: 3 },
     marker: { color: '#BE1E2D', size: 7 },
+    text: custos.map((valor) => `R$ ${Number(valor || 0).toLocaleString('pt-BR', { maximumFractionDigits: 0 })}`),
+    textposition: 'top center',
+    textfont: { size: 10, color: '#1C2D6B' },
+    cliponaxis: false,
     hovertemplate: '<b>%{x}</b><br>R$ %{y:,.2f}<extra></extra>'
   };
-  const layoutMensal = { margin: { l: 60, r: 20, t: 40, b: 60 }, xaxis: { tickangle: -30, type: 'category' }, yaxis: { title: 'R$' } };
+  const layoutMensal = {
+    margin: { l: 60, r: 60, t: 58, b: 60 },
+    xaxis: { tickangle: -30, type: 'category' },
+    yaxis: { title: 'R$', range: [yMinLinha, yMaxLinha], automargin: true }
+  };
   Plotly.newPlot('chart-mensal', [trace], { ...plotlyTheme.layout, ...layoutMensal }, plotlyTheme.config);
   ensureExportButton('chart-mensal', 'manutencao-gasto-mensal');
 

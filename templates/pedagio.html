@@ -109,7 +109,7 @@ const formatMonthKey = (value) => {
   }
   const text = String(value).trim();
   if (!text) return '';
-  const isoMatch = text.match(/(20\\d{2})[-/](\\d{2})/);
+  const isoMatch = text.match(/(20\d{2})[-/](\d{2})/);
   if (isoMatch) return `${isoMatch[1]}-${isoMatch[2]}`;
   const brMatch = text.toLowerCase().match(/^([a-z]{3})\/?(\d{2,4})/);
   if (brMatch) {
@@ -195,12 +195,29 @@ function setupVisibility(panelId, items) {
     checkbox.checked = !target.classList.contains('hidden-section');
     checkbox.addEventListener('change', () => {
       target.classList.toggle('hidden-section', !checkbox.checked);
+      scheduleChartResize();
     });
     const text = document.createTextNode(label);
     wrapper.setAttribute('for', inputId);
     wrapper.appendChild(checkbox);
     wrapper.appendChild(text);
     panel.appendChild(wrapper);
+  });
+}
+function scheduleChartResize() {
+  // Recalcula o tamanho dos charts quando o layout muda (filtros/toggles/visibilidade).
+  requestAnimationFrame(() => {
+    if (typeof Plotly === 'undefined' || !Plotly.Plots || typeof Plotly.Plots.resize !== 'function') return;
+    document.querySelectorAll('div[id^="chart"]').forEach((el) => {
+      if (!el) return;
+      // Charts com scroll vertical usam altura interna maior; resize aqui "achata" o gráfico.
+      if ((el.style.overflowY || '').toLowerCase() === 'auto') return;
+      try {
+        Plotly.Plots.resize(el);
+      } catch (_) {
+        // chart ainda nao inicializado
+      }
+    });
   });
 }
 const ensureExportButton = (chartId, filename) => {
@@ -383,7 +400,17 @@ function drawBar(divId, labels, values, opts = {}) {
     return Number.isFinite(num) ? num : 0;
   });
   const showValues = opts.showValues === true;
-  const formatCurrency = (value) => `R$ ${Number(value || 0).toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+  const hideXAxisTicks = opts.hideXAxisTicks === true;
+  const textInside = opts.textInside === true;
+  const rightMarginOpt = Number(opts.rightMargin) > 0 ? Number(opts.rightMargin) : null;
+  const rangePaddingOpt = Number(opts.rangePadding) > 0 ? Number(opts.rangePadding) : null;
+  const formatCurrency = typeof opts.valueFormatter === 'function'
+    ? opts.valueFormatter
+    : (value) => `R$ ${Number(value || 0).toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+  const maxValueLabels = Number(opts.maxValueLabels) > 0 ? Number(opts.maxValueLabels) : null;
+  const visibleRows = Number(opts.visibleRows) > 0 ? Number(opts.visibleRows) : null;
+  const rowHeight = Number(opts.rowHeight) > 0 ? Number(opts.rowHeight) : 32;
+  const barGap = Number(opts.barGap) >= 0 ? Number(opts.barGap) : 0.22;
   const count = plottingLabels.length;
   const sortMode = opts.sort;
   const autoOrient = opts.autoOrient ?? false;
@@ -405,35 +432,78 @@ function drawBar(divId, labels, values, opts = {}) {
   let layout;
   if (useHorizontal) {
     const maxValue = plottingValues.length ? Math.max(...plottingValues) : 0;
-    const rangeMax = maxValue > 0 ? maxValue * (showValues ? 1.3 : 1.05) : 1;
-    const height = Math.max(320, count * 32);
+    const rangePadding = rangePaddingOpt || (showValues ? 1.42 : 1.05);
+    const rangeMax = maxValue > 0 ? maxValue * rangePadding : 1;
+    const height = Math.max(320, count * rowHeight);
+    const longestLabel = plottingLabels.reduce((max, label) => Math.max(max, String(label || '').length), 0);
+    const leftMargin = Math.min(160, Math.max(88, 50 + longestLabel * 4));
+    const previewTexts = showValues
+      ? plottingValues.map((value, index) => {
+          if (!maxValueLabels || index < maxValueLabels) return formatCurrency(value);
+          return '';
+        })
+      : [];
+    const longestText = previewTexts.reduce((max, text) => Math.max(max, String(text || '').length), 0);
+    const rightMargin = rightMarginOpt
+      || (showValues
+        ? Math.min(150, Math.max(textInside ? 72 : 100, 24 + longestText * 4))
+        : 30);
     data = [{
       type: 'bar',
       x: plottingValues,
       y: plottingLabels,
       orientation: 'h',
       marker: { color: '#1C2D6B' },
-      text: showValues ? plottingValues.map((value) => formatCurrency(value)) : undefined,
-      textposition: showValues ? 'outside' : 'none',
+      text: showValues
+        ? previewTexts
+        : undefined,
+      textposition: showValues ? (textInside ? 'inside' : 'outside') : 'none',
+      insidetextanchor: textInside ? 'end' : undefined,
+      textfont: showValues
+        ? { size: 11, color: textInside ? '#ffffff' : '#1C2D6B' }
+        : undefined,
       cliponaxis: false,
     }];
     layout = {
-      margin: { l: 120, r: showValues ? 85 : 40, t: 20, b: 40 },
+      autosize: false,
+      margin: { l: leftMargin, r: rightMargin, t: 20, b: 40 },
       height,
-      xaxis: { title: 'R$', tickprefix: 'R$ ', range: [0, rangeMax] },
+      xaxis: {
+        title: hideXAxisTicks ? '' : 'R$',
+        tickprefix: hideXAxisTicks ? '' : 'R$ ',
+        range: [0, rangeMax],
+        showticklabels: !hideXAxisTicks,
+        ticks: hideXAxisTicks ? '' : undefined,
+        showgrid: !hideXAxisTicks,
+        zeroline: !hideXAxisTicks,
+      },
       yaxis: { automargin: true, autorange: 'reversed', tickfont: { size: 11 } },
-      hovermode: 'closest'
+      hovermode: 'closest',
+      bargap: barGap
     };
     const container = document.getElementById(divId);
     if (container) {
       if (opts.enableScroll) {
+        const rowsInView = visibleRows ? Math.min(count, visibleRows) : count;
+        const viewportHeight = visibleRows
+          ? (20 + 40 + rowsInView * rowHeight)
+          : Math.max(220, 20 + 40 + rowsInView * rowHeight);
         container.style.overflowY = 'auto';
-        container.style.maxHeight = '420px';
+        const viewHeight = opts.maxHeight || `${viewportHeight}px`;
+        container.style.height = viewHeight;
+        container.style.maxHeight = viewHeight;
+        container.style.minHeight = '0';
         container.style.overflowX = 'hidden';
+        container.style.paddingRight = '12px';
+        container.style.boxSizing = 'border-box';
       } else {
+        container.style.height = '';
         container.style.overflowY = '';
         container.style.maxHeight = '';
+        container.style.minHeight = '';
         container.style.overflowX = '';
+        container.style.paddingRight = '';
+        container.style.boxSizing = '';
       }
     }
   } else {
@@ -584,19 +654,30 @@ async function refresh() {
     );
     const meses = mensalSeries.labels;
     const custos = mensalSeries.values;
+    const valoresLinha = custos.map((valor) => Number(valor)).filter((valor) => Number.isFinite(valor));
+    const minLinha = valoresLinha.length ? Math.min(...valoresLinha) : 0;
+    const maxLinha = valoresLinha.length ? Math.max(...valoresLinha) : 0;
+    const faixaLinha = maxLinha - minLinha;
+    const paddingLinha = faixaLinha > 0 ? faixaLinha * 0.14 : Math.max(1, Math.abs(maxLinha || 0) * 0.08);
+    const yMinLinha = Math.max(0, minLinha - paddingLinha);
+    const yMaxLinha = maxLinha + paddingLinha;
     const lineTrace = {
       type: 'scatter',
-      mode: 'lines+markers',
+      mode: 'lines+markers+text',
       x: meses,
       y: custos,
       line: { color: '#1C2D6B', width: 3 },
       marker: { color: '#BE1E2D', size: 7 },
+      text: custos.map((valor) => `R$ ${Number(valor || 0).toLocaleString('pt-BR', { maximumFractionDigits: 0 })}`),
+      textposition: 'top center',
+      textfont: { size: 10, color: '#1C2D6B' },
+      cliponaxis: false,
       hovertemplate: '<b>%{x}</b><br>R$ %{y:,.2f}<extra></extra>'
     };
     const layoutMensal = {
-      margin: { l: 60, r: 20, t: 40, b: 60 },
+      margin: { l: 60, r: 60, t: 58, b: 60 },
       xaxis: { tickangle: -30, type: 'category' },
-      yaxis: { title: 'R$' }
+      yaxis: { title: 'R$', range: [yMinLinha, yMaxLinha], automargin: true }
     };
     Plotly.newPlot('chart-mensal', [lineTrace], { ...plotlyTheme.layout, ...layoutMensal }, plotlyTheme.config);
     ensureExportButton('chart-mensal', 'pedagio-gasto-mensal');
@@ -619,7 +700,19 @@ async function refresh() {
 
     drawPie('chart-tipo', safeArray(d.gasto_por_tipo, 'Tipo'), safeArray(d.gasto_por_tipo, 'Custo'));
     ensureExportButton('chart-tipo', 'pedagio-gasto-por-tipo');
-    drawBar('chart-placa', safeArray(d.gasto_por_placa, 'PLACA'), safeArray(d.gasto_por_placa, 'Custo'), { autoOrient: true, threshold: 8, enableScroll: true, sort: 'desc', showValues: true });
+    drawBar('chart-placa', safeArray(d.gasto_por_placa, 'PLACA'), safeArray(d.gasto_por_placa, 'Custo'), {
+      autoOrient: true,
+      threshold: 8,
+      enableScroll: true,
+      sort: 'desc',
+      showValues: true,
+      visibleRows: 12,
+      rowHeight: 28,
+      barGap: 0.22,
+      hideXAxisTicks: true,
+      rangePadding: 4.3,
+      valueFormatter: (value) => `R$ ${Number(value || 0).toLocaleString('pt-BR', { maximumFractionDigits: 0 })}`,
+    });
     ensureExportButton('chart-placa', 'pedagio-gasto-por-placa');
     drawBar('chart-segmento', safeArray(d.gasto_por_categoria, 'Categoria'), safeArray(d.gasto_por_categoria, 'Custo'));
     ensureExportButton('chart-segmento', 'pedagio-gasto-por-segmento');
@@ -640,6 +733,7 @@ async function refresh() {
       toggleCards.onclick = () => {
         kpiSection.classList.toggle('hidden-section');
         setToggle(toggleCards, kpiSection, 'cards');
+        scheduleChartResize();
       };
       setToggle(toggleCards, kpiSection, 'cards');
     }
@@ -647,6 +741,7 @@ async function refresh() {
       toggleCharts.onclick = () => {
         chartsSection.classList.toggle('hidden-section');
         setToggle(toggleCharts, chartsSection, 'gráficos');
+        scheduleChartResize();
       };
       setToggle(toggleCharts, chartsSection, 'gráficos');
     }
@@ -690,6 +785,7 @@ async function refresh() {
     });
   } finally {
     setLoading(false);
+    scheduleChartResize();
   }
 }
 
@@ -710,6 +806,7 @@ const plotlyTheme = {
 };
 
 window.addEventListener('DOMContentLoaded', refresh);
+window.addEventListener('resize', scheduleChartResize);
 </script>
 </body>
 </html>
