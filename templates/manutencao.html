@@ -284,7 +284,7 @@ function fillSelectMulti(id, values, label) {
   });
   const optionMap = new Map(Array.from(el.options || []).map((opt) => [opt.value, opt]));
   const selection = current.filter((value) => optionMap.has(value));
-  const finalSelection = selection.length ? selection : [];
+  const finalSelection = selection.length ? selection : ['Todos'];
   finalSelection.forEach((value) => {
     const opt = optionMap.get(value);
     if (opt) opt.selected = true;
@@ -493,13 +493,9 @@ async function refresh() {
     });
       enhanceMultiSelect('mes');
       refresh._init = true;
-      const currentMesValue = `${currentYear}-${String(currentMonth).padStart(2, '0')}`;
       if (anoSelect && [...anoSelect.options].some((opt) => opt.value === currentYear)) {
         anoSelect.value = currentYear;
-        const mesSelect = document.getElementById('mes');
-        if (mesSelect && [...mesSelect.options].some((opt) => opt.value === currentMesValue)) {
-          Array.from(mesSelect.options).forEach((opt) => { opt.selected = opt.value === currentMesValue; });
-        }
+        resetMultiSelect('mes');
         return refresh();
       }
   }
