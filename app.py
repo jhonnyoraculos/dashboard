@@ -10,6 +10,26 @@ import unicodedata
 from collections import defaultdict
 from pathlib import Path
 
+
+def _running_as_streamlit_entrypoint() -> bool:
+    if __name__ != "__main__":
+        return False
+    try:
+        from streamlit.runtime.scriptrunner import get_script_run_ctx
+    except Exception:
+        return False
+    return get_script_run_ctx() is not None
+
+
+if _running_as_streamlit_entrypoint():
+    os.environ.setdefault("JR_SKIP_WARM_CACHE", "1")
+    from streamlit_app import main as streamlit_main
+    import streamlit as st
+
+    streamlit_main()
+    st.stop()
+
+
 app = Flask(__name__)
 
 BASE_PATH = Path(__file__).parent / "data"
