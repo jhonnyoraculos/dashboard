@@ -1198,6 +1198,11 @@ def report_font(size: int, *, bold: bool = False) -> ImageFont.ImageFont:
     candidates = [
         "arialbd.ttf" if bold else "arial.ttf",
         "segoeuib.ttf" if bold else "segoeui.ttf",
+        "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf" if bold else "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+        "/usr/share/fonts/truetype/liberation2/LiberationSans-Bold.ttf" if bold else "/usr/share/fonts/truetype/liberation2/LiberationSans-Regular.ttf",
+        "/usr/share/fonts/truetype/freefont/FreeSansBold.ttf" if bold else "/usr/share/fonts/truetype/freefont/FreeSans.ttf",
+        "C:/Windows/Fonts/arialbd.ttf" if bold else "C:/Windows/Fonts/arial.ttf",
+        "C:/Windows/Fonts/segoeuib.ttf" if bold else "C:/Windows/Fonts/segoeui.ttf",
     ]
     for candidate in candidates:
         try:
@@ -1245,75 +1250,142 @@ def compose_export_image(
     include_cards: bool,
     include_charts: bool,
 ) -> Image.Image:
-    width = 1300
-    margin = 42
-    gap = 24
-    card_width = (width - margin * 2 - gap * 2) // 3
-    card_height = 150
-    chart_width = width - margin * 2
+    width = 1600
+    margin = 64
+    gap = 26
+    header_height = 124
+    bg = "#f6f8fc"
+    panel = "#ffffff"
+    line = "#d8e3ff"
+    text = JR_BLUE
+    card_cols = 4 if len(kpis) > 3 else max(1, len(kpis))
+    card_width = (width - margin * 2 - gap * (card_cols - 1)) // card_cols if card_cols else 0
+    card_height = 132
+    chart_cols = 2
+    chart_card_width = (width - margin * 2 - gap) // chart_cols
+    chart_inner_width = chart_card_width - 42
     chart_images: list[tuple[str, Image.Image]] = []
 
     if include_charts:
         for chart_title, fig in charts:
             try:
                 export_fig = go.Figure(fig)
-                export_fig.update_layout(width=chart_width, height=max(360, int(export_fig.layout.height or 380)))
-                png = export_fig.to_image(format="png", width=chart_width, height=int(export_fig.layout.height or 380), scale=2)
+                desired_height = max(370, min(560, int(export_fig.layout.height or 370)))
+                pie_label_count = 0
+                for trace in export_fig.data:
+                    if getattr(trace, "type", "") == "pie":
+                        pie_label_count = max(pie_label_count, len(getattr(trace, "labels", []) or []))
+                if pie_label_count > 10:
+                    export_fig.update_layout(showlegend=False)
+                    export_fig.update_traces(textinfo="percent", textposition="inside")
+                    desired_height = max(desired_height, 430)
+                export_fig.update_layout(
+                    width=chart_inner_width,
+                    height=desired_height,
+                    paper_bgcolor="#ffffff",
+                    plot_bgcolor="#ffffff",
+                    font={"family": "Arial, sans-serif", "size": 12, "color": JR_BLUE},
+                    margin={"l": 58, "r": 26, "t": 26, "b": 62},
+                )
+                png = export_fig.to_image(
+                    format="png",
+                    width=chart_inner_width,
+                    height=desired_height,
+                    scale=1,
+                )
                 chart_images.append((chart_title, Image.open(BytesIO(png)).convert("RGB")))
             except Exception:
-                placeholder = Image.new("RGB", (chart_width, 360), "#ffffff")
+                desired_height = 390
+                placeholder = Image.new("RGB", (chart_inner_width, desired_height), "#ffffff")
                 draw = ImageDraw.Draw(placeholder)
-                draw.text((32, 32), f"Nao foi possivel renderizar: {chart_title}", font=report_font(22, bold=True), fill=JR_RED)
+                draw.text((28, 28), f"Nao foi possivel renderizar: {chart_title}", font=report_font(20, bold=True), fill=JR_RED)
                 chart_images.append((chart_title, placeholder))
 
     rows = 0
     if include_cards and kpis:
-        rows = (len(kpis) + 2) // 3
-    height = margin + 72
+        rows = (len(kpis) + card_cols - 1) // card_cols
+    height = margin + header_height
     if rows:
-        height += rows * card_height + (rows - 1) * gap + 24
+        height += rows * card_height + (rows - 1) * gap + 36
     if include_charts and chart_images:
-        for _, image in chart_images:
-            height += 54 + image.height + 26
-    if height < 520:
-        height = 520
+        chart_row_heights = []
+        for row_start in range(0, len(chart_images), chart_cols):
+            row_items = chart_images[row_start : row_start + chart_cols]
+            chart_row_heights.append(max(image.height for _, image in row_items) + 74)
+        height += sum(chart_row_heights) + gap * max(0, len(chart_row_heights) - 1)
+    height += margin
+    if height < 500:
+        height = 500
 
-    canvas = Image.new("RGB", (width, height), "#ffffff")
+    canvas = Image.new("RGB", (width, height), bg)
     draw = ImageDraw.Draw(canvas)
-    draw.text((margin, margin), title, font=report_font(30, bold=True), fill=JR_BLUE)
-    y = margin + 62
+    shadow = "#e8edf7"
+
+    draw.rounded_rectangle(
+        (margin, margin, width - margin, margin + header_height),
+        radius=26,
+        fill=panel,
+        outline=line,
+        width=2,
+    )
+    draw.rounded_rectangle((margin + 28, margin + 28, margin + 38, margin + 96), radius=5, fill=JR_RED)
+    draw.text((margin + 60, margin + 30), title, font=report_font(34, bold=True), fill=text)
+    draw.text((margin + 62, margin + 78), "Relatório exportado do JR Dashboard", font=report_font(18), fill=MUTED)
+    y = margin + header_height + 34
 
     if include_cards and kpis:
         for index, (label, value) in enumerate(kpis):
-            row = index // 3
-            col = index % 3
+            row = index // card_cols
+            col = index % card_cols
             x = margin + col * (card_width + gap)
             card_y = y + row * (card_height + gap)
             draw.rounded_rectangle(
+                (x + 6, card_y + 8, x + card_width + 6, card_y + card_height + 8),
+                radius=20,
+                fill=shadow,
+            )
+            draw.rounded_rectangle(
                 (x, card_y, x + card_width, card_y + card_height),
-                radius=16,
-                fill="#ffffff",
-                outline=CARD_BORDER,
+                radius=20,
+                fill=panel,
+                outline=line,
                 width=2,
             )
             draw_wrapped_text(
                 draw,
                 label.upper(),
-                (x + 24, card_y + 24),
-                font=report_font(16, bold=True),
+                (x + 22, card_y + 22),
+                font=report_font(15, bold=True),
                 fill=MUTED,
-                max_width=card_width - 48,
+                max_width=card_width - 44,
                 line_gap=2,
             )
-            draw.text((x + 24, card_y + 74), value, font=report_font(30, bold=True), fill=JR_RED)
-        y += rows * card_height + (rows - 1) * gap + 42
+            draw.text((x + 22, card_y + 76), value, font=report_font(28, bold=True), fill=JR_RED)
+        y += rows * card_height + (rows - 1) * gap + 38
 
     if include_charts and chart_images:
-        for chart_title, image in chart_images:
-            draw.text((margin, y), chart_title, font=report_font(22, bold=True), fill=JR_BLUE)
-            y += 38
-            canvas.paste(image, (margin, y))
-            y += image.height + 30
+        for row_start in range(0, len(chart_images), chart_cols):
+            row_items = chart_images[row_start : row_start + chart_cols]
+            row_height = max(image.height for _, image in row_items) + 74
+            for col, (chart_title, image) in enumerate(row_items):
+                x = margin + col * (chart_card_width + gap)
+                chart_y = y
+                draw.rounded_rectangle(
+                    (x + 6, chart_y + 8, x + chart_card_width + 6, chart_y + row_height + 8),
+                    radius=22,
+                    fill=shadow,
+                )
+                draw.rounded_rectangle(
+                    (x, chart_y, x + chart_card_width, chart_y + row_height),
+                    radius=22,
+                    fill=panel,
+                    outline=line,
+                    width=2,
+                )
+                draw.text((x + 22, chart_y + 18), chart_title, font=report_font(21, bold=True), fill=text)
+                canvas.paste(image, (x + 21, chart_y + 56))
+            y += row_height + gap
+        y -= gap
 
     return canvas.crop((0, 0, width, min(height, y + margin)))
 
