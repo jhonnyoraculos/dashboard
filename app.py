@@ -1565,9 +1565,10 @@ def _warm_data_caches(*, blocking: bool = False) -> None:
         threading.Thread(target=_run, daemon=True).start()
 
 
-_warm_data_caches(
-    blocking=os.environ.get("WARM_CACHE_SYNC", "").strip().lower() in {"1", "true", "yes"}
-)
+if os.environ.get("JR_SKIP_WARM_CACHE", "").strip().lower() not in {"1", "true", "yes"}:
+    _warm_data_caches(
+        blocking=os.environ.get("WARM_CACHE_SYNC", "").strip().lower() in {"1", "true", "yes"}
+    )
 
 
 def _safe_total(
@@ -1736,5 +1737,19 @@ def data_overview():
     return jsonify(compute_overview_totals(ano=ano, mes=mes, meses_lista=meses_lista))
 
 
+def _running_inside_streamlit() -> bool:
+    try:
+        from streamlit.runtime import exists as streamlit_runtime_exists
+    except Exception:
+        return False
+    return bool(streamlit_runtime_exists())
+
+
 if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 5000)))
+    if _running_inside_streamlit():
+        os.environ.setdefault("JR_SKIP_WARM_CACHE", "1")
+        from streamlit_app import main as streamlit_main
+
+        streamlit_main()
+    else:
+        app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 5000)))

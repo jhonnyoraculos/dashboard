@@ -2,10 +2,13 @@ from __future__ import annotations
 
 import base64
 import html
+import os
 from io import BytesIO
 from datetime import date
 from pathlib import Path
 from urllib.parse import urlencode
+
+os.environ.setdefault("JR_SKIP_WARM_CACHE", "1")
 
 import pandas as pd
 import plotly.graph_objects as go
