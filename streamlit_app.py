@@ -112,27 +112,46 @@ def inject_css() -> None:
         }}
 
         .stApp::before {{
-          opacity: .55;
-          background-image: radial-gradient(circle, rgba(28,45,107,.22) 1.1px, transparent 1.7px);
-          background-size: 48px 48px;
-          animation: jr-particles-drift 44s linear infinite;
+          opacity: .72;
+          filter: drop-shadow(0 0 5px rgba(28,45,107,.28));
+          background-image:
+            radial-gradient(circle at 7% 14%, rgba(28,45,107,.32) 0 1px, transparent 2.1px),
+            radial-gradient(circle at 18% 78%, rgba(28,45,107,.20) 0 1.4px, transparent 2.5px),
+            radial-gradient(circle at 31% 43%, rgba(255,255,255,.78) 0 1px, transparent 2px),
+            radial-gradient(circle at 42% 19%, rgba(28,45,107,.26) 0 1.2px, transparent 2.4px),
+            radial-gradient(circle at 55% 68%, rgba(28,45,107,.18) 0 1.5px, transparent 2.7px),
+            radial-gradient(circle at 69% 32%, rgba(255,255,255,.68) 0 1px, transparent 2.2px),
+            radial-gradient(circle at 76% 91%, rgba(28,45,107,.25) 0 1px, transparent 2.2px),
+            radial-gradient(circle at 88% 53%, rgba(28,45,107,.18) 0 1.6px, transparent 2.8px),
+            radial-gradient(circle at 96% 23%, rgba(28,45,107,.30) 0 1.1px, transparent 2.3px);
+          background-size: 620px 540px;
+          animation: jr-particles-drift 52s linear infinite;
         }}
 
         .stApp::after {{
-          opacity: .42;
-          background-image: radial-gradient(circle, rgba(190,30,45,.18) 1px, transparent 1.6px);
-          background-size: 76px 76px;
-          animation: jr-particles-float 64s linear infinite;
+          opacity: .64;
+          filter: drop-shadow(0 0 7px rgba(190,30,45,.30));
+          background-image:
+            radial-gradient(circle at 11% 37%, rgba(190,30,45,.24) 0 1.2px, transparent 2.4px),
+            radial-gradient(circle at 21% 9%, rgba(190,30,45,.15) 0 1px, transparent 2.2px),
+            radial-gradient(circle at 34% 84%, rgba(190,30,45,.20) 0 1.4px, transparent 2.7px),
+            radial-gradient(circle at 48% 28%, rgba(255,255,255,.72) 0 1px, transparent 2.1px),
+            radial-gradient(circle at 58% 61%, rgba(190,30,45,.18) 0 1.1px, transparent 2.3px),
+            radial-gradient(circle at 73% 16%, rgba(190,30,45,.24) 0 1.5px, transparent 2.8px),
+            radial-gradient(circle at 81% 74%, rgba(255,255,255,.62) 0 1px, transparent 2.1px),
+            radial-gradient(circle at 93% 47%, rgba(190,30,45,.17) 0 1.3px, transparent 2.5px);
+          background-size: 760px 610px;
+          animation: jr-particles-float 71s linear infinite;
         }}
 
         @keyframes jr-particles-drift {{
-          from {{ transform: translate3d(-2vw, -2vh, 0); }}
-          to {{ transform: translate3d(18vw, 16vh, 0); }}
+          from {{ transform: translate3d(-5vw, -4vh, 0) rotate(.001deg); }}
+          to {{ transform: translate3d(16vw, 13vh, 0) rotate(.001deg); }}
         }}
 
         @keyframes jr-particles-float {{
-          from {{ transform: translate3d(12vw, 10vh, 0); }}
-          to {{ transform: translate3d(-16vw, -12vh, 0); }}
+          from {{ transform: translate3d(14vw, 11vh, 0) rotate(.001deg); }}
+          to {{ transform: translate3d(-18vw, -14vh, 0) rotate(.001deg); }}
         }}
 
         @media (prefers-reduced-motion: reduce) {{
@@ -327,6 +346,21 @@ def inject_css() -> None:
           gap: 28px;
           position: relative;
           overflow: hidden;
+          isolation: isolate;
+        }}
+
+        .home-header::before {{
+          content: "";
+          position: absolute;
+          left: -140px;
+          bottom: -130px;
+          width: 520px;
+          height: 330px;
+          background:
+            radial-gradient(ellipse at 28% 72%, rgba(190,30,45,.24), rgba(190,30,45,.12) 34%, transparent 68%),
+            radial-gradient(ellipse at 58% 52%, rgba(190,30,45,.13), transparent 62%);
+          filter: blur(3px);
+          z-index: 0;
         }}
 
         .home-header::after {{
@@ -340,6 +374,8 @@ def inject_css() -> None:
           background-size: 18px 18px;
           opacity: .52;
           transform: rotate(12deg);
+          filter: drop-shadow(0 0 6px rgba(190,30,45,.22));
+          z-index: 0;
         }}
 
         .home-brand {{
