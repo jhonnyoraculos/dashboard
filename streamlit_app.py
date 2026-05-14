@@ -94,8 +94,61 @@ def inject_css() -> None:
         }}
 
         .stApp {{
-          background: #fff;
+          background: linear-gradient(180deg, #fbfdff 0%, #f5f7fc 100%);
           color: var(--jr-blue);
+          position: relative;
+          overflow: hidden;
+        }}
+
+        .stApp::before,
+        .stApp::after {{
+          content: "";
+          position: fixed;
+          inset: -18vh -18vw;
+          pointer-events: none;
+          z-index: 0;
+          background-repeat: repeat;
+          will-change: transform;
+        }}
+
+        .stApp::before {{
+          opacity: .55;
+          background-image: radial-gradient(circle, rgba(28,45,107,.22) 1.1px, transparent 1.7px);
+          background-size: 48px 48px;
+          animation: jr-particles-drift 44s linear infinite;
+        }}
+
+        .stApp::after {{
+          opacity: .42;
+          background-image: radial-gradient(circle, rgba(190,30,45,.18) 1px, transparent 1.6px);
+          background-size: 76px 76px;
+          animation: jr-particles-float 64s linear infinite;
+        }}
+
+        @keyframes jr-particles-drift {{
+          from {{ transform: translate3d(-2vw, -2vh, 0); }}
+          to {{ transform: translate3d(18vw, 16vh, 0); }}
+        }}
+
+        @keyframes jr-particles-float {{
+          from {{ transform: translate3d(12vw, 10vh, 0); }}
+          to {{ transform: translate3d(-16vw, -12vh, 0); }}
+        }}
+
+        @media (prefers-reduced-motion: reduce) {{
+          .stApp::before,
+          .stApp::after {{
+            animation: none;
+          }}
+        }}
+
+        [data-testid="stAppViewContainer"],
+        [data-testid="stMain"],
+        [data-testid="stMainBlockContainer"],
+        .block-container {{
+          background: transparent;
+          position: relative;
+          z-index: 1;
         }}
 
         header[data-testid="stHeader"],
@@ -263,10 +316,12 @@ def inject_css() -> None:
         .home-header {{
           max-width: 1100px;
           margin: 0 auto 48px;
-          background: rgba(255,255,255,0.9);
+          background: rgba(255,255,255,0.76);
+          border: 1px solid rgba(255,255,255,0.74);
           border-radius: var(--radius);
           padding: 40px;
           box-shadow: 0 6px 18px rgba(0,0,0,0.08);
+          backdrop-filter: blur(14px);
           display: flex;
           flex-direction: column;
           gap: 28px;
@@ -281,7 +336,9 @@ def inject_css() -> None:
           top: -60px;
           width: 220px;
           height: 220px;
-          background: radial-gradient(circle at center, rgba(190,30,45,0.18), transparent 70%);
+          background-image: radial-gradient(circle, rgba(190,30,45,.18) 1.2px, transparent 1.8px);
+          background-size: 18px 18px;
+          opacity: .52;
           transform: rotate(12deg);
         }}
 
@@ -342,19 +399,23 @@ def inject_css() -> None:
         }}
 
         .home-total-section {{
-          background: rgba(28,45,107,0.05);
+          background: rgba(244,247,253,0.68);
+          border: 1px solid rgba(255,255,255,0.7);
           border-radius: var(--radius);
           padding: 32px;
           box-shadow: 0 6px 18px rgba(0,0,0,0.08);
+          backdrop-filter: blur(12px);
         }}
 
         .st-key-home_total_section {{
           max-width: 1100px;
           margin: 0 auto 28px;
-          background: rgba(28,45,107,0.05);
+          background: rgba(244,247,253,0.68);
+          border: 1px solid rgba(255,255,255,0.7);
           border-radius: var(--radius);
           padding: 32px;
           box-shadow: 0 6px 18px rgba(0,0,0,0.08);
+          backdrop-filter: blur(12px);
         }}
 
         .st-key-home_total_section div[data-baseweb="select"] > div {{
@@ -470,10 +531,12 @@ def inject_css() -> None:
         }}
 
         .home-card {{
-          background: rgba(255,255,255,0.9);
+          background: rgba(255,255,255,0.72);
+          border: 1px solid rgba(255,255,255,0.7);
           border-radius: var(--radius);
           padding: 32px;
           box-shadow: 0 6px 18px rgba(0,0,0,0.08);
+          backdrop-filter: blur(12px);
           display: flex;
           flex-direction: column;
           gap: 20px;
@@ -540,10 +603,12 @@ def inject_css() -> None:
         .home-footer {{
           max-width: 1100px;
           margin: 48px auto 0;
-          background: rgba(255,255,255,0.9);
+          background: rgba(255,255,255,0.72);
+          border: 1px solid rgba(255,255,255,0.7);
           border-radius: var(--radius);
           padding: 36px;
           box-shadow: 0 6px 18px rgba(0,0,0,0.08);
+          backdrop-filter: blur(12px);
         }}
 
         .home-footer h3 {{
