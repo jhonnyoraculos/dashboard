@@ -731,7 +731,13 @@ def inject_css() -> None:
         }}
 
         [class*="_dashboard_controls"] {{
-          margin: 8px 0 18px;
+          margin: 14px 0 22px;
+          padding: 16px;
+          border: 1px solid rgba(194,210,243,.85);
+          border-radius: 14px;
+          background: rgba(255,255,255,.70);
+          box-shadow: 0 14px 34px rgba(16,24,40,.10);
+          backdrop-filter: blur(12px);
         }}
 
         [class*="_dashboard_controls"] [data-testid="stHorizontalBlock"] {{
@@ -747,7 +753,7 @@ def inject_css() -> None:
           padding: 7px 12px;
           border: 1.5px solid var(--card-border);
           border-radius: 12px;
-          background: #f8f9ff;
+          background: rgba(248,249,255,.92);
           color: var(--jr-blue);
           box-shadow: 0 6px 12px rgba(16,24,40,0.08);
           font-weight: 800;
@@ -1357,10 +1363,12 @@ def dashboard_controls(
     with st.container(key=f"{key_prefix}_dashboard_controls"):
         buttons = st.columns(6)
         export_jobs = [
-            ("cards_png", "Exportar cards (PNG)", "cards", "png"),
-            ("cards_pdf", "Exportar cards (PDF)", "cards", "pdf"),
-            ("page_png", "Exportar página (PNG)", "pagina", "png"),
-            ("page_pdf", "Exportar página (PDF)", "pagina", "pdf"),
+            ("cards_png", "Cards PNG", "cards", "png"),
+            ("cards_pdf", "Cards PDF", "cards", "pdf"),
+            ("charts_png", "Gráficos PNG", "graficos", "png"),
+            ("charts_pdf", "Gráficos PDF", "graficos", "pdf"),
+            ("page_png", "Página PNG", "pagina", "png"),
+            ("page_pdf", "Página PDF", "pagina", "pdf"),
         ]
         selected_kpis_preview = [
             (label, value)
@@ -1373,13 +1381,19 @@ def dashboard_controls(
             if st.session_state.get(f"{key_prefix}_visible_{item_id}", True)
         ]
 
-        for col, (job_id, label, scope, ext) in zip(buttons[:4], export_jobs):
+        for col, (job_id, label, scope, ext) in zip(buttons, export_jobs):
             with col:
                 if st.button(label, key=f"{key_prefix}_export_{job_id}", width="stretch"):
-                    include_cards = scope == "cards" or not st.session_state[hide_cards_key]
-                    include_charts = scope == "pagina" and not st.session_state[hide_charts_key]
+                    include_cards = scope == "cards" or (scope == "pagina" and not st.session_state[hide_cards_key])
+                    include_charts = scope == "graficos" or (scope == "pagina" and not st.session_state[hide_charts_key])
                     if not include_cards and not include_charts:
                         st.warning("Nada selecionado para exportar.")
+                    elif include_cards and not selected_kpis_preview and not include_charts:
+                        st.warning("Nenhum card selecionado para exportar.")
+                    elif include_charts and not selected_charts_preview and not include_cards:
+                        st.warning("Nenhum gráfico selecionado para exportar.")
+                    elif include_cards and include_charts and not selected_kpis_preview and not selected_charts_preview:
+                        st.warning("Nenhum item selecionado para exportar.")
                     else:
                         with st.spinner("Gerando arquivo..."):
                             image = compose_export_image(
@@ -1396,12 +1410,13 @@ def dashboard_controls(
                                 "mime": "image/png" if ext == "png" else "application/pdf",
                             }
 
-        with buttons[4]:
+        toggles = st.columns(2)
+        with toggles[0]:
             toggle_label = "Mostrar cards" if st.session_state[hide_cards_key] else "Ocultar cards"
             if st.button(toggle_label, key=f"{key_prefix}_toggle_cards", width="stretch"):
                 st.session_state[hide_cards_key] = not st.session_state[hide_cards_key]
                 st.rerun()
-        with buttons[5]:
+        with toggles[1]:
             toggle_label = "Mostrar gráficos" if st.session_state[hide_charts_key] else "Ocultar gráficos"
             if st.button(toggle_label, key=f"{key_prefix}_toggle_charts", width="stretch"):
                 st.session_state[hide_charts_key] = not st.session_state[hide_charts_key]
@@ -1433,6 +1448,25 @@ def dashboard_controls(
     visible_kpis = [item for item in kpis if st.session_state.get(f"{key_prefix}_visible_{item[0]}", True)]
     visible_charts = [item for item in charts if st.session_state.get(f"{key_prefix}_visible_{item[0]}", True)]
     return show_cards, show_charts, visible_kpis, visible_charts
+
+
+def render_controlled_dashboard(
+    key_prefix: str,
+    *,
+    title: str,
+    kpis: list[tuple[str, str, str]],
+    charts: list[tuple[str, str, go.Figure]],
+) -> None:
+    show_cards, show_charts, visible_kpis, visible_charts = dashboard_controls(
+        key_prefix,
+        title=title,
+        kpis=kpis,
+        charts=charts,
+    )
+    if show_cards and visible_kpis:
+        render_kpis([(label, value) for _, label, value in visible_kpis])
+    if show_charts and visible_charts:
+        chart_grid([(chart_title, fig) for _, chart_title, fig in visible_charts])
 
 
 def filter_controls(
@@ -1663,32 +1697,30 @@ def render_combustivel() -> None:
         key_prefix="comb",
     )
     data = route_json("combustivel", params)
-    render_kpis(
-        [
-            ("Total (R$)", fmt_brl(data.get("custo_total"))),
-            ("Média mensal (R$)", fmt_brl(data.get("media_mensal"))),
-            ("KM total", fmt_num(data.get("km_total"))),
-            ("Total litros", fmt_num(data.get("litros_total"))),
-            ("Custo médio por KM", fmt_brl(data.get("custo_por_km"))),
-            ("Média KM/L", f"{fmt_num(data.get('km_por_litro'), 2)} km/L"),
-            ("Custo médio por litro", fmt_brl(data.get("custo_por_litro"))),
-        ]
-    )
+    kpis = [
+        ("total", "Total (R$)", fmt_brl(data.get("custo_total"))),
+        ("media_mensal", "Média mensal (R$)", fmt_brl(data.get("media_mensal"))),
+        ("km_total", "KM total", fmt_num(data.get("km_total"))),
+        ("litros_total", "Total litros", fmt_num(data.get("litros_total"))),
+        ("custo_km", "Custo médio por KM", fmt_brl(data.get("custo_por_km"))),
+        ("media_kml", "Média KM/L", f"{fmt_num(data.get('km_por_litro'), 2)} km/L"),
+        ("custo_litro", "Custo médio por litro", fmt_brl(data.get("custo_por_litro"))),
+    ]
     include_year = params.get("ano") is None
     fallback_year = params.get("ano")
     mensal_labels, mensal_values = sorted_series(data.get("custo_mensal", {}), "Mes", "Custo", include_year=include_year, fallback_year=fallback_year)
     km_labels, km_values = sorted_series(data.get("km_mensal", {}), "Mes", "Km Rodados", include_year=include_year, fallback_year=fallback_year)
     litros_labels, litros_values = sorted_series(data.get("litros_mensal", {}), "Mes", "Litros", include_year=include_year, fallback_year=fallback_year)
     charts = [
-        ("Gasto total por mês", line_chart(mensal_labels, mensal_values)),
-        ("Gasto semanal (últimos 7 dias)", bar_chart(data.get("gasto_semana", {}).get("Dia", []), data.get("gasto_semana", {}).get("Custo", []))),
-        ("Gasto por posto", pie_chart(data.get("gasto_por_posto", {}).get("POSTOS", []), data.get("gasto_por_posto", {}).get("Custo", []))),
-        ("Gasto por combustível", pie_chart(data.get("gasto_por_combustivel", {}).get("Combustivel", []), data.get("gasto_por_combustivel", {}).get("Custo", []))),
-        ("Gasto por placa", bar_chart(data.get("gasto_por_placa", {}).get("PLACA", []), data.get("gasto_por_placa", {}).get("Custo", []), horizontal=True, sort_desc=True, show_text=True)),
-        ("KM por mês", bar_chart(km_labels, km_values, currency=False, show_text=True)),
-        ("Litros por mês", bar_chart(litros_labels, litros_values, currency=False, show_text=True)),
+        ("gasto_mes", "Gasto total por mês", line_chart(mensal_labels, mensal_values)),
+        ("gasto_semana", "Gasto semanal (últimos 7 dias)", bar_chart(data.get("gasto_semana", {}).get("Dia", []), data.get("gasto_semana", {}).get("Custo", []))),
+        ("gasto_posto", "Gasto por posto", pie_chart(data.get("gasto_por_posto", {}).get("POSTOS", []), data.get("gasto_por_posto", {}).get("Custo", []))),
+        ("gasto_combustivel", "Gasto por combustível", pie_chart(data.get("gasto_por_combustivel", {}).get("Combustivel", []), data.get("gasto_por_combustivel", {}).get("Custo", []))),
+        ("gasto_placa", "Gasto por placa", bar_chart(data.get("gasto_por_placa", {}).get("PLACA", []), data.get("gasto_por_placa", {}).get("Custo", []), horizontal=True, sort_desc=True, show_text=True)),
+        ("km_mes", "KM por mês", bar_chart(km_labels, km_values, currency=False, show_text=True)),
+        ("litros_mes", "Litros por mês", bar_chart(litros_labels, litros_values, currency=False, show_text=True)),
     ]
-    chart_grid(charts)
+    render_controlled_dashboard("comb", title="JR Dashboard - Combustível", kpis=kpis, charts=charts)
     footer("Atualizado automaticamente a partir da planilha em data/combustivel.xlsx. © JR")
 
 
@@ -1705,23 +1737,21 @@ def render_manutencao() -> None:
         key_prefix="manu",
     )
     data = route_json("manutencao", params)
-    render_kpis(
-        [
-            ("Custo total (R$)", fmt_brl(data.get("custo_total"))),
-            ("Serviços", fmt_num(data.get("total_servicos"))),
-            ("Ticket médio", fmt_brl(data.get("media_servico"))),
-            ("Média mensal (R$)", fmt_brl(data.get("media_mensal"))),
-        ]
-    )
+    kpis = [
+        ("custo_total", "Custo total (R$)", fmt_brl(data.get("custo_total"))),
+        ("servicos", "Serviços", fmt_num(data.get("total_servicos"))),
+        ("ticket_medio", "Ticket médio", fmt_brl(data.get("media_servico"))),
+        ("media_mensal", "Média mensal (R$)", fmt_brl(data.get("media_mensal"))),
+    ]
     include_year = params.get("ano") is None
     mensal_labels, mensal_values = sorted_series(data.get("custo_mensal", {}), "Mes", "Custo", include_year=include_year, fallback_year=params.get("ano"))
     charts = [
-        ("Gasto por placa", bar_chart(data.get("gasto_por_placa", {}).get("PLACA", []), data.get("gasto_por_placa", {}).get("Custo", []), horizontal=True, sort_desc=True, show_text=True)),
-        ("Gasto por oficina", bar_chart(data.get("gasto_por_oficina", {}).get("OFICINA", []), data.get("gasto_por_oficina", {}).get("Custo", []), horizontal=True, sort_desc=True, show_text=True)),
-        ("Gasto mensal", line_chart(mensal_labels, mensal_values)),
-        ("Gasto semanal (últimos 7 dias)", bar_chart(data.get("custo_semana", {}).get("Dia", []), data.get("custo_semana", {}).get("Custo", []))),
+        ("gasto_placa", "Gasto por placa", bar_chart(data.get("gasto_por_placa", {}).get("PLACA", []), data.get("gasto_por_placa", {}).get("Custo", []), horizontal=True, sort_desc=True, show_text=True)),
+        ("gasto_oficina", "Gasto por oficina", bar_chart(data.get("gasto_por_oficina", {}).get("OFICINA", []), data.get("gasto_por_oficina", {}).get("Custo", []), horizontal=True, sort_desc=True, show_text=True)),
+        ("gasto_mensal", "Gasto mensal", line_chart(mensal_labels, mensal_values)),
+        ("gasto_semana", "Gasto semanal (últimos 7 dias)", bar_chart(data.get("custo_semana", {}).get("Dia", []), data.get("custo_semana", {}).get("Custo", []))),
     ]
-    chart_grid(charts)
+    render_controlled_dashboard("manu", title="JR Dashboard - Manutenção", kpis=kpis, charts=charts)
     footer("Atualizado automaticamente a partir da planilha em data/manutencao.xlsx. © JR")
 
 
@@ -1737,17 +1767,15 @@ def render_hoteis() -> None:
         key_prefix="hotel",
     )
     data = route_json("hoteis", params)
-    render_kpis(
-        [
-            ("Valor total (R$)", fmt_brl(data.get("valor_total"))),
-            ("Reservas", fmt_num(data.get("reservas_total"))),
-            ("Reservas não planejadas", fmt_num(data.get("reservas_nao_planejadas"))),
-            ("Média por reserva", fmt_brl(data.get("valor_medio_reserva"))),
-            ("Média mensal", fmt_brl(data.get("media_mensal"))),
-            ("Gasto aos sábados (R$)", fmt_brl(data.get("valor_sabado"))),
-            ("Gasto não planejado (R$)", fmt_brl(data.get("valor_nao_planejado"))),
-        ]
-    )
+    kpis = [
+        ("valor_total", "Valor total (R$)", fmt_brl(data.get("valor_total"))),
+        ("reservas", "Reservas", fmt_num(data.get("reservas_total"))),
+        ("reservas_nao_planejadas", "Reservas não planejadas", fmt_num(data.get("reservas_nao_planejadas"))),
+        ("media_reserva", "Média por reserva", fmt_brl(data.get("valor_medio_reserva"))),
+        ("media_mensal", "Média mensal", fmt_brl(data.get("media_mensal"))),
+        ("sabados", "Gasto aos sábados (R$)", fmt_brl(data.get("valor_sabado"))),
+        ("nao_planejado", "Gasto não planejado (R$)", fmt_brl(data.get("valor_nao_planejado"))),
+    ]
     include_year = params.get("ano") is None
     mensal_labels, mensal_values = sorted_series(data.get("valor_mensal", {}), "Mes", "Valor", include_year=include_year, fallback_year=params.get("ano"))
     week = data.get("valor_semana", {})
@@ -1755,12 +1783,12 @@ def render_hoteis() -> None:
     for is_unplanned in week.get("NaoPlanejada", []) or []:
         week_colors.append("#F59E0B" if is_unplanned else JR_BLUE)
     charts = [
-        ("Valor mensal", line_chart(mensal_labels, mensal_values)),
-        ("Valor semanal (últimos 7 dias)", bar_chart(week.get("Dia", []), week.get("Valor", []), marker_colors=week_colors or None)),
-        ("Valor por cidade", bar_chart(data.get("valor_por_cidade", {}).get("Cidade", []), data.get("valor_por_cidade", {}).get("Valor", []), horizontal=True, sort_desc=True, show_text=True)),
-        ("Valor por hotel/pousada", bar_chart(data.get("valor_por_hotel", {}).get("Hotel", []), data.get("valor_por_hotel", {}).get("Valor", []), horizontal=True, sort_desc=True, show_text=True)),
+        ("valor_mensal", "Valor mensal", line_chart(mensal_labels, mensal_values)),
+        ("valor_semanal", "Valor semanal (últimos 7 dias)", bar_chart(week.get("Dia", []), week.get("Valor", []), marker_colors=week_colors or None)),
+        ("valor_cidade", "Valor por cidade", bar_chart(data.get("valor_por_cidade", {}).get("Cidade", []), data.get("valor_por_cidade", {}).get("Valor", []), horizontal=True, sort_desc=True, show_text=True)),
+        ("valor_hotel", "Valor por hotel/pousada", bar_chart(data.get("valor_por_hotel", {}).get("Hotel", []), data.get("valor_por_hotel", {}).get("Valor", []), horizontal=True, sort_desc=True, show_text=True)),
     ]
-    chart_grid(charts)
+    render_controlled_dashboard("hotel", title="JR Dashboard - Reservas de Hotéis", kpis=kpis, charts=charts)
     footer("Atualizado automaticamente a partir da planilha em data/reserva de hoteis.xlsx. © JR")
 
 
@@ -1777,27 +1805,25 @@ def render_pedagio() -> None:
         key_prefix="ped",
     )
     data = route_json("pedagio", params)
-    render_kpis(
-        [
-            ("Gasto total (R$)", fmt_brl(data.get("custo_total"))),
-            ("Média mensal (R$)", fmt_brl(data.get("media_mensal"))),
-            ("Gasto pedágio", fmt_brl(data.get("gasto_pedagio"))),
-            ("Gasto IPVA", fmt_brl(data.get("gasto_ipva"))),
-            ("Gasto seguro", fmt_brl(data.get("gasto_seguro"))),
-            ("Média de valores", fmt_brl(data.get("media_valores", data.get("ticket_medio")))),
-            ("Lançamentos", fmt_num(data.get("total_lancamentos"))),
-        ]
-    )
+    kpis = [
+        ("gasto_total", "Gasto total (R$)", fmt_brl(data.get("custo_total"))),
+        ("media_mensal", "Média mensal (R$)", fmt_brl(data.get("media_mensal"))),
+        ("gasto_pedagio", "Gasto pedágio", fmt_brl(data.get("gasto_pedagio"))),
+        ("gasto_ipva", "Gasto IPVA", fmt_brl(data.get("gasto_ipva"))),
+        ("gasto_seguro", "Gasto seguro", fmt_brl(data.get("gasto_seguro"))),
+        ("media_valores", "Média de valores", fmt_brl(data.get("media_valores", data.get("ticket_medio")))),
+        ("lancamentos", "Lançamentos", fmt_num(data.get("total_lancamentos"))),
+    ]
     include_year = params.get("ano") is None
     mensal_labels, mensal_values = sorted_series(data.get("custo_mensal", {}), "Mes", "Custo", include_year=include_year, fallback_year=params.get("ano"))
     charts = [
-        ("Gasto mensal", line_chart(mensal_labels, mensal_values)),
-        ("Gasto semanal (últimos 7 dias)", bar_chart(data.get("custo_semana", {}).get("Dia", []), data.get("custo_semana", {}).get("Custo", []))),
-        ("Gasto por tipo", pie_chart(data.get("gasto_por_tipo", {}).get("Tipo", []), data.get("gasto_por_tipo", {}).get("Custo", []))),
-        ("Gasto por placa", bar_chart(data.get("gasto_por_placa", {}).get("PLACA", []), data.get("gasto_por_placa", {}).get("Custo", []), horizontal=True, sort_desc=True, show_text=True)),
-        ("Gasto por segmento", bar_chart(data.get("gasto_por_categoria", {}).get("Categoria", []), data.get("gasto_por_categoria", {}).get("Custo", []))),
+        ("gasto_mensal", "Gasto mensal", line_chart(mensal_labels, mensal_values)),
+        ("gasto_semana", "Gasto semanal (últimos 7 dias)", bar_chart(data.get("custo_semana", {}).get("Dia", []), data.get("custo_semana", {}).get("Custo", []))),
+        ("gasto_tipo", "Gasto por tipo", pie_chart(data.get("gasto_por_tipo", {}).get("Tipo", []), data.get("gasto_por_tipo", {}).get("Custo", []))),
+        ("gasto_placa", "Gasto por placa", bar_chart(data.get("gasto_por_placa", {}).get("PLACA", []), data.get("gasto_por_placa", {}).get("Custo", []), horizontal=True, sort_desc=True, show_text=True)),
+        ("gasto_segmento", "Gasto por segmento", bar_chart(data.get("gasto_por_categoria", {}).get("Categoria", []), data.get("gasto_por_categoria", {}).get("Custo", []))),
     ]
-    chart_grid(charts)
+    render_controlled_dashboard("ped", title="JR Dashboard - Pedágio, Seguro e IPVA", kpis=kpis, charts=charts)
     footer("Atualizado automaticamente a partir da planilha em data/pedagio seguro e ipva.xlsx. © JR")
 
 
@@ -1810,27 +1836,25 @@ def render_vex() -> None:
         key_prefix="vex",
     )
     data = route_json("vex", params)
-    render_kpis(
-        [
-            ("Gasto Vex total (R$)", fmt_brl(data.get("total_vex"))),
-            ("Combustível Vex (R$)", fmt_brl(data.get("combustivel_total"))),
-            ("KM total", fmt_num(data.get("km_total"))),
-            ("Total litros", fmt_num(data.get("litros_total"))),
-            ("Custo médio por KM", fmt_brl(data.get("custo_por_km"))),
-            ("Média KM/L", fmt_num(data.get("km_por_litro"), 2)),
-            ("Custo médio por litro", fmt_brl(data.get("custo_por_litro"))),
-            ("Manutenção Vex (R$)", fmt_brl(data.get("manutencao_total"))),
-            ("Pedágio/Seguro Vex (R$)", fmt_brl(data.get("pedagio_total"))),
-        ]
-    )
+    kpis = [
+        ("gasto_vex", "Gasto Vex total (R$)", fmt_brl(data.get("total_vex"))),
+        ("combustivel_vex", "Combustível Vex (R$)", fmt_brl(data.get("combustivel_total"))),
+        ("km_total", "KM total", fmt_num(data.get("km_total"))),
+        ("litros_total", "Total litros", fmt_num(data.get("litros_total"))),
+        ("custo_km", "Custo médio por KM", fmt_brl(data.get("custo_por_km"))),
+        ("media_kml", "Média KM/L", fmt_num(data.get("km_por_litro"), 2)),
+        ("custo_litro", "Custo médio por litro", fmt_brl(data.get("custo_por_litro"))),
+        ("manutencao_vex", "Manutenção Vex (R$)", fmt_brl(data.get("manutencao_total"))),
+        ("pedagio_vex", "Pedágio/Seguro Vex (R$)", fmt_brl(data.get("pedagio_total"))),
+    ]
     include_year = params.get("ano") is None
     mensal_labels, mensal_values = sorted_series(data.get("mensal_total", {}), "Mes", "Valor", include_year=include_year, fallback_year=params.get("ano"))
     charts = [
-        ("Gasto Vex mensal", line_chart(mensal_labels, mensal_values)),
-        ("Gasto Vex por área", bar_chart(data.get("por_area", {}).get("Area", []), data.get("por_area", {}).get("Valor", []))),
-        ("Gasto Vex por placa", bar_chart(data.get("gasto_por_placa", {}).get("PLACA", []), data.get("gasto_por_placa", {}).get("Valor", []), horizontal=True, sort_desc=True, show_text=True)),
+        ("gasto_mensal", "Gasto Vex mensal", line_chart(mensal_labels, mensal_values)),
+        ("gasto_area", "Gasto Vex por área", bar_chart(data.get("por_area", {}).get("Area", []), data.get("por_area", {}).get("Valor", []))),
+        ("gasto_placa", "Gasto Vex por placa", bar_chart(data.get("gasto_por_placa", {}).get("PLACA", []), data.get("gasto_por_placa", {}).get("Valor", []), horizontal=True, sort_desc=True, show_text=True)),
     ]
-    chart_grid(charts)
+    render_controlled_dashboard("vex", title="JR Dashboard - Vex", kpis=kpis, charts=charts)
     footer("Dados Vex consolidados a partir das planilhas em /data. © JR")
 
 
