@@ -11,6 +11,9 @@ from collections import defaultdict
 from pathlib import Path
 
 
+STREAMLIT_APP_MODULE = "streamlit_app"
+
+
 def _running_as_streamlit_entrypoint() -> bool:
     if __name__ != "__main__":
         return False
@@ -23,6 +26,8 @@ def _running_as_streamlit_entrypoint() -> bool:
 
 if _running_as_streamlit_entrypoint():
     os.environ.setdefault("JR_SKIP_WARM_CACHE", "1")
+    # Streamlit Cloud may be configured to run app.py. Keep this shim pointing
+    # at the real Streamlit interface so changes in streamlit_app.py go live.
     from streamlit_app import main as streamlit_main
     import streamlit as st
 
