@@ -24,7 +24,7 @@ MUTED = "#6B7280"
 CARD_BORDER = "#c2d2f3"
 LOGO_PATH = Path(__file__).parent / "static" / "logo-jr.png"
 CURRENT_YEAR = date.today().year
-APP_VERSION = "deploy-cc799ce-acentos-cards"
+APP_VERSION = "deploy-eaadc5e-export-v2"
 
 PLOTLY_CONFIG = {
     "responsive": True,
@@ -1530,8 +1530,12 @@ def dashboard_controls(
 ) -> tuple[bool, bool, list[tuple[str, str, str]], list[tuple[str, str, go.Figure]]]:
     hide_cards_key = f"{key_prefix}_hide_cards"
     hide_charts_key = f"{key_prefix}_hide_charts"
+    export_ready_key = f"{key_prefix}_export_ready"
     st.session_state.setdefault(hide_cards_key, False)
     st.session_state.setdefault(hide_charts_key, False)
+    ready_file = st.session_state.get(export_ready_key)
+    if ready_file and ready_file.get("version") != APP_VERSION:
+        st.session_state.pop(export_ready_key, None)
 
     with st.container(key=f"{key_prefix}_dashboard_controls"):
         buttons = st.columns(6)
@@ -1577,10 +1581,11 @@ def dashboard_controls(
                                 include_charts=include_charts,
                             )
                             data = image_to_png_bytes(image) if ext == "png" else image_to_pdf_bytes(image)
-                            st.session_state[f"{key_prefix}_export_ready"] = {
+                            st.session_state[export_ready_key] = {
                                 "data": data,
                                 "file_name": export_file_name(key_prefix, scope, ext),
                                 "mime": "image/png" if ext == "png" else "application/pdf",
+                                "version": APP_VERSION,
                             }
 
         toggles = st.columns(2)
@@ -1595,7 +1600,7 @@ def dashboard_controls(
                 st.session_state[hide_charts_key] = not st.session_state[hide_charts_key]
                 st.rerun()
 
-        ready = st.session_state.get(f"{key_prefix}_export_ready")
+        ready = st.session_state.get(export_ready_key)
         if ready:
             st.download_button(
                 "Baixar arquivo gerado",
