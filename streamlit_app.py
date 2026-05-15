@@ -224,6 +224,19 @@ def inject_css() -> None:
           letter-spacing: .2px;
         }}
 
+        .jr-build-pill {{
+          display: inline-flex;
+          align-items: center;
+          padding: 4px 9px;
+          border-radius: 999px;
+          background: rgba(255,255,255,0.14);
+          color: #fff;
+          font-size: 10px;
+          font-weight: 800;
+          line-height: 1;
+          white-space: nowrap;
+        }}
+
         .jr-back {{
           display: inline-flex;
           align-items: center;
@@ -1065,6 +1078,7 @@ def topbar(title: str, *, back: bool = True) -> None:
           <div class="jr-brand">
             <img class="jr-logo" src="{logo}" alt="JR">
             <h1>{h(title)}</h1>
+            <span class="jr-build-pill">{h(APP_VERSION)}</span>
           </div>
           {back_html}
         </header>
