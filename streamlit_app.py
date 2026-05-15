@@ -24,6 +24,7 @@ MUTED = "#6B7280"
 CARD_BORDER = "#c2d2f3"
 LOGO_PATH = Path(__file__).parent / "static" / "logo-jr.png"
 CURRENT_YEAR = date.today().year
+APP_VERSION = "deploy-cc799ce-acentos-cards"
 
 PLOTLY_CONFIG = {
     "responsive": True,
@@ -695,6 +696,19 @@ def inject_css() -> None:
           padding: 24px;
           margin-top: 40px;
           border-top: 1px solid #e5e7eb;
+        }}
+
+        .build-badge {{
+          display: inline-flex;
+          align-items: center;
+          justify-content: center;
+          margin-top: 10px;
+          padding: 4px 10px;
+          border-radius: 999px;
+          background: rgba(28,45,107,0.08);
+          color: var(--jr-blue);
+          font-size: 11px;
+          font-weight: 800;
         }}
 
         div[data-testid="stSelectbox"] label,
@@ -2004,7 +2018,10 @@ def render_vex() -> None:
 
 
 def footer(text: str) -> None:
-    st.markdown(f'<div class="footer-note">{h(text)}</div>', unsafe_allow_html=True)
+    st.markdown(
+        f'<div class="footer-note">{h(text)}<br><span class="build-badge">{h(APP_VERSION)}</span></div>',
+        unsafe_allow_html=True,
+    )
 
 
 def main() -> None:
