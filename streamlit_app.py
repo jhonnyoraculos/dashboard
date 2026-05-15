@@ -24,7 +24,7 @@ MUTED = "#6B7280"
 CARD_BORDER = "#c2d2f3"
 LOGO_PATH = Path(__file__).parent / "static" / "logo-jr.png"
 CURRENT_YEAR = date.today().year
-APP_VERSION = "deploy-eaadc5e-export-v2"
+APP_VERSION = "deploy-ccc78ab-font-v3"
 
 PLOTLY_CONFIG = {
     "responsive": True,
@@ -1280,7 +1280,9 @@ def pie_chart(labels: list, values: list) -> go.Figure:
 
 
 def report_font(size: int, *, bold: bool = False) -> ImageFont.ImageFont:
+    local_font = Path(__file__).parent / "static" / "fonts" / ("NotoSans-Bold.ttf" if bold else "NotoSans-Regular.ttf")
     candidates = [
+        str(local_font),
         "arialbd.ttf" if bold else "arial.ttf",
         "segoeuib.ttf" if bold else "segoeui.ttf",
         "DejaVuSans-Bold.ttf" if bold else "DejaVuSans.ttf",
