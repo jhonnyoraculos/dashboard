@@ -24,7 +24,7 @@ MUTED = "#6B7280"
 CARD_BORDER = "#c2d2f3"
 LOGO_PATH = Path(__file__).parent / "static" / "logo-jr.png"
 CURRENT_YEAR = date.today().year
-APP_VERSION = "deploy-e9a35c2-scrolltop10-white-v4"
+APP_VERSION = "deploy-010089a-homeexport-v5"
 
 PLOTLY_CONFIG = {
     "responsive": True,
@@ -1310,6 +1310,37 @@ def draw_wrapped_text(
     return y
 
 
+def draw_centered_wrapped_text(
+    draw: ImageDraw.ImageDraw,
+    text: str,
+    center_x: int,
+    y: int,
+    *,
+    font: ImageFont.ImageFont,
+    fill: str,
+    max_width: int,
+    line_gap: int = 6,
+) -> int:
+    words = clean_text(text).split()
+    lines: list[str] = []
+    current = ""
+    for word in words:
+        trial = f"{current} {word}".strip()
+        if draw.textbbox((0, 0), trial, font=font)[2] <= max_width or not current:
+            current = trial
+        else:
+            lines.append(current)
+            current = word
+    if current:
+        lines.append(current)
+    line_height = draw.textbbox((0, 0), "Ag", font=font)[3] + line_gap
+    for line in lines:
+        bbox = draw.textbbox((0, 0), line, font=font)
+        draw.text((center_x - (bbox[2] - bbox[0]) // 2, y), line, font=font, fill=fill)
+        y += line_height
+    return y
+
+
 def horizontal_bar_row_count(fig: go.Figure) -> int:
     meta = fig.layout.meta if isinstance(fig.layout.meta, dict) else {}
     if meta.get("jr_horizontal_bar"):
@@ -1347,6 +1378,88 @@ def export_ready_figure(fig: go.Figure, *, max_horizontal_rows: int = 10) -> go.
             trace.marker.color = list(marker_color)[:max_horizontal_rows]
         export_fig.update_layout(height=max(420, 95 + max_horizontal_rows * 30))
     return export_fig
+
+
+def compose_home_export_image(
+    cards: list[tuple[str, str, str]],
+    *,
+    include_header: bool,
+) -> Image.Image:
+    width = 1500
+    margin = 54
+    gap = 28
+    bg = "#ffffff"
+    panel = "#ffffff"
+    line = "#cbd9ff"
+    shadow = "#e4ebf8"
+    card_cols = min(3, len(cards)) if cards else 1
+    card_width = (width - margin * 2 - gap * (card_cols - 1)) // card_cols
+    card_height = 205
+    header_height = 140 if include_header else 0
+    height = margin + header_height + card_height + margin
+    canvas = Image.new("RGB", (width, height), bg)
+    draw = ImageDraw.Draw(canvas)
+    y = margin
+
+    if include_header:
+        if LOGO_PATH.exists():
+            try:
+                logo = Image.open(LOGO_PATH).convert("RGBA").resize((64, 64))
+                canvas.paste(logo, (margin, y), logo)
+            except Exception:
+                logo = None
+        draw.text((margin + 84, y + 4), "Dashboards operacionais", font=report_font(36, bold=True), fill=JR_BLUE)
+        draw_wrapped_text(
+            draw,
+            "Monitoramento consolidado das planilhas JR.",
+            (margin + 84, y + 56),
+            font=report_font(20),
+            fill=MUTED,
+            max_width=760,
+        )
+        y += header_height
+
+    for index, (label, value, status) in enumerate(cards):
+        x = margin + index * (card_width + gap)
+        draw.rounded_rectangle(
+            (x + 6, y + 8, x + card_width + 6, y + card_height + 8),
+            radius=18,
+            fill=shadow,
+        )
+        draw.rounded_rectangle(
+            (x, y, x + card_width, y + card_height),
+            radius=18,
+            fill=panel,
+            outline=line,
+            width=2,
+        )
+        center_x = x + card_width // 2
+        draw_centered_wrapped_text(
+            draw,
+            clean_text(label).upper(),
+            center_x,
+            y + 26,
+            font=report_font(20, bold=True),
+            fill=MUTED,
+            max_width=card_width - 60,
+            line_gap=5,
+        )
+        value_text = clean_text(value)
+        value_font = report_font(30, bold=True)
+        value_bbox = draw.textbbox((0, 0), value_text, font=value_font)
+        draw.text((center_x - (value_bbox[2] - value_bbox[0]) // 2, y + 95), value_text, font=value_font, fill=JR_BLUE)
+        draw_centered_wrapped_text(
+            draw,
+            status,
+            center_x,
+            y + 138,
+            font=report_font(16),
+            fill="#374151",
+            max_width=card_width - 52,
+            line_gap=4,
+        )
+
+    return canvas
 
 
 def compose_export_image(
@@ -1803,19 +1916,45 @@ def render_home() -> None:
         month_text = ", ".join(MONTH_NAMES[int(item) - 1] for item in meses)
         filter_text = f"Filtro aplicado: {month_text}/{ano}." if ano != "Todos" else f"Filtro aplicado: {month_text}."
     suffix = filter_text or "Cálculo baseado nos dados mais recentes das quatro planilhas."
+    home_total_cards = [
+        ("Gasto consolidado (todas as planilhas)", fmt_brl(overview.get("total_geral")), suffix),
+        ("Gasto transporte", fmt_brl(overview.get("total_transporte")), 'Somatório das despesas marcadas como "Transporte".'),
+        ("Gasto Vex", fmt_brl(overview.get("total_vex")), 'Somatório das despesas marcadas como "Vex".'),
+    ]
 
     with st.container(key="home_total_section"):
-        st.markdown(
-            '<div class="home-export-bar"><span class="home-export-btn">Exportar cards (PNG)</span><span class="home-export-btn">Exportar página (PNG)</span></div>',
-            unsafe_allow_html=True,
-        )
-        render_home_totals(
-            [
-                ("Gasto consolidado (todas as planilhas)", fmt_brl(overview.get("total_geral")), suffix),
-                ("Gasto transporte", fmt_brl(overview.get("total_transporte")), 'Somatório das despesas marcadas como "Transporte".'),
-                ("Gasto Vex", fmt_brl(overview.get("total_vex")), 'Somatório das despesas marcadas como "Vex".'),
-            ]
-        )
+        ready_key = "home_export_ready"
+        ready_file = st.session_state.get(ready_key)
+        if ready_file and ready_file.get("version") != APP_VERSION:
+            st.session_state.pop(ready_key, None)
+
+        export_cols = st.columns(2)
+        export_options = [
+            ("cards", "Exportar cards (PNG)", False),
+            ("pagina", "Exportar página (PNG)", True),
+        ]
+        for col, (scope, label, include_header) in zip(export_cols, export_options):
+            with col:
+                if st.button(label, key=f"home_export_{scope}_png", width="stretch"):
+                    image = compose_home_export_image(home_total_cards, include_header=include_header)
+                    st.session_state[ready_key] = {
+                        "data": image_to_png_bytes(image),
+                        "file_name": export_file_name("home", scope, "png"),
+                        "mime": "image/png",
+                        "version": APP_VERSION,
+                    }
+        ready_file = st.session_state.get(ready_key)
+        if ready_file:
+            st.download_button(
+                "Baixar arquivo gerado",
+                data=ready_file["data"],
+                file_name=ready_file["file_name"],
+                mime=ready_file["mime"],
+                key="home_download_ready",
+                width="stretch",
+            )
+
+        render_home_totals(home_total_cards)
         st.markdown('<div class="home-filter-row"></div>', unsafe_allow_html=True)
         cols = st.columns([0.55, 0.55, 2.2])
         with cols[0]:
