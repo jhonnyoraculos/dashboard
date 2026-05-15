@@ -24,7 +24,7 @@ MUTED = "#6B7280"
 CARD_BORDER = "#c2d2f3"
 LOGO_PATH = Path(__file__).parent / "static" / "logo-jr.png"
 CURRENT_YEAR = date.today().year
-APP_VERSION = "deploy-ccc78ab-font-v3"
+APP_VERSION = "deploy-e9a35c2-scrolltop10-white-v4"
 
 PLOTLY_CONFIG = {
     "responsive": True,
@@ -222,19 +222,6 @@ def inject_css() -> None:
           line-height: 1.2;
           font-weight: 800;
           letter-spacing: .2px;
-        }}
-
-        .jr-build-pill {{
-          display: inline-flex;
-          align-items: center;
-          padding: 4px 9px;
-          border-radius: 999px;
-          background: rgba(255,255,255,0.14);
-          color: #fff;
-          font-size: 10px;
-          font-weight: 800;
-          line-height: 1;
-          white-space: nowrap;
         }}
 
         .jr-back {{
@@ -711,19 +698,6 @@ def inject_css() -> None:
           border-top: 1px solid #e5e7eb;
         }}
 
-        .build-badge {{
-          display: inline-flex;
-          align-items: center;
-          justify-content: center;
-          margin-top: 10px;
-          padding: 4px 10px;
-          border-radius: 999px;
-          background: rgba(28,45,107,0.08);
-          color: var(--jr-blue);
-          font-size: 11px;
-          font-weight: 800;
-        }}
-
         div[data-testid="stSelectbox"] label,
         div[data-testid="stMultiSelect"] label {{
           color: var(--jr-blue);
@@ -1078,7 +1052,6 @@ def topbar(title: str, *, back: bool = True) -> None:
           <div class="jr-brand">
             <img class="jr-logo" src="{logo}" alt="JR">
             <h1>{h(title)}</h1>
-            <span class="jr-build-pill">{h(APP_VERSION)}</span>
           </div>
           {back_html}
         </header>
@@ -1218,7 +1191,7 @@ def bar_chart(
         text = [fmt_brl_compact(value) if currency else fmt_num(value) for value in values_clean]
 
     if horizontal:
-        chart_height = height or max(320, min(620, 95 + len(labels_clean) * 30))
+        chart_height = height or max(320, 95 + len(labels_clean) * 30)
         fig = go.Figure(
             go.Bar(
                 x=values_clean,
@@ -1239,7 +1212,9 @@ def bar_chart(
             rangemode="tozero",
         )
         fig.update_yaxes(autorange="reversed", automargin=True, tickfont={"size": 11})
-        return apply_theme(fig, height=chart_height, margin={"l": 130, "r": 95 if show_text else 45, "t": 20, "b": 45})
+        fig = apply_theme(fig, height=chart_height, margin={"l": 130, "r": 95 if show_text else 45, "t": 20, "b": 45})
+        fig.update_layout(meta={"jr_horizontal_bar": True, "jr_row_count": len(labels_clean)})
+        return fig
 
     chart_height = height or 340
     fig = go.Figure(
@@ -1335,6 +1310,45 @@ def draw_wrapped_text(
     return y
 
 
+def horizontal_bar_row_count(fig: go.Figure) -> int:
+    meta = fig.layout.meta if isinstance(fig.layout.meta, dict) else {}
+    if meta.get("jr_horizontal_bar"):
+        try:
+            return int(meta.get("jr_row_count") or 0)
+        except (TypeError, ValueError):
+            return 0
+    for trace in fig.data:
+        if getattr(trace, "type", "") == "bar" and getattr(trace, "orientation", None) == "h":
+            return len(getattr(trace, "y", []) or [])
+    return 0
+
+
+def chart_scroll_height(fig: go.Figure) -> int | None:
+    row_count = horizontal_bar_row_count(fig)
+    if row_count <= 10:
+        return None
+    return 420
+
+
+def export_ready_figure(fig: go.Figure, *, max_horizontal_rows: int = 10) -> go.Figure:
+    export_fig = go.Figure(fig)
+    for trace in export_fig.data:
+        if getattr(trace, "type", "") != "bar" or getattr(trace, "orientation", None) != "h":
+            continue
+        labels = list(getattr(trace, "y", []) or [])
+        if len(labels) <= max_horizontal_rows:
+            continue
+        trace.y = labels[:max_horizontal_rows]
+        trace.x = list(getattr(trace, "x", []) or [])[:max_horizontal_rows]
+        if getattr(trace, "text", None) is not None:
+            trace.text = list(trace.text)[:max_horizontal_rows]
+        marker_color = getattr(trace.marker, "color", None)
+        if isinstance(marker_color, (list, tuple)):
+            trace.marker.color = list(marker_color)[:max_horizontal_rows]
+        export_fig.update_layout(height=max(420, 95 + max_horizontal_rows * 30))
+    return export_fig
+
+
 def compose_export_image(
     kpis: list[tuple[str, str]],
     charts: list[tuple[str, go.Figure]],
@@ -1347,7 +1361,7 @@ def compose_export_image(
     width = 1800
     margin = 58
     gap = 28
-    bg = "#f6f8fc"
+    bg = "#ffffff"
     panel = "#ffffff"
     line = "#cbd9ff"
     text = JR_BLUE
@@ -1363,7 +1377,7 @@ def compose_export_image(
     if include_charts:
         for chart_title, fig in charts:
             try:
-                export_fig = go.Figure(fig)
+                export_fig = export_ready_figure(fig)
                 desired_height = max(540, min(780, int(export_fig.layout.height or 460) + 110))
                 pie_label_count = 0
                 for trace in export_fig.data:
@@ -1512,7 +1526,12 @@ def export_file_name(prefix: str, scope: str, ext: str) -> str:
 def chart_card(title: str, fig: go.Figure) -> None:
     with st.container(border=True):
         st.markdown(f'<div class="chart-title">{h(title)}</div>', unsafe_allow_html=True)
-        st.plotly_chart(fig, width="stretch", config=PLOTLY_CONFIG)
+        scroll_height = chart_scroll_height(fig)
+        if scroll_height:
+            with st.container(height=scroll_height, border=False):
+                st.plotly_chart(fig, width="stretch", config=PLOTLY_CONFIG)
+        else:
+            st.plotly_chart(fig, width="stretch", config=PLOTLY_CONFIG)
 
 
 def chart_grid(charts: list[tuple[str, go.Figure]]) -> None:
@@ -2039,10 +2058,7 @@ def render_vex() -> None:
 
 
 def footer(text: str) -> None:
-    st.markdown(
-        f'<div class="footer-note">{h(text)}<br><span class="build-badge">{h(APP_VERSION)}</span></div>',
-        unsafe_allow_html=True,
-    )
+    st.markdown(f'<div class="footer-note">{h(text)}</div>', unsafe_allow_html=True)
 
 
 def main() -> None:
