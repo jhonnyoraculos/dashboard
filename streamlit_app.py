@@ -520,6 +520,9 @@ def inject_css() -> None:
         .kpi {{
           padding: 24px;
           min-height: 116px;
+          align-items: center;
+          justify-content: center;
+          text-align: center;
         }}
 
         .home-total-label,
@@ -530,6 +533,8 @@ def inject_css() -> None:
           text-transform: uppercase;
           color: var(--muted);
           font-weight: 700;
+          width: 100%;
+          text-align: center;
         }}
 
         .home-total-value {{
@@ -554,8 +559,11 @@ def inject_css() -> None:
           font-size: clamp(18px, 1.8vw, 26px);
           font-weight: 800;
           color: var(--jr-red);
-          line-height: 1.2;
+          line-height: 1.05;
+          margin-top: 8px;
           overflow-wrap: anywhere;
+          width: 100%;
+          text-align: center;
         }}
 
         .home-grid {{
@@ -914,7 +922,56 @@ def fmt_num(value: object, decimals: int = 0) -> str:
 
 
 def h(text: object) -> str:
-    return html.escape(str(text if text is not None else ""))
+    return html.escape(clean_text(text))
+
+
+def clean_text(text: object) -> str:
+    value = str(text if text is not None else "")
+    if any(marker in value for marker in ("Ã", "Â", "â€", "â€¢")):
+        try:
+            value = value.encode("latin1").decode("utf-8")
+        except UnicodeError:
+            replacements = {
+                "Ã¡": "á",
+                "Ã¢": "â",
+                "Ã£": "ã",
+                "Ã©": "é",
+                "Ãª": "ê",
+                "Ã­": "í",
+                "Ã³": "ó",
+                "Ã´": "ô",
+                "Ãµ": "õ",
+                "Ãº": "ú",
+                "Ã§": "ç",
+                "Â©": "©",
+                "â€¢": "•",
+            }
+            for bad, good in replacements.items():
+                value = value.replace(bad, good)
+    broken = "\ufffd"
+    replacements = {
+        f"m{broken}s": "mês",
+        f"M{broken}S": "MÊS",
+        f"m{broken}dia": "média",
+        f"M{broken}DIA": "MÉDIA",
+        f"m{broken}dio": "médio",
+        f"M{broken}DIO": "MÉDIO",
+        f"{broken}ltimos": "últimos",
+        f"{broken}LTIMOS": "ÚLTIMOS",
+        f"combust{broken}vel": "combustível",
+        f"COMBUST{broken}VEL": "COMBUSTÍVEL",
+        f"gr{broken}fico": "gráfico",
+        f"Gr{broken}fico": "Gráfico",
+        f"GR{broken}FICO": "GRÁFICO",
+        f"p{broken}gina": "página",
+        f"P{broken}gina": "Página",
+        f"P{broken}GINA": "PÁGINA",
+        f"manuten{broken}{broken}o": "manutenção",
+        f"MANUTEN{broken}{broken}O": "MANUTENÇÃO",
+    }
+    for bad, good in replacements.items():
+        value = value.replace(bad, good)
+    return value
 
 
 def selected_or_default(options: list, current: object | None = None, *, default_current_year: bool = False) -> object:
@@ -1228,7 +1285,7 @@ def draw_wrapped_text(
     max_width: int,
     line_gap: int = 6,
 ) -> int:
-    words = str(text).split()
+    words = clean_text(text).split()
     lines: list[str] = []
     current = ""
     for word in words:
@@ -1308,7 +1365,12 @@ def compose_export_image(
                 desired_height = 540
                 placeholder = Image.new("RGB", (chart_inner_width, desired_height), "#ffffff")
                 draw = ImageDraw.Draw(placeholder)
-                draw.text((32, 32), f"Nao foi possivel renderizar: {chart_title}", font=report_font(26, bold=True), fill=JR_RED)
+                draw.text(
+                    (32, 32),
+                    f"Não foi possível renderizar: {clean_text(chart_title)}",
+                    font=report_font(26, bold=True),
+                    fill=JR_RED,
+                )
                 chart_images.append((chart_title, placeholder))
 
     rows = 0
@@ -1353,7 +1415,7 @@ def compose_export_image(
             )
             draw_wrapped_text(
                 draw,
-                label.upper(),
+                clean_text(label).upper(),
                 (x + 30, card_y + 28),
                 font=report_font(22, bold=True),
                 fill=MUTED,
@@ -1361,11 +1423,15 @@ def compose_export_image(
                 line_gap=4,
             )
             value_size = 42
-            if len(value) > 18:
+            value_text = clean_text(value)
+            if len(value_text) > 18:
                 value_size = 36
-            if len(value) > 28:
+            if len(value_text) > 28:
                 value_size = 31
-            draw.text((x + 30, card_y + 104), value, font=report_font(value_size, bold=True), fill=JR_RED)
+            value_font = report_font(value_size, bold=True)
+            value_bbox = draw.textbbox((0, 0), value_text, font=value_font)
+            value_x = x + (card_width - (value_bbox[2] - value_bbox[0])) // 2
+            draw.text((value_x, card_y + 104), value_text, font=value_font, fill=JR_RED)
         y += rows * card_height + (rows - 1) * gap
         if include_charts and chart_images:
             y += gap + 10
@@ -1389,7 +1455,7 @@ def compose_export_image(
                     outline=line,
                     width=2,
                 )
-                draw.text((x + 28, chart_y + 24), chart_title, font=report_font(30, bold=True), fill=text)
+                draw.text((x + 28, chart_y + 24), clean_text(chart_title), font=report_font(30, bold=True), fill=text)
                 canvas.paste(image, (x + 28, chart_y + 72))
             y += row_height + gap
         y -= gap
@@ -1462,7 +1528,7 @@ def dashboard_controls(
 
         for col, (job_id, label, scope, ext) in zip(buttons, export_jobs):
             with col:
-                if st.button(label, key=f"{key_prefix}_export_{job_id}", width="stretch"):
+                if st.button(clean_text(label), key=f"{key_prefix}_export_{job_id}", width="stretch"):
                     include_cards = scope == "cards" or (scope == "pagina" and not st.session_state[hide_cards_key])
                     include_charts = scope == "graficos" or (scope == "pagina" and not st.session_state[hide_charts_key])
                     if not include_cards and not include_charts:
@@ -1492,12 +1558,12 @@ def dashboard_controls(
         toggles = st.columns(2)
         with toggles[0]:
             toggle_label = "Mostrar cards" if st.session_state[hide_cards_key] else "Ocultar cards"
-            if st.button(toggle_label, key=f"{key_prefix}_toggle_cards", width="stretch"):
+            if st.button(clean_text(toggle_label), key=f"{key_prefix}_toggle_cards", width="stretch"):
                 st.session_state[hide_cards_key] = not st.session_state[hide_cards_key]
                 st.rerun()
         with toggles[1]:
             toggle_label = "Mostrar gráficos" if st.session_state[hide_charts_key] else "Ocultar gráficos"
-            if st.button(toggle_label, key=f"{key_prefix}_toggle_charts", width="stretch"):
+            if st.button(clean_text(toggle_label), key=f"{key_prefix}_toggle_charts", width="stretch"):
                 st.session_state[hide_charts_key] = not st.session_state[hide_charts_key]
                 st.rerun()
 
@@ -1520,7 +1586,7 @@ def dashboard_controls(
                 state_key = f"{key_prefix}_visible_{item_id}"
                 st.session_state.setdefault(state_key, True)
                 with col:
-                    st.checkbox(label, key=state_key)
+                    st.checkbox(clean_text(label), key=state_key)
 
     show_cards = not st.session_state[hide_cards_key]
     show_charts = not st.session_state[hide_charts_key]
