@@ -2257,18 +2257,88 @@ def _save_entry(
     return True
 
 
+def _registered_plate_map() -> dict[str, str]:
+    try:
+        df = backend.load_placas()
+    except Exception:
+        return {}
+    if df.empty or "PLACA" not in df.columns:
+        return {}
+    mapping: dict[str, str] = {}
+    for _, row in df.iterrows():
+        placa = clean_text(row.get("PLACA")).strip().upper()
+        categoria = clean_text(row.get("Categoria") or "Transporte").strip()
+        if placa:
+            mapping[placa] = "Vex" if categoria.lower() == "vex" else "Transporte"
+    return dict(sorted(mapping.items()))
+
+
+def _plate_fields(prefix: str, plate_map: dict[str, str] | None = None) -> tuple[str, str]:
+    plate_map = plate_map if plate_map is not None else _registered_plate_map()
+    options = ["Selecione uma placa", *plate_map.keys(), "Cadastrar nova placa"]
+    selected = st.selectbox("Placa", options, key=f"{prefix}_placa_select")
+    if selected == "Cadastrar nova placa":
+        placa = st.text_input("Nova placa", placeholder="ABC1D23", key=f"{prefix}_placa_manual").upper()
+        categoria = st.selectbox("Categoria da placa", ["Transporte", "Vex"], key=f"{prefix}_categoria_manual")
+        return placa, categoria
+    if selected == "Selecione uma placa":
+        st.text_input("Categoria da placa", value="", disabled=True, key=f"{prefix}_categoria_empty")
+        return "", "Transporte"
+    categoria = plate_map.get(selected, "Transporte")
+    st.text_input("Categoria da placa", value=categoria, disabled=True, key=f"{prefix}_categoria_locked")
+    return selected, categoria
+
+
+def _save_registered_plate(placa: str, categoria: str) -> bool:
+    if not placa:
+        st.warning("Selecione ou cadastre uma placa.")
+        return False
+    try:
+        backend.save_dashboard_record("placas", {"PLACA": placa, "Categoria": categoria}, replace_keys=["PLACA"])
+    except Exception as exc:
+        st.error("Não foi possível salvar a placa no Neon.")
+        st.exception(exc)
+        return False
+    return True
+
+
 def render_cadastro() -> None:
     topbar("JR DASHBOARD • Adicionar dados", back=True)
     with st.container(key="cadastro_shell"):
-        tabs = st.tabs(["Combustível", "KM mensal", "Manutenção", "Hotéis", "Pedágio/IPVA"])
+        tabs = st.tabs(["Placas", "Combustível", "KM mensal", "Manutenção", "Hotéis", "Pedágio/IPVA"])
 
         with tabs[0]:
+            with st.form("form_placas", clear_on_submit=True):
+                c1, c2, c3 = st.columns([1.2, 1.0, 1.0])
+                with c1:
+                    placa = st.text_input("Placa", placeholder="ABC1D23", key="cad_placa_nome").upper()
+                with c2:
+                    categoria = st.selectbox("Categoria", ["Transporte", "Vex"], key="cad_placa_categoria")
+                with c3:
+                    st.write("")
+                    submitted = st.form_submit_button("Cadastrar placa", type="primary", width="stretch")
+                if submitted:
+                    _save_entry(
+                        "placas",
+                        {"PLACA": placa, "Categoria": categoria},
+                        required=["PLACA", "Categoria"],
+                        replace_keys=["PLACA"],
+                        success="Placa cadastrada/atualizada.",
+                    )
+
+            plate_map = _registered_plate_map()
+            if plate_map:
+                table = pd.DataFrame(
+                    [{"Placa": placa, "Categoria": categoria} for placa, categoria in plate_map.items()]
+                )
+                st.dataframe(table, width="stretch", hide_index=True)
+
+        with tabs[1]:
             with st.form("form_combustivel", clear_on_submit=True):
                 c1, c2, c3 = st.columns(3)
                 with c1:
                     data = st.date_input("Data", value=date.today(), key="cad_comb_data")
-                    placa = st.text_input("Placa", placeholder="ABC1D23", key="cad_comb_placa").upper()
-                    categoria = st.selectbox("Categoria", ["Transporte", "Vex"], key="cad_comb_categoria")
+                    placa, categoria = _plate_fields("cad_comb", plate_map)
                 with c2:
                     combustivel = st.text_input("Combustível", placeholder="Diesel S10", key="cad_comb_combustivel")
                     posto = st.text_input("Posto", key="cad_comb_posto")
@@ -2295,36 +2365,36 @@ def render_cadastro() -> None:
                         success="Lançamento de combustível salvo.",
                     )
 
-        with tabs[1]:
+        with tabs[2]:
             with st.form("form_km_mensal", clear_on_submit=True):
                 c1, c2, c3 = st.columns(3)
                 with c1:
                     ano = st.number_input("Ano", min_value=2020, max_value=2100, value=CURRENT_YEAR, step=1, key="cad_km_ano")
                 with c2:
                     mes = st.selectbox("Mês", list(range(1, 13)), format_func=month_label, key="cad_km_mes")
-                    placa = st.text_input("Placa", placeholder="ABC1D23", key="cad_km_placa").upper()
+                    placa, categoria = _plate_fields("cad_km", plate_map)
                 with c3:
                     km = st.number_input("KM do mês", min_value=0.0, step=1.0, key="cad_km_total")
                     substituir = st.checkbox("Substituir se já existir", value=True, key="cad_km_replace")
                     submitted = st.form_submit_button("Salvar KM mensal", type="primary", width="stretch")
                 if submitted:
-                    _save_entry(
-                        "combustivel_km",
-                        {"Mes": f"{int(ano)}-{int(mes):02d}", "PLACA": placa, "Km Rodados": km},
-                        required=["Mes", "PLACA"],
-                        replace_keys=["Mes", "PLACA"] if substituir else None,
-                        success="KM mensal salvo.",
-                    )
+                    if _save_registered_plate(placa, categoria):
+                        _save_entry(
+                            "combustivel_km",
+                            {"Mes": f"{int(ano)}-{int(mes):02d}", "PLACA": placa, "Km Rodados": km},
+                            required=["Mes", "PLACA"],
+                            replace_keys=["Mes", "PLACA"] if substituir else None,
+                            success="KM mensal salvo.",
+                        )
 
-        with tabs[2]:
+        with tabs[3]:
             with st.form("form_manutencao", clear_on_submit=True):
                 c1, c2, c3 = st.columns(3)
                 with c1:
                     data = st.date_input("Data", value=date.today(), key="cad_manu_data")
-                    placa = st.text_input("Placa", placeholder="ABC1D23", key="cad_manu_placa").upper()
+                    placa, categoria = _plate_fields("cad_manu", plate_map)
                 with c2:
                     oficina = st.text_input("Oficina", key="cad_manu_oficina")
-                    categoria = st.selectbox("Categoria", ["Transporte", "Vex"], key="cad_manu_categoria")
                 with c3:
                     custo = st.number_input("Custo", min_value=0.0, step=10.0, format="%.2f", key="cad_manu_custo")
                     submitted = st.form_submit_button("Salvar manutenção", type="primary", width="stretch")
@@ -2343,7 +2413,7 @@ def render_cadastro() -> None:
                         success="Lançamento de manutenção salvo.",
                     )
 
-        with tabs[3]:
+        with tabs[4]:
             with st.form("form_hoteis", clear_on_submit=True):
                 c1, c2, c3 = st.columns(3)
                 with c1:
@@ -2377,15 +2447,14 @@ def render_cadastro() -> None:
                         success="Reserva/hospedagem salva.",
                     )
 
-        with tabs[4]:
+        with tabs[5]:
             with st.form("form_pedagio", clear_on_submit=True):
                 c1, c2, c3 = st.columns(3)
                 with c1:
                     data = st.date_input("Data", value=date.today(), key="cad_ped_data")
-                    placa = st.text_input("Placa", placeholder="ABC1D23", key="cad_ped_placa").upper()
+                    placa, categoria = _plate_fields("cad_ped", plate_map)
                 with c2:
                     tipo = st.selectbox("Tipo", ["Pedagio", "IPVA", "Seguro", "Licenciamento", "DPVAT", "Outros"], key="cad_ped_tipo")
-                    categoria = st.selectbox("Categoria", ["Transporte", "Vex"], key="cad_ped_categoria")
                 with c3:
                     custo = st.number_input("Custo", min_value=0.0, step=10.0, format="%.2f", key="cad_ped_custo")
                     submitted = st.form_submit_button("Salvar pedágio/IPVA", type="primary", width="stretch")

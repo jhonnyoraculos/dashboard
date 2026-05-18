@@ -40,6 +40,7 @@ DB_TABLES = {
     "manutencao": "dashboard_manutencao",
     "hoteis": "dashboard_hoteis",
     "pedagio": "dashboard_pedagio",
+    "placas": "dashboard_placas",
 }
 DB_METADATA_TABLE = "dashboard_metadata"
 _DB_ENGINE = None
@@ -82,6 +83,7 @@ _HOTEIS_COLUMNS = [
     "Categoria",
 ]
 _PEDAGIO_COLUMNS = ["PLACA", "Tipo", "Custo", "Mes", "Data", "Categoria"]
+_PLACAS_COLUMNS = ["PLACA", "Categoria"]
 
 
 def _database_url() -> str | None:
@@ -205,7 +207,12 @@ def _write_metadata(conn, key: str, value) -> None:
 
 
 def _clear_dataset_cache(dataset: str) -> None:
-    targets = ["combustivel"] if dataset == "combustivel_km" else [dataset]
+    if dataset == "combustivel_km":
+        targets = ["combustivel"]
+    elif dataset == "placas":
+        targets = ["combustivel", "manutencao", "pedagio"]
+    else:
+        targets = [dataset]
     for target in targets:
         cache = _CACHE_MAP.get(target)
         if not cache:
@@ -238,6 +245,7 @@ def _prepare_insert_row(dataset: str, row: dict) -> dict:
         "manutencao": _MANUTENCAO_COLUMNS,
         "hoteis": _HOTEIS_COLUMNS,
         "pedagio": _PEDAGIO_COLUMNS,
+        "placas": _PLACAS_COLUMNS,
     }
     columns = columns_by_dataset[dataset]
     prepared = {column: _normalize_insert_value(row.get(column)) for column in columns}
@@ -249,6 +257,8 @@ def _prepare_insert_row(dataset: str, row: dict) -> dict:
 
     if "PLACA" in prepared:
         prepared["PLACA"] = _normalize_insert_value(_normalize_plate_value(prepared["PLACA"]))
+        if dataset == "placas" and not _is_plate_identifier(prepared["PLACA"]):
+            prepared["PLACA"] = None
     if "Tipo" in prepared and dataset == "pedagio":
         prepared["Tipo"] = _normalize_tipo_value(prepared["Tipo"])
     if "Categoria" in prepared:
@@ -260,6 +270,24 @@ def _prepare_insert_row(dataset: str, row: dict) -> dict:
             value = value.strip()
             prepared[column] = value or None
     return prepared
+
+
+def _ensure_dataset_table(conn, dataset: str) -> None:
+    if dataset != "placas":
+        return
+
+    from sqlalchemy import text
+
+    conn.execute(
+        text(
+            f"""
+            CREATE TABLE IF NOT EXISTS {_quote_identifier(DB_TABLES["placas"])} (
+                "PLACA" TEXT PRIMARY KEY,
+                "Categoria" TEXT NOT NULL
+            )
+            """
+        )
+    )
 
 
 def save_dashboard_record(dataset: str, row: dict, *, replace_keys: list[str] | None = None) -> str:
@@ -278,7 +306,9 @@ def save_dashboard_record(dataset: str, row: dict, *, replace_keys: list[str] | 
     value_sql = ", ".join(f":{column}" for column in columns)
     version = datetime.now(timezone.utc).isoformat()
 
+    plate_registry_changed = dataset == "placas"
     with _db_engine().begin() as conn:
+        _ensure_dataset_table(conn, dataset)
         if replace_keys:
             keys = [key for key in replace_keys if key in prepared and prepared.get(key) is not None]
             if keys:
@@ -288,10 +318,20 @@ def save_dashboard_record(dataset: str, row: dict, *, replace_keys: list[str] | 
                     {f"replace_{key}": prepared[key] for key in keys},
                 )
         conn.execute(text(f"INSERT INTO {table} ({column_sql}) VALUES ({value_sql})"), {column: prepared[column] for column in columns})
+        if dataset in {"combustivel", "manutencao", "pedagio"} and prepared.get("PLACA") and prepared.get("Categoria"):
+            plate_registry_changed = True
+            _ensure_dataset_table(conn, "placas")
+            placas_table = _quote_identifier(DB_TABLES["placas"])
+            conn.execute(text(f"DELETE FROM {placas_table} WHERE \"PLACA\" = :placa"), {"placa": prepared["PLACA"]})
+            conn.execute(
+                text(f"INSERT INTO {placas_table} (\"PLACA\", \"Categoria\") VALUES (:placa, :categoria)"),
+                {"placa": prepared["PLACA"], "categoria": prepared["Categoria"]},
+            )
+            _write_metadata(conn, "placas.version", version)
         _write_metadata(conn, f"{dataset}.version", version)
         _write_metadata(conn, "import.version", version)
 
-    _clear_dataset_cache(dataset)
+    _clear_dataset_cache("placas" if plate_registry_changed else dataset)
     return version
 
 
@@ -315,6 +355,15 @@ def _normalize_plate_value(value):
     if match:
         return match.group(0)
     return text
+
+
+def _is_plate_identifier(value) -> bool:
+    if pd.isna(value):
+        return False
+    text = str(value).strip().upper()
+    if text == "SEM PLACA":
+        return True
+    return bool(re.fullmatch(r"[A-Z]{3}[0-9][A-Z0-9][0-9]{2}|[A-Z]{3}[0-9]{4}", text))
 
 
 def _normalize_plate_series(series: pd.Series) -> pd.Series:
@@ -358,6 +407,83 @@ def _normalize_tipo_value(value):
     if "DPVAT" in text:
         return "DPVAT"
     return str(value).strip().title()
+
+
+def _read_plate_registry() -> pd.DataFrame:
+    try:
+        df = _read_database_table("placas", _PLACAS_COLUMNS)
+    except Exception:
+        return _empty(_PLACAS_COLUMNS)
+    if df.empty:
+        return _empty(_PLACAS_COLUMNS)
+    df = df[_PLACAS_COLUMNS].copy()
+    df["PLACA"] = _normalize_plate_series(df["PLACA"])
+    _normalize_category_column(df)
+    df = df.dropna(subset=["PLACA"]).drop_duplicates(subset=["PLACA"], keep="last")
+    df = df[df["PLACA"].apply(_is_plate_identifier)]
+    return df
+
+
+def _apply_plate_categories(df: pd.DataFrame) -> pd.DataFrame:
+    if df.empty or "PLACA" not in df.columns:
+        return df
+    registry = _read_plate_registry()
+    if registry.empty:
+        return df
+    mapping = dict(zip(registry["PLACA"].astype("string"), registry["Categoria"].astype("string")))
+    if not mapping:
+        return df
+    df = df.copy()
+    if "Categoria" not in df.columns:
+        df["Categoria"] = "Transporte"
+    mapped = df["PLACA"].astype("string").map(mapping)
+    mask = mapped.notna()
+    df.loc[mask, "Categoria"] = mapped.loc[mask]
+    return df
+
+
+def _derived_plate_registry() -> pd.DataFrame:
+    frames = []
+    for loader in (load_combustivel, load_manutencao, load_pedagio):
+        try:
+            df = loader()
+        except Exception:
+            continue
+        if df.empty or "PLACA" not in df.columns:
+            continue
+        cols = ["PLACA", "Categoria"] if "Categoria" in df.columns else ["PLACA"]
+        frame = df[cols].copy()
+        if "Categoria" not in frame.columns:
+            frame["Categoria"] = "Transporte"
+        frames.append(frame)
+    if not frames:
+        return _empty(_PLACAS_COLUMNS)
+    df = pd.concat(frames, ignore_index=True)
+    df["PLACA"] = _normalize_plate_series(df["PLACA"])
+    _normalize_category_column(df)
+    df = df.dropna(subset=["PLACA"])
+    df = df[df["PLACA"].apply(_is_plate_identifier)]
+    if df.empty:
+        return _empty(_PLACAS_COLUMNS)
+    grouped = (
+        df.groupby("PLACA", as_index=False)["Categoria"]
+        .agg(lambda values: "Vex" if any(str(value).strip().lower() == "vex" for value in values) else "Transporte")
+    )
+    return grouped.sort_values("PLACA").reset_index(drop=True)
+
+
+def load_placas() -> pd.DataFrame:
+    derived = _derived_plate_registry()
+    registered = _read_plate_registry()
+    frames = [df for df in (derived, registered) if not df.empty]
+    if not frames:
+        return _empty(_PLACAS_COLUMNS)
+    df = pd.concat(frames, ignore_index=True)
+    df["PLACA"] = _normalize_plate_series(df["PLACA"])
+    _normalize_category_column(df)
+    df = df.dropna(subset=["PLACA"]).drop_duplicates(subset=["PLACA"], keep="last")
+    df = df[df["PLACA"].apply(_is_plate_identifier)]
+    return df[_PLACAS_COLUMNS].sort_values("PLACA").reset_index(drop=True)
 
 
 def _normalize_mes(df: pd.DataFrame) -> None:
@@ -611,6 +737,7 @@ def load_combustivel() -> pd.DataFrame:
             text_columns=["Combustivel", "POSTOS"],
             plate_columns=["PLACA"],
         )
+        df = _apply_plate_categories(df)
 
         try:
             km = _read_database_table("combustivel_km", _COMBUSTIVEL_KM_COLUMNS)
@@ -676,6 +803,7 @@ def load_manutencao() -> pd.DataFrame:
             text_columns=["OFICINA"],
             plate_columns=["PLACA"],
         )
+        df = _apply_plate_categories(df)
         cache["mtime"] = version
         cache["df"] = df.copy()
         return df.copy()
@@ -810,6 +938,7 @@ def load_pedagio() -> pd.DataFrame:
             text_columns=["Tipo"],
             plate_columns=["PLACA"],
         )
+        df = _apply_plate_categories(df)
         if "Tipo" in df.columns:
             df["Tipo"] = df["Tipo"].apply(_normalize_tipo_value).astype("string")
         df["Tipo"] = df["Tipo"].fillna("Outros")
