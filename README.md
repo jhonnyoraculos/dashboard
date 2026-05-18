@@ -20,11 +20,13 @@ Dashboard operacional da JR Ferragens & Madeiras em Streamlit.
    set DATABASE_URL=postgresql://usuario:senha@host/db?sslmode=require
    ```
 
-   No Streamlit Cloud, coloque a mesma chave em `Secrets`:
+No Streamlit Cloud, coloque a mesma chave em `Secrets`:
    ```toml
    DATABASE_URL = "postgresql://usuario:senha@host/db?sslmode=require"
    JR_DATA_SOURCE = "database"
    ```
+
+Sem esse Secret no Streamlit Cloud, o app nao consegue ler o Neon e os dados ficam indisponiveis.
 
 4. Importe os dados das planilhas para o Neon:
    ```bash

@@ -119,6 +119,10 @@ def _data_source_mode() -> str:
     return "auto"
 
 
+def _excel_files_available() -> bool:
+    return all(path.exists() for path in (DATA_COMB, DATA_MANU, DATA_HOTEIS, DATA_PEDAGIO))
+
+
 def _should_use_database() -> bool:
     mode = _data_source_mode()
     if mode in {"excel", "xlsx", "planilha", "file", "files"}:
@@ -127,7 +131,14 @@ def _should_use_database() -> bool:
         if not _database_url():
             raise RuntimeError("JR_DATA_SOURCE=database exige DATABASE_URL/NEON_DATABASE_URL.")
         return True
-    return bool(_database_url())
+    if _database_url():
+        return True
+    if _excel_files_available():
+        return False
+    raise RuntimeError(
+        "DATABASE_URL/NEON_DATABASE_URL nao configurada. "
+        "As planilhas foram removidas do repositorio, entao o app precisa ler do Neon."
+    )
 
 
 def _db_metadata(key: str, default=None):

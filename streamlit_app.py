@@ -2373,7 +2373,7 @@ def main() -> None:
         else:
             render_home()
     except Exception as exc:
-        st.error("Não foi possível carregar este dashboard. Verifique se as planilhas estão fechadas e tente novamente.")
+        st.error("Não foi possível carregar este dashboard. Configure o DATABASE_URL do Neon nos Secrets do Streamlit e tente novamente.")
         st.exception(exc)
 
 
