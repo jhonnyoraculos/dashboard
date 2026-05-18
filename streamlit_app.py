@@ -2302,6 +2302,20 @@ def _save_registered_plate(placa: str, categoria: str) -> bool:
     return True
 
 
+def _edit_registered_plate(old_plate: str, new_plate: str, categoria: str) -> bool:
+    if not old_plate or not new_plate:
+        st.warning("Selecione a placa e informe o nome correto.")
+        return False
+    try:
+        backend.rename_plate(old_plate, new_plate, categoria)
+    except Exception as exc:
+        st.error("Não foi possível editar a placa no Neon.")
+        st.exception(exc)
+        return False
+    st.success("Placa atualizada nos cadastros e lançamentos.")
+    return True
+
+
 def render_cadastro() -> None:
     topbar("JR DASHBOARD • Adicionar dados", back=True)
     with st.container(key="cadastro_shell"):
@@ -2329,10 +2343,12 @@ def render_cadastro() -> None:
             plate_map = _registered_plate_map()
             if plate_map:
                 with st.form("form_editar_placas", clear_on_submit=False):
-                    e1, e2, e3 = st.columns([1.2, 1.0, 1.0])
+                    e1, e2, e3, e4 = st.columns([1.05, 1.05, 0.9, 1.0])
                     with e1:
                         placa_editar = st.selectbox("Editar placa cadastrada", list(plate_map.keys()), key="cad_placa_editar")
                     with e2:
+                        nova_placa = st.text_input("Nome correto da placa", value=placa_editar, key="cad_placa_nome_editar").upper()
+                    with e3:
                         categoria_atual = plate_map.get(placa_editar, "Transporte")
                         categoria_index = 1 if categoria_atual == "Vex" else 0
                         categoria_editar = st.selectbox(
@@ -2341,17 +2357,11 @@ def render_cadastro() -> None:
                             index=categoria_index,
                             key="cad_placa_categoria_editar",
                         )
-                    with e3:
+                    with e4:
                         st.write("")
                         edit_submitted = st.form_submit_button("Salvar edição", type="primary", width="stretch")
                     if edit_submitted:
-                        _save_entry(
-                            "placas",
-                            {"PLACA": placa_editar, "Categoria": categoria_editar},
-                            required=["PLACA", "Categoria"],
-                            replace_keys=["PLACA"],
-                            success="Placa atualizada.",
-                        )
+                        _edit_registered_plate(placa_editar, nova_placa, categoria_editar)
 
                 table = pd.DataFrame(
                     [{"Placa": placa, "Categoria": categoria} for placa, categoria in plate_map.items()]

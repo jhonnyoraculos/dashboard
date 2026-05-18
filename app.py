@@ -335,6 +335,47 @@ def save_dashboard_record(dataset: str, row: dict, *, replace_keys: list[str] | 
     return version
 
 
+def rename_plate(old_plate, new_plate, categoria: str) -> str:
+    old_value = _normalize_plate_value(old_plate)
+    new_value = _normalize_plate_value(new_plate)
+    if not _is_plate_identifier(old_value):
+        raise ValueError("Placa original invalida.")
+    if not _is_plate_identifier(new_value):
+        raise ValueError("Nova placa invalida.")
+
+    categoria_value = "Vex" if str(categoria or "").strip().lower() == "vex" else "Transporte"
+    version = datetime.now(timezone.utc).isoformat()
+
+    from sqlalchemy import text
+
+    with _db_engine().begin() as conn:
+        _ensure_dataset_table(conn, "placas")
+        for dataset in ("combustivel", "combustivel_km", "manutencao", "pedagio"):
+            table = _quote_identifier(DB_TABLES[dataset])
+            conn.execute(
+                text(f"UPDATE {table} SET \"PLACA\" = :new_plate WHERE \"PLACA\" = :old_plate"),
+                {"new_plate": new_value, "old_plate": old_value},
+            )
+            if dataset != "combustivel_km":
+                conn.execute(
+                    text(f"UPDATE {table} SET \"Categoria\" = :categoria WHERE \"PLACA\" = :new_plate"),
+                    {"new_plate": new_value, "categoria": categoria_value},
+                )
+            _write_metadata(conn, f"{dataset}.version", version)
+
+        placas_table = _quote_identifier(DB_TABLES["placas"])
+        conn.execute(text(f"DELETE FROM {placas_table} WHERE \"PLACA\" IN (:old_plate, :new_plate)"), {"old_plate": old_value, "new_plate": new_value})
+        conn.execute(
+            text(f"INSERT INTO {placas_table} (\"PLACA\", \"Categoria\") VALUES (:placa, :categoria)"),
+            {"placa": new_value, "categoria": categoria_value},
+        )
+        _write_metadata(conn, "placas.version", version)
+        _write_metadata(conn, "import.version", version)
+
+    _clear_dataset_cache("placas")
+    return version
+
+
 def _normalize_ascii(value):
     if pd.isna(value):
         return value
