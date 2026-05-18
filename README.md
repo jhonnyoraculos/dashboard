@@ -1,6 +1,6 @@
 # JR Dashboard em Streamlit
 
-Dashboard operacional da JR Ferragens & Madeiras em Streamlit, reutilizando a mesma leitura e limpeza das planilhas do app Flask original.
+Dashboard operacional da JR Ferragens & Madeiras em Streamlit.
 
 ## Como rodar
 
@@ -10,25 +10,51 @@ Dashboard operacional da JR Ferragens & Madeiras em Streamlit, reutilizando a me
    .venv\Scripts\activate
    ```
 
-2. Instale as dependências:
+2. Instale as dependencias:
    ```bash
    pip install -r requirements.txt
    ```
 
-3. Inicie o Streamlit:
+3. Configure a connection string do Neon:
+   ```bash
+   set DATABASE_URL=postgresql://usuario:senha@host/db?sslmode=require
+   ```
+
+   No Streamlit Cloud, coloque a mesma chave em `Secrets`:
+   ```toml
+   DATABASE_URL = "postgresql://usuario:senha@host/db?sslmode=require"
+   JR_DATA_SOURCE = "database"
+   ```
+
+4. Importe os dados das planilhas para o Neon:
+   ```bash
+   python scripts/import_to_neon.py
+   ```
+
+5. Inicie o Streamlit:
    ```bash
    streamlit run streamlit_app.py
    ```
 
-4. Abra o endereço mostrado no terminal, normalmente `http://localhost:8501`.
-
 ## Dados
 
-As planilhas em `data/` continuam sendo a fonte dos indicadores:
+O app agora le do Neon/Postgres quando `DATABASE_URL` ou `NEON_DATABASE_URL` esta configurada.
+
+As planilhas em `data/` ficam apenas como fonte de importacao inicial ou recarga manual:
 
 - `combustivel.xlsx`
 - `manutencao.xlsx`
 - `reserva de hoteis.xlsx`
 - `pedagio seguro e ipva.xlsx`
 
-O arquivo `app.py` foi preservado como backend de leitura, normalização e agregação. A interface Streamlit fica em `streamlit_app.py`.
+Para forcar leitura das planilhas localmente, use:
+
+```bash
+set JR_DATA_SOURCE=excel
+```
+
+Para obrigar leitura do banco, use:
+
+```bash
+set JR_DATA_SOURCE=database
+```

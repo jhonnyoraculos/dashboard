@@ -53,6 +53,123 @@ _CACHE_MAP = {
     "hoteis": _HOTEIS_CACHE,
     "pedagio": _PEDAGIO_CACHE,
 }
+DB_TABLES = {
+    "combustivel": "dashboard_combustivel",
+    "combustivel_km": "dashboard_combustivel_km",
+    "manutencao": "dashboard_manutencao",
+    "hoteis": "dashboard_hoteis",
+    "pedagio": "dashboard_pedagio",
+}
+DB_METADATA_TABLE = "dashboard_metadata"
+_DB_ENGINE = None
+
+
+def _database_url() -> str | None:
+    for key in ("DATABASE_URL", "NEON_DATABASE_URL"):
+        value = os.environ.get(key)
+        if value:
+            return value.strip()
+    try:
+        import streamlit as st
+
+        for key in ("DATABASE_URL", "NEON_DATABASE_URL"):
+            value = st.secrets.get(key)
+            if value:
+                return str(value).strip()
+    except Exception:
+        pass
+    return None
+
+
+def _normalize_database_url(url: str) -> str:
+    if url.startswith("postgresql+"):
+        return url
+    if url.startswith("postgresql://"):
+        return f"postgresql+psycopg://{url[len('postgresql://'):]}"
+    if url.startswith("postgres://"):
+        return f"postgresql+psycopg://{url[len('postgres://'):]}"
+    return url
+
+
+def _db_engine():
+    global _DB_ENGINE
+    url = _database_url()
+    if not url:
+        raise RuntimeError("DATABASE_URL nao configurada para ler o banco Neon.")
+    normalized_url = _normalize_database_url(url)
+    if _DB_ENGINE is None:
+        from sqlalchemy import create_engine
+
+        _DB_ENGINE = create_engine(normalized_url, pool_pre_ping=True)
+    return _DB_ENGINE
+
+
+def _data_source_mode() -> str:
+    value = os.environ.get("JR_DATA_SOURCE")
+    if value:
+        return value.strip().lower()
+    try:
+        import streamlit as st
+
+        value = st.secrets.get("JR_DATA_SOURCE")
+        if value:
+            return str(value).strip().lower()
+    except Exception:
+        pass
+    return "auto"
+
+
+def _should_use_database() -> bool:
+    mode = _data_source_mode()
+    if mode in {"excel", "xlsx", "planilha", "file", "files"}:
+        return False
+    if mode in {"database", "db", "postgres", "postgresql", "neon"}:
+        if not _database_url():
+            raise RuntimeError("JR_DATA_SOURCE=database exige DATABASE_URL/NEON_DATABASE_URL.")
+        return True
+    return bool(_database_url())
+
+
+def _db_metadata(key: str, default=None):
+    try:
+        from sqlalchemy import text
+
+        query = text(f'SELECT value_json FROM "{DB_METADATA_TABLE}" WHERE "key" = :key')
+        rows = pd.read_sql_query(query, _db_engine(), params={"key": key})
+    except Exception:
+        return default
+    if rows.empty:
+        return default
+    try:
+        import json
+
+        return json.loads(rows.iloc[0]["value_json"])
+    except Exception:
+        return default
+
+
+def _db_version(dataset: str):
+    return _db_metadata(f"{dataset}.version", _db_metadata("import.version", "database"))
+
+
+def _read_database_table(dataset: str, columns: list[str], *, date_columns: list[str] | None = None) -> pd.DataFrame:
+    table = DB_TABLES[dataset]
+    try:
+        from sqlalchemy import text
+
+        df = pd.read_sql_query(text(f'SELECT * FROM "{table}"'), _db_engine())
+    except Exception as exc:
+        raise RuntimeError(f'Tabela "{table}" nao encontrada no Neon. Rode scripts/import_to_neon.py antes de abrir o app.') from exc
+    for column in columns:
+        if column not in df.columns:
+            df[column] = pd.NA
+    if date_columns:
+        for column in date_columns:
+            if column in df.columns:
+                df[column] = pd.to_datetime(df[column], errors="coerce")
+    df = df[columns + [column for column in df.columns if column not in columns]]
+    df.attrs["anos_sheets"] = _db_metadata(f"{dataset}.anos_sheets", [])
+    return df.copy()
 
 
 def _clean_columns(df: pd.DataFrame) -> pd.DataFrame:
@@ -413,6 +530,30 @@ def load_combustivel() -> pd.DataFrame:
             "Categoria",
         ])
 
+    if _should_use_database():
+        cache = _COMBUSTIVEL_CACHE
+        lock = cache["lock"]
+        with lock:
+            version = _db_version("combustivel")
+            cached = cache.get("df")
+            if cached is not None and cache.get("mtime") == version:
+                return cached.copy()
+            df = _read_database_table(
+                "combustivel",
+                ["Data", "Mes", "Km Rodados", "Litros", "Custo", "Combustivel", "POSTOS", "PLACA", "Categoria"],
+                date_columns=["Data"],
+            )
+            try:
+                cache["km_rodados_mensal"] = _read_database_table(
+                    "combustivel_km",
+                    ["Mes", "PLACA", "Km Rodados"],
+                )
+            except RuntimeError:
+                cache["km_rodados_mensal"] = pd.DataFrame(columns=["Mes", "PLACA", "Km Rodados"])
+            cache["mtime"] = version
+            cache["df"] = df.copy()
+            return df.copy()
+
     def _read_km_rodados(path: Path) -> pd.DataFrame:
         try:
             raw = pd.read_excel(path, sheet_name="KM RODADOS", header=None, dtype=str)
@@ -611,6 +752,23 @@ def load_manutencao() -> pd.DataFrame:
             "Categoria",
         ])
 
+    if _should_use_database():
+        cache = _MANUTENCAO_CACHE
+        lock = cache["lock"]
+        with lock:
+            version = _db_version("manutencao")
+            cached = cache.get("df")
+            if cached is not None and cache.get("mtime") == version:
+                return cached.copy()
+            df = _read_database_table(
+                "manutencao",
+                ["Data", "Mes", "Custo", "PLACA", "OFICINA", "Categoria"],
+                date_columns=["Data"],
+            )
+            cache["mtime"] = version
+            cache["df"] = df.copy()
+            return df.copy()
+
     cache = _MANUTENCAO_CACHE
     lock = cache["lock"]
 
@@ -762,6 +920,23 @@ def load_hoteis() -> pd.DataFrame:
             "Hotel",
             "Tipo",
         ])
+
+    if _should_use_database():
+        cache = _HOTEIS_CACHE
+        lock = cache["lock"]
+        with lock:
+            version = _db_version("hoteis")
+            cached = cache.get("df")
+            if cached is not None and cache.get("mtime") == version:
+                return cached.copy()
+            df = _read_database_table(
+                "hoteis",
+                ["Data", "Valor", "Dias", "Mes", "Motorista", "Ajudante", "Cidade", "Hotel", "Tipo", "Categoria"],
+                date_columns=["Data"],
+            )
+            cache["mtime"] = version
+            cache["df"] = df.copy()
+            return df.copy()
 
     cache = _HOTEIS_CACHE
     lock = cache["lock"]
@@ -1038,6 +1213,23 @@ def agg_hoteis(df: pd.DataFrame) -> dict:
 def load_pedagio() -> pd.DataFrame:
     def _empty() -> pd.DataFrame:
         return pd.DataFrame(columns=['PLACA', 'Tipo', 'Custo', 'Mes', 'Data', 'Categoria'])
+
+    if _should_use_database():
+        cache = _PEDAGIO_CACHE
+        lock = cache['lock']
+        with lock:
+            version = _db_version("pedagio")
+            cached_df = cache.get('df')
+            if cached_df is not None and cache.get('mtime') == version:
+                return cached_df.copy(deep=False)
+            df = _read_database_table(
+                "pedagio",
+                ["PLACA", "Tipo", "Custo", "Mes", "Data", "Categoria"],
+                date_columns=["Data"],
+            )
+            cache['mtime'] = version
+            cache['df'] = df.copy()
+            return df.copy(deep=False)
 
     cache = _PEDAGIO_CACHE
     lock = cache['lock']
