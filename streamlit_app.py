@@ -742,35 +742,88 @@ def inject_css() -> None:
 
         [class*="_dashboard_controls"] {{
           margin: 14px 0 22px;
-          padding: 16px;
+          padding: 0;
           border: 1px solid rgba(194,210,243,.85);
           border-radius: 14px;
           background: rgba(255,255,255,.70);
           box-shadow: 0 14px 34px rgba(16,24,40,.10);
           backdrop-filter: blur(12px);
+          overflow: hidden;
+        }}
+
+        [class*="_dashboard_controls"] details {{
+          border: 0 !important;
+          background: transparent !important;
+        }}
+
+        [class*="_dashboard_controls"] summary {{
+          min-height: 46px;
+          padding: 0 16px !important;
+          color: var(--jr-blue) !important;
+          font-weight: 800 !important;
+          border-bottom: 1px solid rgba(194,210,243,.72);
+        }}
+
+        [class*="_dashboard_controls"] details > div {{
+          padding: 14px 16px 16px;
+        }}
+
+        .control-row-label {{
+          margin: 2px 0 8px;
+          color: var(--muted);
+          font-size: 11px;
+          font-weight: 800;
+          letter-spacing: .06em;
+          text-transform: uppercase;
+        }}
+
+        .control-row-spacer {{
+          height: 12px;
         }}
 
         [class*="_dashboard_controls"] [data-testid="stHorizontalBlock"] {{
           gap: 10px;
           flex-wrap: wrap !important;
+          align-items: stretch;
+        }}
+
+        [class*="_dashboard_controls"] [data-testid="column"] {{
+          display: flex;
+          flex-direction: column;
+          justify-content: stretch;
+        }}
+
+        [class*="_dashboard_controls"] .stButton,
+        [class*="_dashboard_controls"] [data-testid="stDownloadButton"],
+        [class*="_dashboard_controls"] [data-testid="stCheckbox"] {{
+          width: 100%;
+        }}
+
+        [class*="_dashboard_controls"] .stButton > button,
+        [class*="_dashboard_controls"] [data-testid="stDownloadButton"] button {{
+          min-height: 40px;
         }}
 
         [class*="_dashboard_controls"] [data-testid="stCheckbox"] label {{
-          min-height: 36px;
+          width: 100%;
+          min-height: 44px;
           display: inline-flex;
           align-items: center;
+          justify-content: flex-start;
           gap: 8px;
-          padding: 7px 12px;
+          padding: 8px 12px;
           border: 1.5px solid var(--card-border);
           border-radius: 12px;
           background: rgba(248,249,255,.92);
           color: var(--jr-blue);
           box-shadow: 0 6px 12px rgba(16,24,40,0.08);
           font-weight: 800;
+          box-sizing: border-box;
         }}
 
         [class*="_dashboard_controls"] [data-testid="stCheckbox"] p {{
           font-size: 12px;
+          line-height: 1.2;
           font-weight: 800;
           color: var(--jr-blue);
         }}
@@ -884,6 +937,29 @@ def inject_css() -> None:
           .home-export-bar {{
             grid-template-columns: 1fr;
           }}
+
+          [class*="_dashboard_controls"] {{
+            margin: 10px 0 18px;
+          }}
+
+          [class*="_dashboard_controls"] summary {{
+            min-height: 42px;
+            padding: 0 12px !important;
+          }}
+
+          [class*="_dashboard_controls"] details > div {{
+            padding: 12px;
+          }}
+
+          [class*="_dashboard_controls"] [data-testid="column"] {{
+            flex: 1 1 calc(50% - 8px) !important;
+            min-width: min(180px, 100%) !important;
+          }}
+
+          [class*="_dashboard_controls"] [data-testid="stCheckbox"] label {{
+            min-height: 40px;
+            padding: 7px 10px;
+          }}
         }}
 
         @media (max-width: 560px) {{
@@ -907,6 +983,11 @@ def inject_css() -> None:
             padding-left: 8px;
             padding-right: 8px;
             font-size: 12px;
+          }}
+
+          [class*="_dashboard_controls"] [data-testid="column"] {{
+            flex: 1 1 100% !important;
+            min-width: 100% !important;
           }}
         }}
         </style>
@@ -1741,88 +1822,93 @@ def dashboard_controls(
         st.session_state.pop(export_ready_key, None)
 
     with st.container(key=f"{key_prefix}_dashboard_controls"):
-        buttons = st.columns(6)
-        export_jobs = [
-            ("cards_png", "Cards PNG", "cards", "png"),
-            ("cards_pdf", "Cards PDF", "cards", "pdf"),
-            ("charts_png", "Gráficos PNG", "graficos", "png"),
-            ("charts_pdf", "Gráficos PDF", "graficos", "pdf"),
-            ("page_png", "Página PNG", "pagina", "png"),
-            ("page_pdf", "Página PDF", "pagina", "pdf"),
-        ]
-        selected_kpis_preview = [
-            (label, value)
-            for item_id, label, value in kpis
-            if st.session_state.get(f"{key_prefix}_visible_{item_id}", True)
-        ]
-        selected_charts_preview = [
-            (chart_title, fig)
-            for item_id, chart_title, fig in charts
-            if st.session_state.get(f"{key_prefix}_visible_{item_id}", True)
-        ]
+        with st.expander("Controles", expanded=True):
+            export_jobs = [
+                ("cards_png", "Cards PNG", "cards", "png"),
+                ("cards_pdf", "Cards PDF", "cards", "pdf"),
+                ("charts_png", "Gráficos PNG", "graficos", "png"),
+                ("charts_pdf", "Gráficos PDF", "graficos", "pdf"),
+                ("page_png", "Página PNG", "pagina", "png"),
+                ("page_pdf", "Página PDF", "pagina", "pdf"),
+            ]
+            selected_kpis_preview = [
+                (label, value)
+                for item_id, label, value in kpis
+                if st.session_state.get(f"{key_prefix}_visible_{item_id}", True)
+            ]
+            selected_charts_preview = [
+                (chart_title, fig)
+                for item_id, chart_title, fig in charts
+                if st.session_state.get(f"{key_prefix}_visible_{item_id}", True)
+            ]
 
-        for col, (job_id, label, scope, ext) in zip(buttons, export_jobs):
-            with col:
-                if st.button(clean_text(label), key=f"{key_prefix}_export_{job_id}", width="stretch"):
-                    include_cards = scope == "cards" or (scope == "pagina" and not st.session_state[hide_cards_key])
-                    include_charts = scope == "graficos" or (scope == "pagina" and not st.session_state[hide_charts_key])
-                    if not include_cards and not include_charts:
-                        st.warning("Nada selecionado para exportar.")
-                    elif include_cards and not selected_kpis_preview and not include_charts:
-                        st.warning("Nenhum card selecionado para exportar.")
-                    elif include_charts and not selected_charts_preview and not include_cards:
-                        st.warning("Nenhum gráfico selecionado para exportar.")
-                    elif include_cards and include_charts and not selected_kpis_preview and not selected_charts_preview:
-                        st.warning("Nenhum item selecionado para exportar.")
-                    else:
-                        with st.spinner("Gerando arquivo..."):
-                            image = compose_export_image(
-                                selected_kpis_preview,
-                                selected_charts_preview,
-                                title=title,
-                                include_cards=include_cards,
-                                include_charts=include_charts,
-                            )
-                            data = image_to_png_bytes(image) if ext == "png" else image_to_pdf_bytes(image)
-                            st.session_state[export_ready_key] = {
-                                "data": data,
-                                "file_name": export_file_name(key_prefix, scope, ext),
-                                "mime": "image/png" if ext == "png" else "application/pdf",
-                                "version": APP_VERSION,
-                            }
-
-        toggles = st.columns(2)
-        with toggles[0]:
-            toggle_label = "Mostrar cards" if st.session_state[hide_cards_key] else "Ocultar cards"
-            if st.button(clean_text(toggle_label), key=f"{key_prefix}_toggle_cards", width="stretch"):
-                st.session_state[hide_cards_key] = not st.session_state[hide_cards_key]
-                st.rerun()
-        with toggles[1]:
-            toggle_label = "Mostrar gráficos" if st.session_state[hide_charts_key] else "Ocultar gráficos"
-            if st.button(clean_text(toggle_label), key=f"{key_prefix}_toggle_charts", width="stretch"):
-                st.session_state[hide_charts_key] = not st.session_state[hide_charts_key]
-                st.rerun()
-
-        ready = st.session_state.get(export_ready_key)
-        if ready:
-            st.download_button(
-                "Baixar arquivo gerado",
-                data=ready["data"],
-                file_name=ready["file_name"],
-                mime=ready["mime"],
-                key=f"{key_prefix}_download_ready",
-                width="stretch",
-            )
-
-        checkbox_items = [("cards", item_id, label) for item_id, label, _ in kpis]
-        checkbox_items.extend(("charts", item_id, label) for item_id, label, _ in charts)
-        for index in range(0, len(checkbox_items), 8):
-            cols = st.columns(min(8, len(checkbox_items) - index))
-            for col, (_, item_id, label) in zip(cols, checkbox_items[index : index + 8]):
-                state_key = f"{key_prefix}_visible_{item_id}"
-                st.session_state.setdefault(state_key, True)
+            st.markdown('<div class="control-row-label">Exportar</div>', unsafe_allow_html=True)
+            buttons = st.columns(6)
+            for col, (job_id, label, scope, ext) in zip(buttons, export_jobs):
                 with col:
-                    st.checkbox(clean_text(label), key=state_key)
+                    if st.button(clean_text(label), key=f"{key_prefix}_export_{job_id}", width="stretch"):
+                        include_cards = scope == "cards" or (scope == "pagina" and not st.session_state[hide_cards_key])
+                        include_charts = scope == "graficos" or (scope == "pagina" and not st.session_state[hide_charts_key])
+                        if not include_cards and not include_charts:
+                            st.warning("Nada selecionado para exportar.")
+                        elif include_cards and not selected_kpis_preview and not include_charts:
+                            st.warning("Nenhum card selecionado para exportar.")
+                        elif include_charts and not selected_charts_preview and not include_cards:
+                            st.warning("Nenhum gráfico selecionado para exportar.")
+                        elif include_cards and include_charts and not selected_kpis_preview and not selected_charts_preview:
+                            st.warning("Nenhum item selecionado para exportar.")
+                        else:
+                            with st.spinner("Gerando arquivo..."):
+                                image = compose_export_image(
+                                    selected_kpis_preview,
+                                    selected_charts_preview,
+                                    title=title,
+                                    include_cards=include_cards,
+                                    include_charts=include_charts,
+                                )
+                                data = image_to_png_bytes(image) if ext == "png" else image_to_pdf_bytes(image)
+                                st.session_state[export_ready_key] = {
+                                    "data": data,
+                                    "file_name": export_file_name(key_prefix, scope, ext),
+                                    "mime": "image/png" if ext == "png" else "application/pdf",
+                                    "version": APP_VERSION,
+                                }
+
+            ready = st.session_state.get(export_ready_key)
+            if ready:
+                st.download_button(
+                    "Baixar arquivo gerado",
+                    data=ready["data"],
+                    file_name=ready["file_name"],
+                    mime=ready["mime"],
+                    key=f"{key_prefix}_download_ready",
+                    width="stretch",
+                )
+
+            st.markdown('<div class="control-row-spacer"></div><div class="control-row-label">Exibir</div>', unsafe_allow_html=True)
+            toggles = st.columns(2)
+            with toggles[0]:
+                toggle_label = "Mostrar cards" if st.session_state[hide_cards_key] else "Ocultar cards"
+                if st.button(clean_text(toggle_label), key=f"{key_prefix}_toggle_cards", width="stretch"):
+                    st.session_state[hide_cards_key] = not st.session_state[hide_cards_key]
+                    st.rerun()
+            with toggles[1]:
+                toggle_label = "Mostrar gráficos" if st.session_state[hide_charts_key] else "Ocultar gráficos"
+                if st.button(clean_text(toggle_label), key=f"{key_prefix}_toggle_charts", width="stretch"):
+                    st.session_state[hide_charts_key] = not st.session_state[hide_charts_key]
+                    st.rerun()
+
+            st.markdown('<div class="control-row-spacer"></div><div class="control-row-label">Itens</div>', unsafe_allow_html=True)
+            checkbox_items = [("cards", item_id, label) for item_id, label, _ in kpis]
+            checkbox_items.extend(("charts", item_id, label) for item_id, label, _ in charts)
+            checkbox_cols = 4
+            for index in range(0, len(checkbox_items), checkbox_cols):
+                cols = st.columns(checkbox_cols)
+                for col, (_, item_id, label) in zip(cols, checkbox_items[index : index + checkbox_cols]):
+                    state_key = f"{key_prefix}_visible_{item_id}"
+                    st.session_state.setdefault(state_key, True)
+                    with col:
+                        st.checkbox(clean_text(label), key=state_key)
 
     show_cards = not st.session_state[hide_cards_key]
     show_charts = not st.session_state[hide_charts_key]
