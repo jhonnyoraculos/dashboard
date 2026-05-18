@@ -1822,7 +1822,7 @@ def dashboard_controls(
         st.session_state.pop(export_ready_key, None)
 
     with st.container(key=f"{key_prefix}_dashboard_controls"):
-        with st.expander("Controles", expanded=True):
+        with st.expander("Controles", expanded=False):
             export_jobs = [
                 ("cards_png", "Cards PNG", "cards", "png"),
                 ("cards_pdf", "Cards PDF", "cards", "pdf"),
