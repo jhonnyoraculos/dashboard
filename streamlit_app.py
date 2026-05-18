@@ -6,7 +6,6 @@ import os
 from io import BytesIO
 from datetime import date
 from pathlib import Path
-from urllib.parse import urlencode
 
 os.environ.setdefault("JR_SKIP_WARM_CACHE", "1")
 
@@ -50,12 +49,12 @@ MONTH_NAMES = [
 MONTH_ABBR = ["jan", "fev", "mar", "abr", "mai", "jun", "jul", "ago", "set", "out", "nov", "dez"]
 
 ROUTES = {
-    "combustivel": ("/data/combustivel", backend.data_comb),
-    "manutencao": ("/data/manutencao", backend.data_manu),
-    "hoteis": ("/data/hoteis", backend.data_hoteis),
-    "pedagio": ("/data/pedagio", backend.data_pedagio),
-    "vex": ("/data/vex", backend.data_vex),
-    "overview": ("/data/overview", backend.data_overview),
+    "combustivel": backend.data_comb,
+    "manutencao": backend.data_manu,
+    "hoteis": backend.data_hoteis,
+    "pedagio": backend.data_pedagio,
+    "vex": backend.data_vex,
+    "overview": backend.data_overview,
 }
 
 
@@ -997,7 +996,7 @@ def inject_css() -> None:
 
 
 def route_json(route: str, params: dict[str, object] | None = None) -> dict:
-    path, func = ROUTES[route]
+    func = ROUTES[route]
     params = params or {}
     clean_params: dict[str, object] = {}
     for key, value in params.items():
@@ -1007,11 +1006,7 @@ def route_json(route: str, params: dict[str, object] | None = None) -> dict:
             clean_params[key] = [item for item in value if item is not None]
         elif value != "":
             clean_params[key] = value
-    query = urlencode(clean_params, doseq=True)
-    target = f"{path}?{query}" if query else path
-    with backend.app.test_request_context(target):
-        response = func()
-    return response.get_json() or {}
+    return func(clean_params) or {}
 
 
 def page_param() -> str:
@@ -1405,9 +1400,7 @@ def pie_chart(labels: list, values: list) -> go.Figure:
 
 
 def report_font(size: int, *, bold: bool = False) -> ImageFont.ImageFont:
-    local_font = Path(__file__).parent / "static" / "fonts" / ("NotoSans-Bold.ttf" if bold else "NotoSans-Regular.ttf")
     candidates = [
-        str(local_font),
         "arialbd.ttf" if bold else "arial.ttf",
         "segoeuib.ttf" if bold else "segoeui.ttf",
         "DejaVuSans-Bold.ttf" if bold else "DejaVuSans.ttf",
@@ -1561,7 +1554,7 @@ def compose_home_export_image(
         draw.text((margin + 84, y + 4), "Dashboards operacionais", font=report_font(36, bold=True), fill=JR_BLUE)
         draw_wrapped_text(
             draw,
-            "Monitoramento consolidado das planilhas JR.",
+            "Monitoramento consolidado do JR Dashboard.",
             (margin + 84, y + 56),
             font=report_font(20),
             fill=MUTED,
@@ -2030,7 +2023,7 @@ def render_home() -> None:
             <div>
               <p class="home-eyebrow">JR Ferragens &amp; Madeiras</p>
               <h1>Dashboards operacionais</h1>
-              <p class="home-subtitle">Monitore combustível, manutenção, hospedagens e despesas de pedágio/seguro/IPVA em tempo real, com dados limpos diretamente das planilhas da JR.</p>
+              <p class="home-subtitle">Monitore combustível, manutenção, hospedagens e despesas de pedágio/seguro/IPVA em tempo real, com dados centralizados no Neon.</p>
             </div>
           </div>
           <a class="home-cta" href="#dashboards">Explorar dashboards</a>
@@ -2070,9 +2063,9 @@ def render_home() -> None:
     if meses != ["Todos"]:
         month_text = ", ".join(MONTH_NAMES[int(item) - 1] for item in meses)
         filter_text = f"Filtro aplicado: {month_text}/{ano}." if ano != "Todos" else f"Filtro aplicado: {month_text}."
-    suffix = filter_text or "Cálculo baseado nos dados mais recentes das quatro planilhas."
+    suffix = filter_text or "Cálculo baseado nos dados mais recentes do banco."
     home_total_cards = [
-        ("Gasto consolidado (todas as planilhas)", fmt_brl(overview.get("total_geral")), suffix),
+        ("Gasto consolidado", fmt_brl(overview.get("total_geral")), suffix),
         ("Gasto transporte", fmt_brl(overview.get("total_transporte")), 'Somatório das despesas marcadas como "Transporte".'),
         ("Gasto Vex", fmt_brl(overview.get("total_vex")), 'Somatório das despesas marcadas como "Vex".'),
     ]
@@ -2166,10 +2159,6 @@ def render_home() -> None:
             <a class="home-link" href="?page=vex" target="_self">Abrir dashboard &rarr;</a>
           </article>
         </section>
-        <section class="home-footer">
-          <h3>Como os dados são atualizados?</h3>
-          <p>As planilhas <code>combustivel.xlsx</code>, <code>manutencao.xlsx</code>, <code>reserva de hoteis.xlsx</code> e <code>pedagio seguro e ipva.xlsx</code> são importadas a cada acesso. Basta atualizar os arquivos em <code>/data</code> para refletir os novos indicadores.</p>
-        </section>
         </main>
         """,
         unsafe_allow_html=True,
@@ -2214,7 +2203,7 @@ def render_combustivel() -> None:
         ("litros_mes", "Litros por mês", bar_chart(litros_labels, litros_values, currency=False, show_text=True)),
     ]
     render_controlled_dashboard("comb", title="JR Dashboard - Combustível", kpis=kpis, charts=charts)
-    footer("Atualizado automaticamente a partir da planilha em data/combustivel.xlsx. © JR")
+    footer("Dados atualizados pelo Neon. © JR")
 
 
 def render_manutencao() -> None:
@@ -2245,7 +2234,7 @@ def render_manutencao() -> None:
         ("gasto_semana", "Gasto semanal (últimos 7 dias)", bar_chart(data.get("custo_semana", {}).get("Dia", []), data.get("custo_semana", {}).get("Custo", []))),
     ]
     render_controlled_dashboard("manu", title="JR Dashboard - Manutenção", kpis=kpis, charts=charts)
-    footer("Atualizado automaticamente a partir da planilha em data/manutencao.xlsx. © JR")
+    footer("Dados atualizados pelo Neon. © JR")
 
 
 def render_hoteis() -> None:
@@ -2282,7 +2271,7 @@ def render_hoteis() -> None:
         ("valor_hotel", "Valor por hotel/pousada", bar_chart(data.get("valor_por_hotel", {}).get("Hotel", []), data.get("valor_por_hotel", {}).get("Valor", []), horizontal=True, sort_desc=True, show_text=True)),
     ]
     render_controlled_dashboard("hotel", title="JR Dashboard - Reservas de Hotéis", kpis=kpis, charts=charts)
-    footer("Atualizado automaticamente a partir da planilha em data/reserva de hoteis.xlsx. © JR")
+    footer("Dados atualizados pelo Neon. © JR")
 
 
 def render_pedagio() -> None:
@@ -2317,7 +2306,7 @@ def render_pedagio() -> None:
         ("gasto_segmento", "Gasto por segmento", bar_chart(data.get("gasto_por_categoria", {}).get("Categoria", []), data.get("gasto_por_categoria", {}).get("Custo", []))),
     ]
     render_controlled_dashboard("ped", title="JR Dashboard - Pedágio, Seguro e IPVA", kpis=kpis, charts=charts)
-    footer("Atualizado automaticamente a partir da planilha em data/pedagio seguro e ipva.xlsx. © JR")
+    footer("Dados atualizados pelo Neon. © JR")
 
 
 def render_vex() -> None:
@@ -2348,7 +2337,7 @@ def render_vex() -> None:
         ("gasto_placa", "Gasto Vex por placa", bar_chart(data.get("gasto_por_placa", {}).get("PLACA", []), data.get("gasto_por_placa", {}).get("Valor", []), horizontal=True, sort_desc=True, show_text=True)),
     ]
     render_controlled_dashboard("vex", title="JR Dashboard - Vex", kpis=kpis, charts=charts)
-    footer("Dados Vex consolidados a partir das planilhas em /data. © JR")
+    footer("Dados Vex consolidados pelo Neon. © JR")
 
 
 def footer(text: str) -> None:

@@ -1,14 +1,14 @@
-from flask import Flask, render_template, jsonify, request
-import io
+from __future__ import annotations
+
+import concurrent.futures
+import json
 import os
 import re
 import threading
-import zipfile
-import concurrent.futures
-import pandas as pd
 import unicodedata
 from collections import defaultdict
-from pathlib import Path
+
+import pandas as pd
 
 
 STREAMLIT_APP_MODULE = "streamlit_app"
@@ -26,8 +26,6 @@ def _running_as_streamlit_entrypoint() -> bool:
 
 if _running_as_streamlit_entrypoint():
     os.environ.setdefault("JR_SKIP_WARM_CACHE", "1")
-    # Streamlit Cloud may be configured to run app.py. Keep this shim pointing
-    # at the real Streamlit interface so changes in streamlit_app.py go live.
     from streamlit_app import main as streamlit_main
     import streamlit as st
 
@@ -35,13 +33,16 @@ if _running_as_streamlit_entrypoint():
     st.stop()
 
 
-app = Flask(__name__)
+DB_TABLES = {
+    "combustivel": "dashboard_combustivel",
+    "combustivel_km": "dashboard_combustivel_km",
+    "manutencao": "dashboard_manutencao",
+    "hoteis": "dashboard_hoteis",
+    "pedagio": "dashboard_pedagio",
+}
+DB_METADATA_TABLE = "dashboard_metadata"
+_DB_ENGINE = None
 
-BASE_PATH = Path(__file__).parent / "data"
-DATA_COMB = BASE_PATH / "combustivel.xlsx"
-DATA_MANU = BASE_PATH / "manutencao.xlsx"
-DATA_HOTEIS = BASE_PATH / "reserva de hoteis.xlsx"
-DATA_PEDAGIO = BASE_PATH / "pedagio seguro e ipva.xlsx"
 _PEDAGIO_CACHE = {"mtime": None, "df": None, "lock": threading.Lock()}
 _COMBUSTIVEL_CACHE = {"mtime": None, "df": None, "lock": threading.Lock()}
 _MANUTENCAO_CACHE = {"mtime": None, "df": None, "lock": threading.Lock()}
@@ -53,15 +54,33 @@ _CACHE_MAP = {
     "hoteis": _HOTEIS_CACHE,
     "pedagio": _PEDAGIO_CACHE,
 }
-DB_TABLES = {
-    "combustivel": "dashboard_combustivel",
-    "combustivel_km": "dashboard_combustivel_km",
-    "manutencao": "dashboard_manutencao",
-    "hoteis": "dashboard_hoteis",
-    "pedagio": "dashboard_pedagio",
-}
-DB_METADATA_TABLE = "dashboard_metadata"
-_DB_ENGINE = None
+
+_COMBUSTIVEL_COLUMNS = [
+    "Data",
+    "Mes",
+    "Km Rodados",
+    "Litros",
+    "Custo",
+    "Combustivel",
+    "POSTOS",
+    "PLACA",
+    "Categoria",
+]
+_COMBUSTIVEL_KM_COLUMNS = ["Mes", "PLACA", "Km Rodados"]
+_MANUTENCAO_COLUMNS = ["Data", "Mes", "Custo", "PLACA", "OFICINA", "Categoria"]
+_HOTEIS_COLUMNS = [
+    "Data",
+    "Valor",
+    "Dias",
+    "Mes",
+    "Motorista",
+    "Ajudante",
+    "Cidade",
+    "Hotel",
+    "Tipo",
+    "Categoria",
+]
+_PEDAGIO_COLUMNS = ["PLACA", "Tipo", "Custo", "Mes", "Data", "Categoria"]
 
 
 def _database_url() -> str | None:
@@ -95,50 +114,12 @@ def _db_engine():
     global _DB_ENGINE
     url = _database_url()
     if not url:
-        raise RuntimeError("DATABASE_URL nao configurada para ler o banco Neon.")
-    normalized_url = _normalize_database_url(url)
+        raise RuntimeError("DATABASE_URL/NEON_DATABASE_URL nao configurada. Configure o Secret do Neon no Streamlit.")
     if _DB_ENGINE is None:
         from sqlalchemy import create_engine
 
-        _DB_ENGINE = create_engine(normalized_url, pool_pre_ping=True)
+        _DB_ENGINE = create_engine(_normalize_database_url(url), pool_pre_ping=True)
     return _DB_ENGINE
-
-
-def _data_source_mode() -> str:
-    value = os.environ.get("JR_DATA_SOURCE")
-    if value:
-        return value.strip().lower()
-    try:
-        import streamlit as st
-
-        value = st.secrets.get("JR_DATA_SOURCE")
-        if value:
-            return str(value).strip().lower()
-    except Exception:
-        pass
-    return "auto"
-
-
-def _excel_files_available() -> bool:
-    return all(path.exists() for path in (DATA_COMB, DATA_MANU, DATA_HOTEIS, DATA_PEDAGIO))
-
-
-def _should_use_database() -> bool:
-    mode = _data_source_mode()
-    if mode in {"excel", "xlsx", "planilha", "file", "files"}:
-        return False
-    if mode in {"database", "db", "postgres", "postgresql", "neon"}:
-        if not _database_url():
-            raise RuntimeError("JR_DATA_SOURCE=database exige DATABASE_URL/NEON_DATABASE_URL.")
-        return True
-    if _database_url():
-        return True
-    if _excel_files_available():
-        return False
-    raise RuntimeError(
-        "DATABASE_URL/NEON_DATABASE_URL nao configurada. "
-        "As planilhas foram removidas do repositorio, entao o app precisa ler do Neon."
-    )
 
 
 def _db_metadata(key: str, default=None):
@@ -152,8 +133,6 @@ def _db_metadata(key: str, default=None):
     if rows.empty:
         return default
     try:
-        import json
-
         return json.loads(rows.iloc[0]["value_json"])
     except Exception:
         return default
@@ -163,6 +142,10 @@ def _db_version(dataset: str):
     return _db_metadata(f"{dataset}.version", _db_metadata("import.version", "database"))
 
 
+def _empty(columns: list[str]) -> pd.DataFrame:
+    return pd.DataFrame(columns=columns)
+
+
 def _read_database_table(dataset: str, columns: list[str], *, date_columns: list[str] | None = None) -> pd.DataFrame:
     table = DB_TABLES[dataset]
     try:
@@ -170,7 +153,8 @@ def _read_database_table(dataset: str, columns: list[str], *, date_columns: list
 
         df = pd.read_sql_query(text(f'SELECT * FROM "{table}"'), _db_engine())
     except Exception as exc:
-        raise RuntimeError(f'Tabela "{table}" nao encontrada no Neon. Rode scripts/import_to_neon.py antes de abrir o app.') from exc
+        raise RuntimeError(f'Nao foi possivel ler a tabela "{table}" no Neon.') from exc
+
     for column in columns:
         if column not in df.columns:
             df[column] = pd.NA
@@ -178,25 +162,97 @@ def _read_database_table(dataset: str, columns: list[str], *, date_columns: list
         for column in date_columns:
             if column in df.columns:
                 df[column] = pd.to_datetime(df[column], errors="coerce")
+
     df = df[columns + [column for column in df.columns if column not in columns]]
     df.attrs["anos_sheets"] = _db_metadata(f"{dataset}.anos_sheets", [])
     return df.copy()
 
 
-def _clean_columns(df: pd.DataFrame) -> pd.DataFrame:
-    """Remove colunas artificiais e normaliza nomes em ASCII."""
-    df = df.loc[:, ~df.columns.astype(str).str.startswith("Unnamed")]
-    rename_map = {}
-    keep_cols = []
-    for col in df.columns:
-        normal = unicodedata.normalize("NFKD", str(col)).encode("ascii", "ignore").decode("ascii")
-        cleaned = normal.strip()
-        if cleaned == "" or cleaned.lower() == "nan":
-            continue
-        keep_cols.append(col)
-        rename_map[col] = cleaned
-    df = df.loc[:, keep_cols]
-    return df.rename(columns=rename_map)
+def _normalize_ascii(value):
+    if pd.isna(value):
+        return value
+    return unicodedata.normalize("NFKD", str(value)).encode("ascii", "ignore").decode("ascii").strip()
+
+
+def _normalize_plate_value(value):
+    if pd.isna(value):
+        return pd.NA
+    text = _normalize_ascii(value).upper()
+    text = re.sub(r"\s+", " ", text).strip()
+    if not text or text in {"NAN", "NONE", "NAT", "<NA>"}:
+        return pd.NA
+    if "SEM" in text and "PLACA" in text:
+        return "SEM PLACA"
+    compact = re.sub(r"[^A-Z0-9]", "", text)
+    match = re.search(r"[A-Z]{3}[0-9][A-Z0-9][0-9]{2}|[A-Z]{3}[0-9]{4}", compact)
+    if match:
+        return match.group(0)
+    return text
+
+
+def _normalize_plate_series(series: pd.Series) -> pd.Series:
+    if series is None:
+        return pd.Series(dtype="string")
+    return series.apply(_normalize_plate_value).astype("string")
+
+
+def _normalize_text_column(df: pd.DataFrame, column: str) -> None:
+    if column not in df.columns:
+        return
+    series = df[column].astype("string").str.strip()
+    series = series.mask(series.str.lower().isin(["", "nan", "none", "nat", "<na>"]), pd.NA)
+    df[column] = series
+
+
+def _normalize_category_column(df: pd.DataFrame, *, default: str = "Transporte") -> None:
+    if "Categoria" not in df.columns:
+        df["Categoria"] = default
+        return
+    _normalize_text_column(df, "Categoria")
+    df["Categoria"] = df["Categoria"].fillna(default)
+    normalized = df["Categoria"].astype("string").str.strip().str.lower()
+    df["Categoria"] = normalized.map({"vex": "Vex", "transporte": "Transporte"}).fillna(df["Categoria"])
+
+
+def _normalize_tipo_value(value):
+    if pd.isna(value):
+        return "Outros"
+    text = _normalize_ascii(value).upper()
+    if not text:
+        return "Outros"
+    if "PEDAG" in text:
+        return "Pedagio"
+    if "IPVA" in text:
+        return "IPVA"
+    if "SEGUR" in text or "APOLI" in text:
+        return "Seguro"
+    if "LICENCI" in text:
+        return "Licenciamento"
+    if "DPVAT" in text:
+        return "DPVAT"
+    return str(value).strip().title()
+
+
+def _normalize_mes(df: pd.DataFrame) -> None:
+    if "Mes" not in df.columns:
+        df["Mes"] = pd.NA
+
+    mes_raw = df["Mes"]
+    mes_text = mes_raw.astype("string").str.strip()
+    mes_dt = pd.to_datetime(mes_raw, errors="coerce")
+    valid_mes = mes_dt.notna()
+    if valid_mes.any():
+        mes_text.loc[valid_mes] = mes_dt.loc[valid_mes].dt.to_period("M").astype(str)
+
+    if "Data" in df.columns:
+        data_dt = pd.to_datetime(df["Data"], errors="coerce")
+        empty_mes = mes_text.isna() | mes_text.str.lower().isin(["", "nan", "none", "nat", "<na>"])
+        valid_data = empty_mes & data_dt.notna()
+        if valid_data.any():
+            mes_text.loc[valid_data] = data_dt.loc[valid_data].dt.to_period("M").astype(str)
+
+    mes_text = mes_text.mask(mes_text.str.lower().isin(["", "nan", "none", "nat", "<na>"]), pd.NA)
+    df["Mes"] = mes_text
 
 
 def _group_sum(
@@ -206,25 +262,25 @@ def _group_sum(
     *,
     sort_by: str = "value",
 ) -> dict:
-    if df.empty or group_col not in df.columns or value_col not in df.columns:
+    if df is None or df.empty or group_col not in df.columns or value_col not in df.columns:
         return {group_col: [], value_col: []}
 
-    grouped = (
-        df.dropna(subset=[group_col])
-        .groupby(group_col, as_index=False)[value_col]
-        .sum()
-    )
+    data = df.dropna(subset=[group_col]).copy()
+    data[value_col] = pd.to_numeric(data[value_col], errors="coerce")
+    data = data.dropna(subset=[value_col])
+    if data.empty:
+        return {group_col: [], value_col: []}
 
-    if sort_by == "group" and group_col in grouped.columns:
+    grouped = data.groupby(group_col, as_index=False)[value_col].sum()
+    if sort_by == "group":
         grouped = grouped.sort_values(group_col)
     else:
         grouped = grouped.sort_values(value_col, ascending=False)
-
     return grouped.to_dict(orient="list")
 
 
 def _unique_sorted(df: pd.DataFrame, column: str) -> list:
-    if column not in df.columns:
+    if df is None or column not in df.columns:
         return []
     series = df[column].dropna()
     if series.empty:
@@ -235,77 +291,15 @@ def _unique_sorted(df: pd.DataFrame, column: str) -> list:
 
 
 def _unique_years(df: pd.DataFrame) -> list[int]:
-    if "Mes" not in df.columns:
+    if df is None or "Mes" not in df.columns:
         return []
     periodos = pd.to_datetime(df["Mes"], errors="coerce")
-    anos = sorted({int(ano) for ano in periodos.dt.year.dropna().unique()})
-    return anos
-
-
-def _years_from_sheet_names(sheet_names) -> list[int]:
-    years = set()
-    for name in sheet_names or []:
-        for match in re.findall(r"(20\d{2})", str(name)):
-            years.add(int(match))
-    return sorted(years)
-
-
-def _sheet_year(name: str) -> int | None:
-    match = re.search(r"(20\d{2})", str(name))
-    if match:
-        return int(match.group(1))
-    return None
-
-
-def _apply_sheet_year(
-    df: pd.DataFrame,
-    *,
-    year_col: str = "_SheetYear",
-    date_col: str | None = "Data",
-    mes_col: str | None = "Mes",
-) -> pd.DataFrame:
-    if year_col not in df.columns:
-        return df
-    year_series = pd.to_numeric(df[year_col], errors="coerce")
-    if year_series.isna().all():
-        return df
-
-    if date_col and date_col in df.columns:
-        dt = pd.to_datetime(df[date_col], errors="coerce")
-        valid = dt.notna() & year_series.notna()
-        if valid.any():
-            parts = pd.DataFrame({
-                "year": year_series[valid].astype(int),
-                "month": dt.loc[valid].dt.month,
-                "day": dt.loc[valid].dt.day,
-            })
-            new_dt = pd.to_datetime(parts, errors="coerce")
-            dt = dt.copy()
-            dt.loc[valid] = new_dt
-            df[date_col] = dt
-
-    if mes_col and mes_col in df.columns:
-        mes_dt = pd.to_datetime(df[mes_col], errors="coerce")
-        month_source = mes_dt.dt.month
-        if date_col and date_col in df.columns:
-            dt = pd.to_datetime(df[date_col], errors="coerce")
-            month_source = month_source.fillna(dt.dt.month)
-        valid_month = month_source.notna() & year_series.notna()
-        if valid_month.any():
-            parts = pd.DataFrame({
-                "year": year_series[valid_month].astype(int),
-                "month": month_source[valid_month].astype(int),
-                "day": 1,
-            })
-            new_mes_dt = pd.to_datetime(parts, errors="coerce")
-            mes_dt = mes_dt.copy()
-            mes_dt.loc[valid_month] = new_mes_dt
-            df[mes_col] = mes_dt.dt.to_period("M").astype(str)
-
-    return df
+    return sorted({int(ano) for ano in periodos.dt.year.dropna().unique()})
 
 
 def _parse_int(value, *, min_value: int | None = None, max_value: int | None = None) -> int | None:
+    if isinstance(value, (list, tuple)):
+        value = next((item for item in value if item not in (None, "", "Todos")), None)
     if value in (None, "", "Todos"):
         return None
     try:
@@ -322,12 +316,7 @@ def _parse_int(value, *, min_value: int | None = None, max_value: int | None = N
 def _normalize_categoria(series: pd.Series) -> pd.Series:
     if series is None:
         return pd.Series(dtype="string")
-    return (
-        series.astype("string")
-        .fillna("")
-        .str.strip()
-        .str.lower()
-    )
+    return series.astype("string").fillna("").str.strip().str.lower()
 
 
 def _exclude_vex(df: pd.DataFrame) -> pd.DataFrame:
@@ -365,40 +354,48 @@ def _filter_by_period(
     return df.loc[mask].copy()
 
 
-def _parse_mes_list(raw: list[str] | str | None) -> list[str]:
+def _as_list(raw) -> list:
     if raw is None:
         return []
-    if isinstance(raw, str):
-        raw_values = [raw]
-    else:
-        raw_values = list(raw)
+    if isinstance(raw, (list, tuple, set)):
+        return list(raw)
+    return [raw]
 
+
+def _parse_mes_list(raw) -> list[str]:
     meses: list[str] = []
-    for value in raw_values:
+    for value in _as_list(raw):
         if value in (None, "", "Todos"):
             continue
-        parts = str(value).split(",")
-        for part in parts:
+        for part in str(value).split(","):
             mes = part.strip()
             if mes and mes.lower() != "todos":
                 meses.append(mes)
     return meses
 
 
-def _parse_mes_int_list(raw: list[str] | None) -> list[int]:
-    if raw is None:
-        return []
+def _parse_mes_int_list(raw) -> list[int]:
     meses: list[int] = []
-    for value in raw:
+    for value in _as_list(raw):
         if value in (None, "", "Todos"):
             continue
-        try:
-            num = int(value)
-        except (TypeError, ValueError):
-            continue
-        if 1 <= num <= 12:
-            meses.append(num)
+        for part in str(value).split(","):
+            try:
+                num = int(part)
+            except (TypeError, ValueError):
+                continue
+            if 1 <= num <= 12:
+                meses.append(num)
     return meses
+
+
+def _param(params: dict | None, key: str):
+    if not params:
+        return None
+    value = params.get(key)
+    if isinstance(value, (list, tuple)):
+        return next((item for item in value if item not in (None, "")), None)
+    return value
 
 
 def _weekly_series(df: pd.DataFrame, date_col: str, value_col: str, label: str) -> dict:
@@ -420,12 +417,7 @@ def _weekly_series(df: pd.DataFrame, date_col: str, value_col: str, label: str) 
     if not valid.any():
         return template
 
-    data = pd.DataFrame(
-        {
-            "data": dates.loc[valid].dt.normalize(),
-            "valor": values.loc[valid].astype("float64"),
-        }
-    )
+    data = pd.DataFrame({"data": dates.loc[valid].dt.normalize(), "valor": values.loc[valid].astype("float64")})
     data = data.dropna()
     if data.empty:
         return template
@@ -433,7 +425,6 @@ def _weekly_series(df: pd.DataFrame, date_col: str, value_col: str, label: str) 
     start = start_default
     end = today
     index = default_index
-
     window_mask = data["data"].between(start, end)
     if not window_mask.any():
         end = data["data"].max()
@@ -441,288 +432,78 @@ def _weekly_series(df: pd.DataFrame, date_col: str, value_col: str, label: str) 
             return template
         start = end - pd.Timedelta(days=6)
         index = pd.date_range(start, end, freq="D")
-        template = {
-            "Dia": index.strftime("%d/%m").tolist(),
-            label: [0.0] * len(index),
-        }
+        template = {"Dia": index.strftime("%d/%m").tolist(), "DiaISO": index.strftime("%Y-%m-%d").tolist(), label: [0.0] * len(index)}
         window_mask = data["data"].between(start, end)
         if not window_mask.any():
             return template
 
     grouped = data.loc[window_mask].groupby("data")["valor"].sum()
     grouped = grouped.reindex(index, fill_value=0.0).astype("float64")
-    return {
-        "Dia": index.strftime("%d/%m").tolist(),
-        "DiaISO": index.strftime("%Y-%m-%d").tolist(),
-        label: grouped.round(2).tolist(),
-    }
+    return {"Dia": index.strftime("%d/%m").tolist(), "DiaISO": index.strftime("%Y-%m-%d").tolist(), label: grouped.round(2).tolist()}
 
 
-def _to_numeric_currency(series: pd.Series) -> pd.Series:
-    if series is None:
-        return pd.Series(dtype="float64")
-    if pd.api.types.is_numeric_dtype(series):
-        return pd.to_numeric(series, errors="coerce")
-
-    cleaned = series.astype("string").str.strip()
-    cleaned = cleaned.replace({"": pd.NA, "nan": pd.NA, "None": pd.NA})
-    cleaned = cleaned.str.replace("R$", "", regex=False).str.replace("\u00a0", "", regex=False)
-    cleaned = cleaned.str.replace(" ", "", regex=False)
-
-    mask_comma = cleaned.str.contains(",", regex=False, na=False)
-    cleaned.loc[mask_comma] = (
-        cleaned.loc[mask_comma]
-        .str.replace(".", "", regex=False)
-        .str.replace(",", ".", regex=False)
-    )
-    cleaned.loc[~mask_comma] = cleaned.loc[~mask_comma].str.replace(",", ".", regex=False)
-
-    return pd.to_numeric(cleaned, errors="coerce")
-
-
-def _normalize_ascii(value):
-    if pd.isna(value):
-        return value
-    return unicodedata.normalize("NFKD", str(value)).encode("ascii", "ignore").decode("ascii").strip()
-
-
-def _canonical_plate(value):
-    if pd.isna(value):
-        return pd.NA
-    text = _normalize_ascii(value).upper()
-    text = re.sub(r"\s+", " ", text).strip()
-    if not text or text in {"NAN", "NONE", "NAT", "<NA>"}:
-        return pd.NA
-    if "SEM" in text and "PLACA" in text:
-        return "SEM PLACA"
-    compact = re.sub(r"[^A-Z0-9]", "", text)
-    match = re.search(r"[A-Z]{3}[0-9][A-Z0-9][0-9]{2}|[A-Z]{3}[0-9]{4}", compact)
-    if match:
-        return match.group(0)
-    return text
-
-
-def _normalize_plate_series(series: pd.Series) -> pd.Series:
-    if series is None:
-        return pd.Series(dtype="string")
-    return series.apply(_canonical_plate).astype("string")
-
-
-def _canonical_tipo(value):
-    if pd.isna(value):
-        return None
-    text = _normalize_ascii(value).upper()
-    if not text:
-        return None
-    if "PEDAG" in text:
-        return "Pedagio"
-    if "IPVA" in text:
-        return "IPVA"
-    if "SEGUR" in text or "APOLI" in text or "APOLICE" in text:
-        return "Seguro"
-    if "LICENCI" in text:
-        return "Licenciamento"
-    if "DPVAT" in text:
-        return "DPVAT"
-    return text.title()
+def _finalize_common(
+    df: pd.DataFrame,
+    *,
+    date_columns: list[str] | None = None,
+    numeric_columns: list[str] | None = None,
+    text_columns: list[str] | None = None,
+    plate_columns: list[str] | None = None,
+    default_category: str = "Transporte",
+) -> pd.DataFrame:
+    df = df.copy()
+    for column in date_columns or []:
+        if column in df.columns:
+            df[column] = pd.to_datetime(df[column], errors="coerce")
+    for column in numeric_columns or []:
+        if column in df.columns:
+            df[column] = pd.to_numeric(df[column], errors="coerce")
+    for column in text_columns or []:
+        _normalize_text_column(df, column)
+    for column in plate_columns or []:
+        if column in df.columns:
+            df[column] = _normalize_plate_series(df[column])
+    _normalize_category_column(df, default=default_category)
+    _normalize_mes(df)
+    return df
 
 
 def load_combustivel() -> pd.DataFrame:
-    def _empty() -> pd.DataFrame:
-        return pd.DataFrame(columns=[
-            "Data",
-            "Mes",
-            "Km Rodados",
-            "Litros",
-            "Custo",
-            "Combustivel",
-            "POSTOS",
-            "PLACA",
-            "Categoria",
-        ])
-
-    if _should_use_database():
-        cache = _COMBUSTIVEL_CACHE
-        lock = cache["lock"]
-        with lock:
-            version = _db_version("combustivel")
-            cached = cache.get("df")
-            if cached is not None and cache.get("mtime") == version:
-                return cached.copy()
-            df = _read_database_table(
-                "combustivel",
-                ["Data", "Mes", "Km Rodados", "Litros", "Custo", "Combustivel", "POSTOS", "PLACA", "Categoria"],
-                date_columns=["Data"],
-            )
-            try:
-                cache["km_rodados_mensal"] = _read_database_table(
-                    "combustivel_km",
-                    ["Mes", "PLACA", "Km Rodados"],
-                )
-            except RuntimeError:
-                cache["km_rodados_mensal"] = pd.DataFrame(columns=["Mes", "PLACA", "Km Rodados"])
-            cache["mtime"] = version
-            cache["df"] = df.copy()
-            return df.copy()
-
-    def _read_km_rodados(path: Path) -> pd.DataFrame:
-        try:
-            raw = pd.read_excel(path, sheet_name="KM RODADOS", header=None, dtype=str)
-        except Exception:
-            return pd.DataFrame(columns=["Mes", "PLACA", "Km Rodados"])
-
-        header_idx = None
-        for idx in range(min(len(raw), 10)):
-            row = raw.iloc[idx]
-            normalized = set()
-            for value in row:
-                if pd.isna(value):
-                    continue
-                normalized.add(_normalize_ascii(value).upper())
-            has_mes = "MES" in normalized or "MÊS" in normalized
-            has_placa = "PLACA" in normalized or "PLACAS" in normalized
-            has_km = any("KM" in value for value in normalized)
-            if has_mes and has_placa and has_km:
-                header_idx = idx
-                break
-
-        if header_idx is None:
-            return pd.DataFrame(columns=["Mes", "PLACA", "Km Rodados"])
-
-        df_km = raw.iloc[header_idx + 1 :].copy()
-        df_km.columns = raw.iloc[header_idx]
-        df_km = _clean_columns(df_km)
-        if df_km.empty:
-            return pd.DataFrame(columns=["Mes", "PLACA", "Km Rodados"])
-
-        rename_map = {}
-        for col in df_km.columns:
-            col_norm = _normalize_ascii(col).upper()
-            if col_norm in {"MES", "MÊS"}:
-                rename_map[col] = "Mes"
-            elif col_norm in {"PLACA", "PLACAS"}:
-                rename_map[col] = "PLACA"
-            elif "KM" in col_norm:
-                rename_map[col] = "Km Rodados"
-        if rename_map:
-            df_km = df_km.rename(columns=rename_map)
-
-        if "Mes" not in df_km.columns or "Km Rodados" not in df_km.columns:
-            return pd.DataFrame(columns=["Mes", "PLACA", "Km Rodados"])
-
-        df_km["PLACA"] = _normalize_plate_series(df_km.get("PLACA"))
-        df_km["Km Rodados"] = pd.to_numeric(df_km.get("Km Rodados"), errors="coerce")
-
-        mes_raw = df_km["Mes"]
-        mes_dt = pd.to_datetime(mes_raw, errors="coerce")
-        if mes_dt.isna().any():
-            mes_norm = (
-                mes_raw.astype("string")
-                .str.strip()
-                .str.replace(".", "/", regex=False)
-                .str.replace("-", "/", regex=False)
-                .str.replace(" ", "", regex=False)
-                .str.lower()
-            )
-            mes_dt_alt = pd.to_datetime(mes_norm, errors="coerce", format="%b/%y")
-            mes_dt = mes_dt.combine_first(mes_dt_alt)
-
-        df_km["Mes"] = mes_dt.dt.to_period("M").astype(str)
-        df_km = df_km.dropna(subset=["Mes", "Km Rodados"])
-        return df_km[["Mes", "PLACA", "Km Rodados"]].copy()
-
     cache = _COMBUSTIVEL_CACHE
-    lock = cache["lock"]
-
-    with lock:
-        try:
-            mtime = DATA_COMB.stat().st_mtime
-        except FileNotFoundError:
-            cache["mtime"] = None
-            cache["df"] = None
-            return _empty()
-        except PermissionError:
-            print("Aviso: sem permissao para ler planilha de combustivel. Verifique se o arquivo esta aberto.")
-            cached = cache.get("df")
-            if cached is not None:
-                return cached.copy()
-            return _empty()
-
+    with cache["lock"]:
+        version = (_db_version("combustivel"), _db_version("combustivel_km"))
         cached = cache.get("df")
-        if cached is not None and cache.get("mtime") == mtime:
+        if cached is not None and cache.get("mtime") == version:
             return cached.copy()
 
+        df = _read_database_table("combustivel", _COMBUSTIVEL_COLUMNS, date_columns=["Data"])
+        df = _finalize_common(
+            df,
+            date_columns=["Data"],
+            numeric_columns=["Km Rodados", "Litros", "Custo"],
+            text_columns=["Combustivel", "POSTOS"],
+            plate_columns=["PLACA"],
+        )
+
         try:
-            sheets = pd.read_excel(DATA_COMB, sheet_name=None, header=1)
-            sheet_years = _years_from_sheet_names(sheets.keys())
-        except PermissionError:
-            print("Aviso: sem permissao para ler planilha de combustivel. Verifique se o arquivo esta aberto.")
-            if cached is not None:
-                return cached.copy()
-            return _empty()
-        except Exception as exc:
-            print(f"Aviso: falha ao ler planilha de combustivel: {exc}")
-            if cached is not None:
-                return cached.copy()
-            return _empty()
-
-        frames = []
-        for sheet_name, sheet_df in sheets.items():
-            if sheet_df is None or sheet_df.empty:
-                continue
-            cleaned = _clean_columns(sheet_df)
-            if cleaned.empty:
-                continue
-            if "Data" not in cleaned.columns:
-                continue
-            sheet_year = _sheet_year(sheet_name)
-            if sheet_year is not None:
-                cleaned["_SheetYear"] = sheet_year
-            frames.append(cleaned)
-        if not frames:
-            return _empty()
-        df = pd.concat(frames, ignore_index=True)
-
-        df = df.rename(columns={
-            "COMBUSTIVEL": "Combustivel",
-            "MES": "Mes",
-        })
-
-        df["Data"] = pd.to_datetime(df.get("Data"), errors="coerce")
-        df = _apply_sheet_year(df, date_col="Data", mes_col=None)
-        for col in ["Km Rodados", "Litros", "Custo"]:
-            df[col] = pd.to_numeric(df.get(col), errors="coerce")
-
-        df = df.dropna(subset=["Data"]).copy()
-        df["Mes"] = df["Data"].dt.to_period("M").astype(str)
-
-        for col in ["Combustivel", "POSTOS"]:
-            if col in df.columns:
-                df[col] = df[col].astype("string").str.strip()
-        if "PLACA" in df.columns:
-            df["PLACA"] = _normalize_plate_series(df["PLACA"])
-
-        vex_col = next((col for col in df.columns if col.lower() == "vex"), None)
-        if vex_col:
-            df[vex_col] = df[vex_col].astype("string").str.strip()
-            df["Categoria"] = df[vex_col].apply(lambda value: "Vex" if pd.notna(value) and value != "" else "Transporte")
-        else:
-            df["Categoria"] = "Transporte"
-
-        df.attrs["anos_sheets"] = sheet_years
-        cache["km_rodados_mensal"] = _read_km_rodados(DATA_COMB)
-        cache["mtime"] = mtime
+            km = _read_database_table("combustivel_km", _COMBUSTIVEL_KM_COLUMNS)
+            km = _finalize_common(km, numeric_columns=["Km Rodados"], plate_columns=["PLACA"])
+            km = km.dropna(subset=["Mes", "Km Rodados"])
+        except Exception:
+            km = _empty(_COMBUSTIVEL_KM_COLUMNS)
+        cache["km_rodados_mensal"] = km[_COMBUSTIVEL_KM_COLUMNS].copy()
+        cache["mtime"] = version
         cache["df"] = df.copy()
-        return df
+        return df.copy()
 
 
 def agg_combustivel(df: pd.DataFrame, *, km_override: pd.DataFrame | None = None) -> dict:
-    custo_total = float(df["Custo"].sum()) if "Custo" in df else 0.0
+    custo_total = float(pd.to_numeric(df.get("Custo"), errors="coerce").sum()) if "Custo" in df else 0.0
     if km_override is not None and "Km Rodados" in km_override.columns:
-        km_total = float(km_override["Km Rodados"].sum())
+        km_total = float(pd.to_numeric(km_override["Km Rodados"], errors="coerce").sum())
     else:
-        km_total = float(df["Km Rodados"].sum()) if "Km Rodados" in df else 0.0
-    litros_total = float(df["Litros"].sum()) if "Litros" in df else 0.0
+        km_total = float(pd.to_numeric(df.get("Km Rodados"), errors="coerce").sum()) if "Km Rodados" in df else 0.0
+    litros_total = float(pd.to_numeric(df.get("Litros"), errors="coerce").sum()) if "Litros" in df else 0.0
     custo_por_km = (custo_total / km_total) if km_total else 0.0
     km_por_litro = (km_total / litros_total) if litros_total else 0.0
     custo_por_litro = (custo_total / litros_total) if litros_total else 0.0
@@ -753,150 +534,28 @@ def agg_combustivel(df: pd.DataFrame, *, km_override: pd.DataFrame | None = None
 
 
 def load_manutencao() -> pd.DataFrame:
-    def _empty() -> pd.DataFrame:
-        return pd.DataFrame(columns=[
-            "Data",
-            "Mes",
-            "Custo",
-            "PLACA",
-            "OFICINA",
-            "Categoria",
-        ])
-
-    if _should_use_database():
-        cache = _MANUTENCAO_CACHE
-        lock = cache["lock"]
-        with lock:
-            version = _db_version("manutencao")
-            cached = cache.get("df")
-            if cached is not None and cache.get("mtime") == version:
-                return cached.copy()
-            df = _read_database_table(
-                "manutencao",
-                ["Data", "Mes", "Custo", "PLACA", "OFICINA", "Categoria"],
-                date_columns=["Data"],
-            )
-            cache["mtime"] = version
-            cache["df"] = df.copy()
-            return df.copy()
-
     cache = _MANUTENCAO_CACHE
-    lock = cache["lock"]
-
-    with lock:
-        try:
-            mtime = DATA_MANU.stat().st_mtime
-        except FileNotFoundError:
-            cache["mtime"] = None
-            cache["df"] = None
-            return _empty()
-        except PermissionError:
-            print("Aviso: sem permissao para ler planilha de manutencao. Verifique se o arquivo esta aberto.")
-            cached = cache.get("df")
-            if cached is not None:
-                return cached.copy()
-            return _empty()
-
+    with cache["lock"]:
+        version = _db_version("manutencao")
         cached = cache.get("df")
-        if cached is not None and cache.get("mtime") == mtime:
+        if cached is not None and cache.get("mtime") == version:
             return cached.copy()
 
-        try:
-            sheets = pd.read_excel(DATA_MANU, sheet_name=None, header=1)
-            sheet_years = _years_from_sheet_names(sheets.keys())
-        except PermissionError:
-            print("Aviso: sem permissao para ler planilha de manutencao. Verifique se o arquivo esta aberto.")
-            if cached is not None:
-                return cached.copy()
-            return _empty()
-        except Exception as exc:
-            print(f"Aviso: falha ao ler planilha de manutencao: {exc}")
-            if cached is not None:
-                return cached.copy()
-            return _empty()
-
-        frames = []
-        for sheet_name, sheet_df in sheets.items():
-            if sheet_df is None or sheet_df.empty:
-                continue
-            cleaned = _clean_columns(sheet_df)
-            if cleaned.empty:
-                continue
-            sheet_year = _sheet_year(sheet_name)
-            if sheet_year is not None:
-                cleaned["_SheetYear"] = sheet_year
-            frames.append(cleaned)
-        if not frames:
-            return _empty()
-        df = pd.concat(frames, ignore_index=True)
-
-        df = df.rename(columns={
-            "PLACAS": "PLACA",
-            "MES": "Mes",
-            "DATA": "Data",
-        })
-
-        df["Data"] = pd.to_datetime(df.get("Data"), errors="coerce")
-        if "Mes" in df.columns:
-            mes_raw = df["Mes"]
-            mes_dt = pd.to_datetime(mes_raw, errors="coerce")
-            if mes_dt.isna().any():
-                mes_norm = (
-                    mes_raw.astype("string")
-                    .str.strip()
-                    .str.lower()
-                    .str.replace(".", "/", regex=False)
-                    .str.replace("-", "/", regex=False)
-                    .str.replace(" ", "", regex=False)
-                )
-                month_map = {
-                    "jan": "01",
-                    "fev": "02",
-                    "mar": "03",
-                    "abr": "04",
-                    "mai": "05",
-                    "jun": "06",
-                    "jul": "07",
-                    "ago": "08",
-                    "set": "09",
-                    "out": "10",
-                    "nov": "11",
-                    "dez": "12",
-                }
-                for abbr, num in month_map.items():
-                    mes_norm = mes_norm.str.replace(abbr, num, regex=False)
-                mes_dt_alt = pd.to_datetime(mes_norm, errors="coerce", format="%m/%y")
-                mes_dt_alt = mes_dt_alt.combine_first(
-                    pd.to_datetime(mes_norm, errors="coerce", format="%m/%Y")
-                )
-                mes_dt = mes_dt.combine_first(mes_dt_alt)
-            df["Data"] = df["Data"].combine_first(mes_dt)
-
-        df = _apply_sheet_year(df, date_col="Data", mes_col=None)
-        df["Mes"] = df["Data"].dt.to_period("M").astype(str)
-        df["Custo"] = _to_numeric_currency(df.get("Custo"))
-
-        df = df.dropna(subset=["Mes", "Custo"]).copy()
-        if "PLACA" in df.columns:
-            df["PLACA"] = _normalize_plate_series(df["PLACA"])
-        if "OFICINA" in df.columns:
-            df["OFICINA"] = df["OFICINA"].astype("string").str.strip()
-
-        vex_col = next((col for col in df.columns if col.lower() == "vex"), None)
-        if vex_col:
-            df[vex_col] = df[vex_col].astype("string").str.strip()
-            df["Categoria"] = df[vex_col].apply(lambda value: "Vex" if pd.notna(value) and value != "" else "Transporte")
-        else:
-            df["Categoria"] = "Transporte"
-
-        df.attrs["anos_sheets"] = sheet_years
-        cache["mtime"] = mtime
+        df = _read_database_table("manutencao", _MANUTENCAO_COLUMNS, date_columns=["Data"])
+        df = _finalize_common(
+            df,
+            date_columns=["Data"],
+            numeric_columns=["Custo"],
+            text_columns=["OFICINA"],
+            plate_columns=["PLACA"],
+        )
+        cache["mtime"] = version
         cache["df"] = df.copy()
-        return df
+        return df.copy()
 
 
 def agg_manutencao(df: pd.DataFrame) -> dict:
-    custo_total = float(df["Custo"].sum()) if "Custo" in df else 0.0
+    custo_total = float(pd.to_numeric(df.get("Custo"), errors="coerce").sum()) if "Custo" in df else 0.0
     total_servicos = int(len(df))
     media_servico = float(custo_total / total_servicos) if total_servicos else 0.0
     meses_distintos = df["Mes"].dropna().unique() if "Mes" in df else []
@@ -919,230 +578,22 @@ def agg_manutencao(df: pd.DataFrame) -> dict:
 
 
 def load_hoteis() -> pd.DataFrame:
-    def _empty() -> pd.DataFrame:
-        return pd.DataFrame(columns=[
-            "Data",
-            "Valor",
-            "Dias",
-            "Mes",
-            "Motorista",
-            "Ajudante",
-            "Cidade",
-            "Hotel",
-            "Tipo",
-        ])
-
-    if _should_use_database():
-        cache = _HOTEIS_CACHE
-        lock = cache["lock"]
-        with lock:
-            version = _db_version("hoteis")
-            cached = cache.get("df")
-            if cached is not None and cache.get("mtime") == version:
-                return cached.copy()
-            df = _read_database_table(
-                "hoteis",
-                ["Data", "Valor", "Dias", "Mes", "Motorista", "Ajudante", "Cidade", "Hotel", "Tipo", "Categoria"],
-                date_columns=["Data"],
-            )
-            cache["mtime"] = version
-            cache["df"] = df.copy()
-            return df.copy()
-
     cache = _HOTEIS_CACHE
-    lock = cache["lock"]
-
-    def _strip_autofilter(path: Path) -> io.BytesIO | None:
-        try:
-            with zipfile.ZipFile(path, "r") as zin:
-                mem = io.BytesIO()
-                with zipfile.ZipFile(mem, "w") as zout:
-                    for name in zin.namelist():
-                        data = zin.read(name)
-                        if name.startswith("xl/worksheets/sheet") and name.endswith(".xml"):
-                            try:
-                                text = data.decode("utf-8")
-                                text = re.sub(r"<autoFilter[^>]*?>.*?</autoFilter>", "", text, flags=re.DOTALL)
-                                text = re.sub(r"<autoFilter[^>]*/>", "", text, flags=re.DOTALL)
-                                data = text.encode("utf-8")
-                            except Exception:
-                                pass
-                        zout.writestr(name, data)
-                mem.seek(0)
-                return mem
-        except Exception as exc:  # pragma: no cover
-            print(f"Aviso: nao foi possivel limpar autoFilter da planilha de hoteis: {exc}")
-            return None
-
-    def _concat_hoteis_sheets(sheets: dict) -> pd.DataFrame | None:
-        frames = []
-        for sheet_name, sheet_df in sheets.items():
-            if sheet_df is None or sheet_df.empty:
-                continue
-            normalized = {
-                _normalize_ascii(col).upper()
-                for col in sheet_df.columns
-                if col is not None
-            }
-            if not {"DATA", "VALOR"}.issubset(normalized):
-                continue
-            sheet_year = _sheet_year(sheet_name)
-            if sheet_year is not None:
-                sheet_df = sheet_df.copy()
-                sheet_df["_SheetYear"] = sheet_year
-            frames.append(sheet_df)
-        if not frames:
-            return None
-        return pd.concat(frames, ignore_index=True)
-
-    def _read_hoteis_fallback(path: Path) -> pd.DataFrame | None:
-        try:
-            from openpyxl import load_workbook
-        except Exception as exc:  # pragma: no cover - dependencia externa
-            print(f"Aviso: fallback de hoteis indisponivel ({exc})")
-            return None
-
-        try:
-            wb = load_workbook(path, data_only=True, read_only=True)
-        except Exception as exc:  # pragma: no cover - leitura quebrada
-            print(f"Aviso: falha ao ler planilha de hoteis (fallback): {exc}")
-            return None
-
-        sheet_names = [
-            name for name in wb.sheetnames
-            if "HOTEIS" in _normalize_ascii(name).upper()
-        ]
-        if not sheet_names:
-            sheet_names = [wb.sheetnames[0]]
-
-        frames = []
-        for sheet_name in sheet_names:
-            ws = wb[sheet_name]
-            header_idx = None
-            header_row = None
-            try:
-                all_rows = list(ws.iter_rows(values_only=True))
-            except Exception as exc:  # pragma: no cover
-                print(f"Aviso: falha ao percorrer planilha de hoteis (fallback): {exc}")
-                continue
-
-            for idx, row in enumerate(all_rows):
-                normalized = {_normalize_ascii(value).upper() for value in row if value is not None}
-                if {"DATA", "VALOR"}.issubset(normalized):
-                    header_idx = idx
-                    header_row = list(row)
-                    break
-                if idx >= 20:
-                    break
-
-            if header_row is None or header_idx is None:
-                continue
-
-            max_len = len(header_row)
-            data_rows = []
-            for row in all_rows[header_idx + 1 :]:
-                if all(cell is None for cell in row):
-                    continue
-                data_rows.append(list(row[:max_len]))
-
-            if data_rows:
-                frames.append(pd.DataFrame(data_rows, columns=header_row))
-
-        if not frames:
-            print("Aviso: cabecalho de hoteis nao encontrado no fallback.")
-            return None
-
-        return pd.concat(frames, ignore_index=True)
-
-    with lock:
-        try:
-            mtime = DATA_HOTEIS.stat().st_mtime
-        except FileNotFoundError:
-            cache["mtime"] = None
-            cache["df"] = None
-            return _empty()
-        except PermissionError:
-            print("Aviso: sem permissao para ler planilha de hoteis. Verifique se o arquivo esta aberto.")
-            cached = cache.get("df")
-            if cached is not None:
-                return cached.copy()
-            return _empty()
-
+    with cache["lock"]:
+        version = _db_version("hoteis")
         cached = cache.get("df")
-        if cached is not None and cache.get("mtime") == mtime:
+        if cached is not None and cache.get("mtime") == version:
             return cached.copy()
 
-        sheet_years: list[int] = []
-        try:
-            sheets = pd.read_excel(DATA_HOTEIS, sheet_name=None, header=4)
-            sheet_years = _years_from_sheet_names(sheets.keys())
-            df = _concat_hoteis_sheets(sheets)
-        except PermissionError:
-            print("Aviso: sem permissao para ler planilha de hoteis. Verifique se o arquivo esta aberto.")
-            if cached is not None:
-                return cached.copy()
-            return _empty()
-        except Exception as exc:
-            print(f"Aviso: falha ao ler planilha de hoteis: {exc}")
-            df = None
-            buffer_clean = _strip_autofilter(DATA_HOTEIS)
-            if buffer_clean is not None:
-                try:
-                    sheets = pd.read_excel(buffer_clean, sheet_name=None, header=4)
-                    sheet_years = _years_from_sheet_names(sheets.keys())
-                    df = _concat_hoteis_sheets(sheets)
-                except Exception as exc_clean:  # pragma: no cover - leitura fallback
-                    print(f"Aviso: falha ao ler planilha de hoteis (limpa): {exc_clean}")
-            if df is None:
-                df = _read_hoteis_fallback(DATA_HOTEIS)
-            if df is None:
-                if cached is not None:
-                    return cached.copy()
-                return _empty()
-
-        if df is None:
-            df = _read_hoteis_fallback(DATA_HOTEIS)
-            if df is None:
-                if cached is not None:
-                    return cached.copy()
-                return _empty()
-        if not sheet_years:
-            try:
-                sheet_years = _years_from_sheet_names(pd.ExcelFile(DATA_HOTEIS).sheet_names)
-            except Exception:
-                sheet_years = []
-
-        df = _clean_columns(df)
-
-        df = df.rename(columns={
-            "DATA": "Data",
-            "VALOR": "Valor",
-            "HOTEL/POUSADA": "Hotel",
-            "MOTORISTA": "Motorista",
-            "AJUDANTE": "Ajudante",
-            "CIDADE": "Cidade",
-            "TIPO": "Tipo",
-            "DIAS": "Dias",
-            "CATEGORIA": "Categoria",
-        })
-
-        df["Data"] = pd.to_datetime(df.get("Data"), errors="coerce")
-        df = _apply_sheet_year(df, date_col="Data", mes_col=None)
-        df["Valor"] = pd.to_numeric(df.get("Valor"), errors="coerce")
-        df["Dias"] = pd.to_numeric(df.get("Dias"), errors="coerce")
-
-        period = df["Data"].dt.to_period("M")
-        df["Mes"] = period.astype(str)
-        df.loc[period.isna(), "Mes"] = None
-
-        for col in ["Motorista", "Ajudante", "Cidade", "Hotel", "Tipo", "Categoria"]:
-            if col in df.columns:
-                df[col] = df[col].astype("string").str.strip()
-        # Hotéis não usam categoria; sempre considerar como Transporte.
+        df = _read_database_table("hoteis", _HOTEIS_COLUMNS, date_columns=["Data"])
+        df = _finalize_common(
+            df,
+            date_columns=["Data"],
+            numeric_columns=["Valor", "Dias"],
+            text_columns=["Motorista", "Ajudante", "Cidade", "Hotel", "Tipo"],
+        )
         df["Categoria"] = "Transporte"
-
-        df.attrs["anos_sheets"] = sheet_years
-        cache["mtime"] = mtime
+        cache["mtime"] = version
         cache["df"] = df.copy()
         return df.copy()
 
@@ -1151,7 +602,7 @@ def agg_hoteis(df: pd.DataFrame) -> dict:
     reservas = df[df["Data"].notna()].copy() if "Data" in df.columns else df.copy()
     if "Data" in reservas.columns:
         reservas["Data"] = pd.to_datetime(reservas["Data"], errors="coerce")
-    valor_total = float(reservas["Valor"].fillna(0).sum()) if "Valor" in reservas else 0.0
+    valor_total = float(pd.to_numeric(reservas.get("Valor"), errors="coerce").fillna(0).sum()) if "Valor" in reservas else 0.0
     reservas_total = int(reservas.shape[0])
     meses_distintos = reservas["Mes"].dropna().unique() if "Mes" in reservas else []
     media_mensal = float(valor_total / len(meses_distintos)) if len(meses_distintos) else 0.0
@@ -1169,37 +620,32 @@ def agg_hoteis(df: pd.DataFrame) -> dict:
         reservas = reservas.assign(_NaoPlanejada=flag_series.astype("int64"))
     else:
         reservas = reservas.assign(_NaoPlanejada=0)
-    reservas_nao_planejadas = 0
+
     if "Data" in reservas.columns and "Valor" in reservas.columns:
         mask_sabado = reservas["Data"].dt.dayofweek.isin([4, 5]).fillna(False)
         mask_nao_planejada = reservas["_NaoPlanejada"] == 1
         mask_nao_planejada_total = mask_nao_planejada | mask_sabado
-
         valor_sabado = float(reservas.loc[mask_sabado, "Valor"].fillna(0).sum())
         valor_nao_planejado = float(reservas.loc[mask_nao_planejada_total, "Valor"].fillna(0).sum())
         reservas_nao_planejadas = int(mask_nao_planejada_total.sum())
     else:
         valor_sabado = 0.0
         valor_nao_planejado = 0.0
+        reservas_nao_planejadas = 0
 
     semanal = _weekly_series(reservas, "Data", "Valor", "Valor")
     if "DiaISO" in semanal:
-        nao_planejada_flags = []
-        if "Data" in reservas.columns:
-            nao_planejada_por_dia = (
-                reservas.loc[reservas["_NaoPlanejada"] == 1, "Data"]
-                .dt.normalize()
-                .value_counts()
-            )
-        else:
-            nao_planejada_por_dia = pd.Series(dtype="int64")
-        for iso in semanal["DiaISO"]:
-            dt = pd.to_datetime(iso, errors="coerce")
-            if pd.isna(dt):
-                nao_planejada_flags.append(False)
-            else:
-                nao_planejada_flags.append(bool(nao_planejada_por_dia.get(dt.normalize(), 0)))
-        semanal["NaoPlanejada"] = nao_planejada_flags
+        nao_planejada_por_dia = (
+            reservas.loc[reservas["_NaoPlanejada"] == 1, "Data"].dt.normalize().value_counts()
+            if "Data" in reservas.columns
+            else pd.Series(dtype="int64")
+        )
+        semanal["NaoPlanejada"] = [
+            bool(nao_planejada_por_dia.get(pd.to_datetime(iso, errors="coerce").normalize(), 0))
+            if pd.notna(pd.to_datetime(iso, errors="coerce"))
+            else False
+            for iso in semanal["DiaISO"]
+        ]
     else:
         semanal["NaoPlanejada"] = []
 
@@ -1222,274 +668,77 @@ def agg_hoteis(df: pd.DataFrame) -> dict:
 
 
 def load_pedagio() -> pd.DataFrame:
-    def _empty() -> pd.DataFrame:
-        return pd.DataFrame(columns=['PLACA', 'Tipo', 'Custo', 'Mes', 'Data', 'Categoria'])
-
-    if _should_use_database():
-        cache = _PEDAGIO_CACHE
-        lock = cache['lock']
-        with lock:
-            version = _db_version("pedagio")
-            cached_df = cache.get('df')
-            if cached_df is not None and cache.get('mtime') == version:
-                return cached_df.copy(deep=False)
-            df = _read_database_table(
-                "pedagio",
-                ["PLACA", "Tipo", "Custo", "Mes", "Data", "Categoria"],
-                date_columns=["Data"],
-            )
-            cache['mtime'] = version
-            cache['df'] = df.copy()
-            return df.copy(deep=False)
-
     cache = _PEDAGIO_CACHE
-    lock = cache['lock']
+    with cache["lock"]:
+        version = _db_version("pedagio")
+        cached = cache.get("df")
+        if cached is not None and cache.get("mtime") == version:
+            return cached.copy(deep=False)
 
-    with lock:
-        if not DATA_PEDAGIO.exists():
-            cache['mtime'] = None
-            cache['df'] = None
-            return _empty()
-
-        try:
-            mtime = DATA_PEDAGIO.stat().st_mtime
-        except PermissionError:
-            print('Aviso: sem permissao para ler planilha de pedagio/seguro/IPVA. Verifique se o arquivo esta aberto.')
-            cached_df = cache.get('df')
-            if cached_df is not None:
-                return cached_df.copy(deep=False)
-            return _empty()
-
-        cached_df = cache.get('df')
-        if cached_df is not None and cache.get('mtime') == mtime:
-            return cached_df.copy(deep=False)
-
-        try:
-            raw_sheets = pd.read_excel(DATA_PEDAGIO, sheet_name=None, header=None, engine='openpyxl')
-            sheet_years = _years_from_sheet_names(raw_sheets.keys())
-        except PermissionError:
-            print('Aviso: sem permissao para ler planilha de pedagio/seguro/IPVA. Verifique se o arquivo esta aberto.')
-            cached_df = cache.get('df')
-            if cached_df is not None:
-                return cached_df.copy(deep=False)
-            return _empty()
-        except Exception as exc:
-            print(f'Aviso: falha ao ler planilha de pedagio/seguro/IPVA: {exc}')
-            cached_df = cache.get('df')
-            if cached_df is not None:
-                return cached_df.copy(deep=False)
-            return _empty()
-
-        expected_core = {'TIPO', 'CUSTO'}
-        frames = []
-        for sheet_name, raw in raw_sheets.items():
-            header_idx = None
-            for idx in range(min(len(raw), 10)):
-                row = raw.iloc[idx]
-                normalized = set()
-                for value in row.tolist():
-                    if pd.isna(value):
-                        continue
-                    normalized.add(_normalize_ascii(value).upper())
-                has_placa = any(label in normalized for label in ('PLACA', 'PLACAS'))
-                if has_placa and expected_core.issubset(normalized):
-                    header_idx = idx
-                    break
-
-            if header_idx is None:
-                continue
-
-            df_sheet = raw.iloc[header_idx + 1 :].copy()
-            df_sheet.columns = raw.iloc[header_idx]
-            df_sheet = df_sheet.dropna(how='all').reset_index(drop=True)
-            df_sheet = _clean_columns(df_sheet)
-            if df_sheet.empty:
-                continue
-            sheet_year = _sheet_year(sheet_name)
-            if sheet_year is not None:
-                df_sheet["_SheetYear"] = sheet_year
-            frames.append(df_sheet)
-
-        if not frames:
-            print('Aviso: cabecalho da planilha de pedagio/seguro/IPVA nao encontrado.')
-            return _empty()
-
-        df = pd.concat(frames, ignore_index=True)
-
-        rename_map = {}
-        for col in df.columns:
-            col_norm = _normalize_ascii(col).upper()
-            if col_norm in {'PLACA', 'PLACAS'}:
-                rename_map[col] = 'PLACA'
-            elif col_norm == 'TIPO':
-                rename_map[col] = 'Tipo'
-            elif col_norm in {'CUSTO', 'VALOR', 'VALORES'}:
-                rename_map[col] = 'Custo'
-            elif col_norm == 'MES':
-                rename_map[col] = 'Mes'
-            elif col_norm == 'DATA':
-                rename_map[col] = 'Data'
-            elif col_norm == 'VEX':
-                rename_map[col] = 'Vex'
-            elif col_norm in {'DESCRICAO', 'DESCRICAO'}:
-                rename_map[col] = 'Descricao'
-            elif col_norm in {'SEGURADORA', 'FORNECEDOR'}:
-                rename_map[col] = 'Fornecedor'
-
-        if rename_map:
-            df = df.rename(columns=rename_map)
-
-        if 'Custo' in df.columns:
-            df['Custo'] = _to_numeric_currency(df['Custo'])
-        else:
-            df['Custo'] = pd.Series(pd.NA, index=df.index, dtype='float64')
-
-        if 'Tipo' in df.columns:
-            df['Tipo'] = df['Tipo'].apply(_canonical_tipo).astype('string')
-        else:
-            df['Tipo'] = pd.Series(pd.NA, index=df.index, dtype='string')
-
-        if 'PLACA' in df.columns:
-            df['PLACA'] = _normalize_plate_series(df['PLACA'])
-        else:
-            df['PLACA'] = pd.Series(pd.NA, index=df.index, dtype='string')
-
-        if 'Mes' in df.columns:
-            mes_raw = df['Mes']
-            mes_dt = pd.to_datetime(mes_raw, errors='coerce')
-            df['Mes'] = mes_dt.dt.to_period('M').astype('string')
-            missing_mes = df['Mes'].isna() | (df['Mes'] == '')
-            if missing_mes.any():
-                alt = (
-                    mes_raw.astype('string')
-                    .str.strip()
-                    .str.replace(' ', '', regex=False)
-                    .str.replace('.', '/', regex=False)
-                    .str.replace('-', '/', regex=False)
-                )
-                alt_dt = pd.to_datetime(alt, errors='coerce')
-                valid_alt = missing_mes & alt_dt.notna()
-                df.loc[valid_alt, 'Mes'] = alt_dt[valid_alt].dt.to_period('M').astype('string')
-                df.loc[missing_mes & ~valid_alt, 'Mes'] = alt.loc[missing_mes & ~valid_alt]
-        else:
-            df['Mes'] = pd.Series(pd.NA, index=df.index, dtype='string')
-
-        if 'Data' in df.columns:
-            df['Data'] = pd.to_datetime(df['Data'], errors='coerce')
-            empty_mes = df['Mes'].isna() | (df['Mes'] == '')
-            df.loc[empty_mes, 'Mes'] = df.loc[empty_mes, 'Data'].dt.to_period('M').astype('string')
-        df = _apply_sheet_year(df, date_col="Data", mes_col="Mes")
-
-        vex_col = next((col for col in df.columns if col.lower() == 'vex'), None)
-        if vex_col:
-            df[vex_col] = df[vex_col].astype('string').str.strip()
-            df['Categoria'] = df[vex_col].apply(lambda value: 'Vex' if pd.notna(value) and value != '' else 'Transporte')
-        elif 'Categoria' not in df.columns:
-            df['Categoria'] = 'Transporte'
-
-        df = df[df['Custo'].notna()].copy()
-        df['Tipo'] = df['Tipo'].fillna('Outros')
-
-        df.attrs["anos_sheets"] = sheet_years
-        result = df.copy()
-        cache['mtime'] = mtime
-        cache['df'] = result
-        return result.copy(deep=False)
-
+        df = _read_database_table("pedagio", _PEDAGIO_COLUMNS, date_columns=["Data"])
+        df = _finalize_common(
+            df,
+            date_columns=["Data"],
+            numeric_columns=["Custo"],
+            text_columns=["Tipo"],
+            plate_columns=["PLACA"],
+        )
+        if "Tipo" in df.columns:
+            df["Tipo"] = df["Tipo"].apply(_normalize_tipo_value).astype("string")
+        df["Tipo"] = df["Tipo"].fillna("Outros")
+        cache["mtime"] = version
+        cache["df"] = df.copy()
+        return df.copy(deep=False)
 
 
 def agg_pedagio(df: pd.DataFrame) -> dict:
     registros = df.shape[0]
-    custo_total = float(df["Custo"].sum()) if "Custo" in df else 0.0
+    custo_total = float(pd.to_numeric(df.get("Custo"), errors="coerce").sum()) if "Custo" in df else 0.0
     meses_distintos = df["Mes"].dropna().unique() if "Mes" in df else []
     media_mensal = float(custo_total / len(meses_distintos)) if len(meses_distintos) else 0.0
     media_valores = float(custo_total / registros) if registros else 0.0
 
-    if "Tipo" in df.columns and not df.empty:
-        tipo_totais = df.groupby("Tipo", dropna=False)["Custo"].sum()
-    else:
-        tipo_totais = pd.Series(dtype="float64")
-
-    gasto_pedagio = float(tipo_totais.get("Pedagio", 0.0))
-    gasto_ipva = float(tipo_totais.get("IPVA", 0.0))
-    gasto_seguro = float(tipo_totais.get("Seguro", 0.0))
-
+    tipo_totais = df.groupby("Tipo", dropna=False)["Custo"].sum() if "Tipo" in df.columns and not df.empty else pd.Series(dtype="float64")
     resultado = {
         "custo_total": custo_total,
         "total_lancamentos": registros,
         "media_mensal": media_mensal,
         "ticket_medio": media_valores,
         "media_valores": media_valores,
-        "gasto_pedagio": gasto_pedagio,
-        "gasto_ipva": gasto_ipva,
-        "gasto_seguro": gasto_seguro,
+        "gasto_pedagio": float(tipo_totais.get("Pedagio", 0.0)),
+        "gasto_ipva": float(tipo_totais.get("IPVA", 0.0)),
+        "gasto_seguro": float(tipo_totais.get("Seguro", 0.0)),
         "custo_mensal": _group_sum(df, "Mes", "Custo", sort_by="group"),
         "gasto_por_tipo": _group_sum(df, "Tipo", "Custo"),
         "gasto_por_placa": _group_sum(df, "PLACA", "Custo"),
         "meses": _unique_sorted(df, "Mes"),
         "tipos": _unique_sorted(df, "Tipo"),
         "placas": _unique_sorted(df, "PLACA"),
+        "custo_semana": _weekly_series(df, "Data", "Custo", "Custo"),
     }
-
     if "Categoria" in df.columns:
         resultado["segmentos"] = _unique_sorted(df, "Categoria")
         resultado["gasto_por_categoria"] = _group_sum(df, "Categoria", "Custo")
     else:
         resultado["segmentos"] = []
         resultado["gasto_por_categoria"] = {"Categoria": [], "Custo": []}
-
-    resultado["custo_semana"] = _weekly_series(df, "Data", "Custo", "Custo")
     return resultado
 
 
-
-
-
-@app.route("/")
-def home():
-    return render_template("home.html")
-
-
-@app.route("/combustivel")
-def comb_page():
-    return render_template("combustivel.html")
-
-
-@app.route("/manutencao")
-def manut_page():
-    return render_template("manutencao.html")
-
-
-@app.route("/hoteis")
-def hoteis_page():
-    return render_template("hoteis.html")
-
-
-@app.route("/pedagio")
-def pedagio_page():
-    return render_template("pedagio.html")
-
-
-@app.route("/vex")
-def vex_page():
-    return render_template("vex.html")
-
-
-@app.route("/data/combustivel")
-def data_comb():
-    df = load_combustivel()
-    df = _exclude_vex(df)
+def data_comb(params: dict | None = None) -> dict:
+    params = params or {}
+    df = _exclude_vex(load_combustivel())
     km_rodados = _COMBUSTIVEL_CACHE.get("km_rodados_mensal")
 
-    ano = _parse_int(request.args.get("ano"))
-    meses = _parse_mes_list(request.args.getlist("mes"))
-    placa = request.args.get("placa")
-    posto = request.args.get("posto")
-    combustivel = request.args.get("combustivel")
-    segmento = request.args.get("segmento")
+    ano = _parse_int(_param(params, "ano"))
+    meses = _parse_mes_list(params.get("mes"))
+    placa = _param(params, "placa")
+    posto = _param(params, "posto")
+    combustivel = _param(params, "combustivel")
+    segmento = _param(params, "segmento")
 
     if placa and placa != "Todos":
-        df = df[df["PLACA"] == placa]
+        df = df[df["PLACA"] == _normalize_plate_value(placa)]
     if posto and posto != "Todos":
         df = df[df["POSTOS"] == posto]
     if combustivel and combustivel != "Todos":
@@ -1497,10 +746,7 @@ def data_comb():
     if segmento and segmento != "Todos" and "Categoria" in df.columns:
         df = df[df["Categoria"] == segmento]
 
-    anos_disponiveis = _unique_years(df)
-    sheet_years = df.attrs.get("anos_sheets", [])
-    if sheet_years:
-        anos_disponiveis = sorted({*anos_disponiveis, *sheet_years})
+    anos_disponiveis = sorted({*_unique_years(df), *df.attrs.get("anos_sheets", [])})
     df_meses = _filter_by_period(df, ano=ano) if ano is not None else df
     meses_disponiveis = _unique_sorted(df_meses, "Mes")
 
@@ -1513,7 +759,7 @@ def data_comb():
     if isinstance(km_rodados, pd.DataFrame) and not km_rodados.empty:
         km_override = km_rodados.copy()
         if placa and placa != "Todos":
-            km_override = km_override[km_override["PLACA"] == placa]
+            km_override = km_override[km_override["PLACA"] == _normalize_plate_value(placa)]
         if ano is not None:
             km_override = km_override[pd.to_datetime(km_override["Mes"], errors="coerce").dt.year == ano]
         if meses:
@@ -1528,31 +774,27 @@ def data_comb():
     resultado = agg_combustivel(df, km_override=km_override if ano == 2026 else None)
     resultado["anos"] = anos_disponiveis
     resultado["meses"] = meses_disponiveis
-    return jsonify(resultado)
+    return resultado
 
 
-@app.route("/data/manutencao")
-def data_manu():
-    df = load_manutencao()
-    df = _exclude_vex(df)
+def data_manu(params: dict | None = None) -> dict:
+    params = params or {}
+    df = _exclude_vex(load_manutencao())
 
-    ano = _parse_int(request.args.get("ano"))
-    meses = _parse_mes_list(request.args.getlist("mes"))
-    placa = request.args.get("placa")
-    oficina = request.args.get("oficina")
-    segmento = request.args.get("segmento")
+    ano = _parse_int(_param(params, "ano"))
+    meses = _parse_mes_list(params.get("mes"))
+    placa = _param(params, "placa")
+    oficina = _param(params, "oficina")
+    segmento = _param(params, "segmento")
 
     if placa and placa != "Todos":
-        df = df[df["PLACA"] == placa]
+        df = df[df["PLACA"] == _normalize_plate_value(placa)]
     if oficina and oficina != "Todos":
         df = df[df["OFICINA"] == oficina]
     if segmento and segmento != "Todos" and "Categoria" in df.columns:
         df = df[df["Categoria"] == segmento]
 
-    anos_disponiveis = _unique_years(df)
-    sheet_years = df.attrs.get("anos_sheets", [])
-    if sheet_years:
-        anos_disponiveis = sorted({*anos_disponiveis, *sheet_years})
+    anos_disponiveis = sorted({*_unique_years(df), *df.attrs.get("anos_sheets", [])})
     df_meses = _filter_by_period(df, ano=ano) if ano is not None else df
     meses_disponiveis = _unique_sorted(df_meses, "Mes")
 
@@ -1564,30 +806,26 @@ def data_manu():
     resultado = agg_manutencao(df)
     resultado["anos"] = anos_disponiveis
     resultado["meses"] = meses_disponiveis
-    return jsonify(resultado)
+    return resultado
 
 
-@app.route("/data/hoteis")
-def data_hoteis():
-    df_total = load_hoteis()
-    df_total = _exclude_vex(df_total)
+def data_hoteis(params: dict | None = None) -> dict:
+    params = params or {}
+    df_total = _exclude_vex(load_hoteis())
     totais_gerais = agg_hoteis(df_total)
     df = df_total.copy()
 
-    ano = _parse_int(request.args.get("ano"))
-    meses = _parse_mes_list(request.args.getlist("mes"))
-    cidade = request.args.get("cidade")
-    hotel = request.args.get("hotel")
+    ano = _parse_int(_param(params, "ano"))
+    meses = _parse_mes_list(params.get("mes"))
+    cidade = _param(params, "cidade")
+    hotel = _param(params, "hotel")
 
     if cidade and cidade != "Todos":
         df = df[df["Cidade"] == cidade]
     if hotel and hotel != "Todos":
         df = df[df["Hotel"] == hotel]
 
-    anos_disponiveis = _unique_years(df)
-    sheet_years = df.attrs.get("anos_sheets", [])
-    if sheet_years:
-        anos_disponiveis = sorted({*anos_disponiveis, *sheet_years})
+    anos_disponiveis = sorted({*_unique_years(df), *df.attrs.get("anos_sheets", [])})
     df_meses = _filter_by_period(df, ano=ano) if ano is not None else df
     meses_disponiveis = _unique_sorted(df_meses, "Mes")
 
@@ -1601,31 +839,27 @@ def data_hoteis():
     resultado["valor_nao_planejado_total"] = totais_gerais.get("valor_nao_planejado", 0.0)
     resultado["anos"] = anos_disponiveis
     resultado["meses"] = meses_disponiveis
-    return jsonify(resultado)
+    return resultado
 
 
-@app.route("/data/pedagio")
-def data_pedagio():
-    df = load_pedagio()
-    df = _exclude_vex(df)
+def data_pedagio(params: dict | None = None) -> dict:
+    params = params or {}
+    df = _exclude_vex(load_pedagio())
 
-    ano = _parse_int(request.args.get("ano"))
-    meses = _parse_mes_list(request.args.getlist("mes"))
-    placa = request.args.get("placa")
-    tipo = request.args.get("tipo")
-    segmento = request.args.get("segmento")
+    ano = _parse_int(_param(params, "ano"))
+    meses = _parse_mes_list(params.get("mes"))
+    placa = _param(params, "placa")
+    tipo = _param(params, "tipo")
+    segmento = _param(params, "segmento")
 
     if placa and placa != "Todos":
-        df = df[df["PLACA"] == placa]
+        df = df[df["PLACA"] == _normalize_plate_value(placa)]
     if tipo and tipo != "Todos":
-        df = df[df["Tipo"] == tipo]
+        df = df[df["Tipo"] == _normalize_tipo_value(tipo)]
     if segmento and segmento != "Todos" and "Categoria" in df.columns:
         df = df[df["Categoria"] == segmento]
 
-    anos_disponiveis = _unique_years(df)
-    sheet_years = df.attrs.get("anos_sheets", [])
-    if sheet_years:
-        anos_disponiveis = sorted({*anos_disponiveis, *sheet_years})
+    anos_disponiveis = sorted({*_unique_years(df), *df.attrs.get("anos_sheets", [])})
     df_meses = _filter_by_period(df, ano=ano) if ano is not None else df
     meses_disponiveis = _unique_sorted(df_meses, "Mes")
 
@@ -1637,14 +871,14 @@ def data_pedagio():
     resultado = agg_pedagio(df)
     resultado["anos"] = anos_disponiveis
     resultado["meses"] = meses_disponiveis
-    return jsonify(resultado)
+    return resultado
 
 
-@app.route("/data/vex")
-def data_vex():
-    ano = _parse_int(request.args.get("ano"))
-    meses = _parse_mes_list(request.args.getlist("mes"))
-    placa = request.args.get("placa")
+def data_vex(params: dict | None = None) -> dict:
+    params = params or {}
+    ano = _parse_int(_param(params, "ano"))
+    meses = _parse_mes_list(params.get("mes"))
+    placa = _param(params, "placa")
 
     df_comb = _only_vex(load_combustivel())
     df_manu = _only_vex(load_manutencao())
@@ -1656,7 +890,6 @@ def data_vex():
     for df_src in (df_comb, df_manu, df_hoteis, df_ped):
         anos_disponiveis.update(_unique_years(df_src))
         anos_disponiveis.update(df_src.attrs.get("anos_sheets", []))
-    anos_list = sorted(anos_disponiveis)
 
     def _meses_disponiveis(*dfs: pd.DataFrame) -> list[str]:
         frames = [df for df in dfs if not df.empty and "Mes" in df.columns]
@@ -1665,21 +898,18 @@ def data_vex():
         merged = pd.concat(frames, ignore_index=True)
         return _unique_sorted(merged, "Mes")
 
-    df_meses_base = [df for df in (df_comb, df_manu, df_hoteis, df_ped)]
+    df_meses_base = [df_comb, df_manu, df_hoteis, df_ped]
     if ano is not None:
         df_meses_base = [_filter_by_period(df, ano=ano) for df in df_meses_base]
     meses_disponiveis = _meses_disponiveis(*df_meses_base)
 
-    df_placas_base = [df for df in (df_comb, df_manu, df_ped)]
+    df_placas_base = [df_comb, df_manu, df_ped]
     if ano is not None:
         df_placas_base = [_filter_by_period(df, ano=ano) for df in df_placas_base]
     if meses:
         df_placas_base = [df[df["Mes"].isin(meses)] for df in df_placas_base]
-    placas_disponiveis: list[str] = []
-    if df_placas_base:
-        frames = [df[["PLACA"]] for df in df_placas_base if "PLACA" in df.columns]
-        if frames:
-            placas_disponiveis = _unique_sorted(pd.concat(frames, ignore_index=True), "PLACA")
+    frames = [df[["PLACA"]] for df in df_placas_base if "PLACA" in df.columns]
+    placas_disponiveis = _unique_sorted(pd.concat(frames, ignore_index=True), "PLACA") if frames else []
 
     def _apply_filters(df: pd.DataFrame) -> pd.DataFrame:
         if ano is not None:
@@ -1687,7 +917,7 @@ def data_vex():
         if meses:
             df = df[df["Mes"].isin(meses)]
         if placa and placa != "Todos" and "PLACA" in df.columns:
-            df = df[df["PLACA"] == placa]
+            df = df[df["PLACA"] == _normalize_plate_value(placa)]
         return df
 
     df_comb = _apply_filters(df_comb)
@@ -1703,52 +933,31 @@ def data_vex():
         if meses:
             km_override = km_override[km_override["Mes"].isin(meses)]
         if placa and placa != "Todos":
-            km_override = km_override[km_override["PLACA"] == placa]
+            km_override = km_override[km_override["PLACA"] == _normalize_plate_value(placa)]
         if not df_comb.empty and "Mes" in df_comb.columns and "PLACA" in df_comb.columns:
             allowed = df_comb[["Mes", "PLACA"]].dropna().drop_duplicates()
             if not allowed.empty:
                 km_override = km_override.merge(allowed, on=["Mes", "PLACA"], how="inner")
 
-    total_comb = float(df_comb["Custo"].sum()) if "Custo" in df_comb else 0.0
+    total_comb = float(pd.to_numeric(df_comb.get("Custo"), errors="coerce").sum()) if "Custo" in df_comb else 0.0
     if km_override is not None and "Km Rodados" in km_override.columns:
-        km_total = float(km_override["Km Rodados"].sum())
+        km_total = float(pd.to_numeric(km_override["Km Rodados"], errors="coerce").sum())
     else:
-        km_total = float(df_comb["Km Rodados"].sum()) if "Km Rodados" in df_comb else 0.0
-    litros_total = float(df_comb["Litros"].sum()) if "Litros" in df_comb else 0.0
-    km_por_litro = (km_total / litros_total) if litros_total else 0.0
-    custo_por_km = (total_comb / km_total) if km_total else 0.0
-    custo_por_litro = (total_comb / litros_total) if litros_total else 0.0
-    total_manu = float(df_manu["Custo"].sum()) if "Custo" in df_manu else 0.0
+        km_total = float(pd.to_numeric(df_comb.get("Km Rodados"), errors="coerce").sum()) if "Km Rodados" in df_comb else 0.0
+    litros_total = float(pd.to_numeric(df_comb.get("Litros"), errors="coerce").sum()) if "Litros" in df_comb else 0.0
+    total_manu = float(pd.to_numeric(df_manu.get("Custo"), errors="coerce").sum()) if "Custo" in df_manu else 0.0
     total_hoteis = 0.0
-    total_ped = float(df_ped["Custo"].sum()) if "Custo" in df_ped else 0.0
+    total_ped = float(pd.to_numeric(df_ped.get("Custo"), errors="coerce").sum()) if "Custo" in df_ped else 0.0
     total_vex = total_comb + total_manu + total_hoteis + total_ped
-
-    mensal_comb = _group_sum(df_comb, "Mes", "Custo", sort_by="group")
-    mensal_manu = _group_sum(df_manu, "Mes", "Custo", sort_by="group")
-    mensal_hoteis = {"Mes": [], "Valor": []}
-    mensal_ped = _group_sum(df_ped, "Mes", "Custo", sort_by="group")
 
     monthly_map: dict[str, float] = {}
     for src, key in (
-        (mensal_comb, "Custo"),
-        (mensal_manu, "Custo"),
-        (mensal_ped, "Custo"),
+        (_group_sum(df_comb, "Mes", "Custo", sort_by="group"), "Custo"),
+        (_group_sum(df_manu, "Mes", "Custo", sort_by="group"), "Custo"),
+        (_group_sum(df_ped, "Mes", "Custo", sort_by="group"), "Custo"),
     ):
-        meses_src = src.get("Mes", [])
-        valores_src = src.get(key, [])
-        for mes, valor in zip(meses_src, valores_src):
-            monthly_map[mes] = monthly_map.get(mes, 0.0) + float(valor or 0)
-
-    meses_sorted = sorted(monthly_map.keys())
-    mensal_total = {
-        "Mes": meses_sorted,
-        "Valor": [round(monthly_map[mes], 2) for mes in meses_sorted],
-    }
-
-    por_area = {
-        "Area": ["Combustivel", "Manutencao", "Pedagio"],
-        "Valor": [round(total_comb, 2), round(total_manu, 2), round(total_ped, 2)],
-    }
+        for mes_val, valor in zip(src.get("Mes", []), src.get(key, [])):
+            monthly_map[mes_val] = monthly_map.get(mes_val, 0.0) + float(valor or 0)
 
     placa_totais: dict[str, float] = {}
     for df_src, col_valor in ((df_comb, "Custo"), (df_manu, "Custo"), (df_ped, "Custo")):
@@ -1761,13 +970,9 @@ def data_vex():
             placa_totais[key] = placa_totais.get(key, 0.0) + float(total or 0.0)
 
     placas_ordenadas = sorted(placa_totais.items(), key=lambda item: item[1], reverse=True)
-    gasto_por_placa = {
-        "PLACA": [item[0] for item in placas_ordenadas],
-        "Valor": [round(item[1], 2) for item in placas_ordenadas],
-    }
-
-    return jsonify({
-        "anos": anos_list,
+    meses_sorted = sorted(monthly_map.keys())
+    return {
+        "anos": sorted(anos_disponiveis),
         "meses": meses_disponiveis,
         "placas": placas_disponiveis,
         "total_vex": round(total_vex, 2),
@@ -1777,13 +982,13 @@ def data_vex():
         "pedagio_total": round(total_ped, 2),
         "km_total": round(km_total, 2),
         "litros_total": round(litros_total, 2),
-        "km_por_litro": round(km_por_litro, 3),
-        "custo_por_km": round(custo_por_km, 4),
-        "custo_por_litro": round(custo_por_litro, 4),
-        "mensal_total": mensal_total,
-        "por_area": por_area,
-        "gasto_por_placa": gasto_por_placa,
-    })
+        "km_por_litro": round((km_total / litros_total) if litros_total else 0.0, 3),
+        "custo_por_km": round((total_comb / km_total) if km_total else 0.0, 4),
+        "custo_por_litro": round((total_comb / litros_total) if litros_total else 0.0, 4),
+        "mensal_total": {"Mes": meses_sorted, "Valor": [round(monthly_map[mes], 2) for mes in meses_sorted]},
+        "por_area": {"Area": ["Combustivel", "Manutencao", "Pedagio"], "Valor": [round(total_comb, 2), round(total_manu, 2), round(total_ped, 2)]},
+        "gasto_por_placa": {"PLACA": [item[0] for item in placas_ordenadas], "Valor": [round(item[1], 2) for item in placas_ordenadas]},
+    }
 
 
 def _warm_data_caches(*, blocking: bool = False) -> None:
@@ -1796,11 +1001,8 @@ def _warm_data_caches(*, blocking: bool = False) -> None:
 
     def _run() -> None:
         with concurrent.futures.ThreadPoolExecutor(max_workers=len(loaders)) as pool:
-            future_map = {
-                pool.submit(loader): (loader, label)
-                for loader, label in loaders
-            }
-            for future, (loader, label) in future_map.items():
+            future_map = {pool.submit(loader): label for loader, label in loaders}
+            for future, label in future_map.items():
                 try:
                     future.result()
                 except Exception as exc:  # pragma: no cover
@@ -1813,9 +1015,7 @@ def _warm_data_caches(*, blocking: bool = False) -> None:
 
 
 if os.environ.get("JR_SKIP_WARM_CACHE", "").strip().lower() not in {"1", "true", "yes"}:
-    _warm_data_caches(
-        blocking=os.environ.get("WARM_CACHE_SYNC", "").strip().lower() in {"1", "true", "yes"}
-    )
+    _warm_data_caches(blocking=os.environ.get("WARM_CACHE_SYNC", "").strip().lower() in {"1", "true", "yes"})
 
 
 def _safe_total(
@@ -1830,10 +1030,6 @@ def _safe_total(
 ) -> dict:
     try:
         df = loader()
-    except PermissionError:
-        return {"status": "erro", "motivo": "permissao", "valor": None, "categorias": None, "anos_sheets": []}
-    except FileNotFoundError:
-        return {"status": "erro", "motivo": "arquivo_nao_encontrado", "valor": None, "categorias": None, "anos_sheets": []}
     except Exception as exc:  # pragma: no cover
         return {"status": "erro", "motivo": str(exc), "valor": None, "categorias": None, "anos_sheets": []}
 
@@ -1841,11 +1037,9 @@ def _safe_total(
     anos_sheets = df.attrs.get("anos_sheets", [])
     if "Mes" in df.columns:
         period_series = pd.to_datetime(df["Mes"], errors="coerce").dt.to_period("M")
-        valores_periodo = {str(periodo) for periodo in period_series.dropna().unique()}
-        periodos_disponiveis = sorted(valores_periodo)
+        periodos_disponiveis = sorted({str(periodo) for periodo in period_series.dropna().unique()})
 
     df = _filter_by_period(df, ano=ano, mes=mes, meses=meses or [])
-
     try:
         resumo = aggregator(df)
     except Exception as exc:  # pragma: no cover
@@ -1858,14 +1052,8 @@ def _safe_total(
         df_categoria[value_col] = pd.to_numeric(df_categoria[value_col], errors="coerce")
         grupos = (
             df_categoria.groupby(
-                df_categoria["Categoria"]
-                .astype("string")
-                .str.strip()
-                .str.title()
-                .replace({"": "Outros"})
-                .fillna("Outros")
-            )[value_col]
-            .sum()
+                df_categoria["Categoria"].astype("string").str.strip().str.title().replace({"": "Outros"}).fillna("Outros")
+            )[value_col].sum()
         )
         if not grupos.empty:
             categorias = {categoria: float(valor_cat) for categoria, valor_cat in grupos.items() if pd.notna(valor_cat)}
@@ -1886,6 +1074,7 @@ def compute_overview_totals(*, ano: int | None = None, mes: int | None = None, m
     meses_lista = list(meses_lista or [])
     if mes is not None and mes not in meses_lista:
         meses_lista.append(mes)
+
     areas = {
         "combustivel": (load_combustivel, agg_combustivel, "custo_total", "Custo"),
         "manutencao": (load_manutencao, agg_manutencao, "custo_total", "Custo"),
@@ -1895,11 +1084,7 @@ def compute_overview_totals(*, ano: int | None = None, mes: int | None = None, m
 
     chave_cache = tuple(_CACHE_MAP[nome]["mtime"] for nome in ("combustivel", "manutencao", "hoteis", "pedagio"))
     use_cache = ano is None and mes is None and not meses_lista
-    if (
-        use_cache
-        and _OVERVIEW_CACHE["mtimes"] == chave_cache
-        and _OVERVIEW_CACHE["dados"] is not None
-    ):
+    if use_cache and _OVERVIEW_CACHE["mtimes"] == chave_cache and _OVERVIEW_CACHE["dados"] is not None:
         return _OVERVIEW_CACHE["dados"]
 
     detalhes = {}
@@ -1907,25 +1092,11 @@ def compute_overview_totals(*, ano: int | None = None, mes: int | None = None, m
     segmento_totais = defaultdict(float)
     periodos_unicos: set[str] = set()
     anos_extra: set[int] = set()
+    max_workers = len(areas) if ano is None and mes is None else 1
 
-    use_threads = ano is None and mes is None
-    if use_threads:
-        pool = concurrent.futures.ThreadPoolExecutor(max_workers=len(areas))
-    else:
-        pool = concurrent.futures.ThreadPoolExecutor(max_workers=1)
-
-    with pool:
+    with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as pool:
         future_map = {
-            pool.submit(
-                _safe_total,
-                loader,
-                aggregator,
-                chave,
-                valor_col,
-                ano=ano,
-                mes=mes,
-                meses=meses_lista,
-            ): nome
+            pool.submit(_safe_total, loader, aggregator, chave, valor_col, ano=ano, mes=mes, meses=meses_lista): nome
             for nome, (loader, aggregator, chave, valor_col) in areas.items()
         }
         for future in concurrent.futures.as_completed(future_map):
@@ -1934,8 +1105,7 @@ def compute_overview_totals(*, ano: int | None = None, mes: int | None = None, m
             detalhes[nome] = resultado
             if resultado["valor"] is not None:
                 total_geral += resultado["valor"]
-            categorias = resultado.get("categorias") or {}
-            for categoria, valor in categorias.items():
+            for categoria, valor in (resultado.get("categorias") or {}).items():
                 segmento_totais[categoria] += valor
             for periodo in resultado.get("periodos") or []:
                 if periodo:
@@ -1953,8 +1123,7 @@ def compute_overview_totals(*, ano: int | None = None, mes: int | None = None, m
         anos_disponiveis = sorted(set(anos_disponiveis) | anos_extra)
     periodos_base = periodos_ordenados
     if ano is not None:
-        prefix = f"{ano}-"
-        periodos_base = [periodo for periodo in periodos_ordenados if periodo.startswith(prefix)]
+        periodos_base = [periodo for periodo in periodos_ordenados if periodo.startswith(f"{ano}-")]
     meses_disponiveis = sorted({int(p.split("-")[1]) for p in periodos_base if "-" in p})
 
     detalhes["total_geral"] = float(total_geral)
@@ -1967,36 +1136,27 @@ def compute_overview_totals(*, ano: int | None = None, mes: int | None = None, m
     detalhes["filtro"] = {"ano": ano, "mes": mes, "meses": meses_lista}
 
     if use_cache:
-        _OVERVIEW_CACHE["mtimes"] = tuple(
-            _CACHE_MAP[nome]["mtime"] for nome in ("combustivel", "manutencao", "hoteis", "pedagio")
-        )
+        _OVERVIEW_CACHE["mtimes"] = tuple(_CACHE_MAP[nome]["mtime"] for nome in ("combustivel", "manutencao", "hoteis", "pedagio"))
         _OVERVIEW_CACHE["dados"] = detalhes
     return detalhes
 
 
-@app.route("/data/overview")
-def data_overview():
-    ano = _parse_int(request.args.get("ano"))
-    mes = _parse_int(request.args.get("mes"), min_value=1, max_value=12)
-    meses_lista = _parse_mes_int_list(request.args.getlist("mes"))
+def data_overview(params: dict | None = None) -> dict:
+    params = params or {}
+    ano = _parse_int(_param(params, "ano"))
+    mes = _parse_int(_param(params, "mes"), min_value=1, max_value=12)
+    meses_lista = _parse_mes_int_list(params.get("mes"))
     if mes is not None and mes not in meses_lista:
         meses_lista.append(mes)
-    return jsonify(compute_overview_totals(ano=ano, mes=mes, meses_lista=meses_lista))
+    return compute_overview_totals(ano=ano, mes=mes, meses_lista=meses_lista)
 
 
-def _running_inside_streamlit() -> bool:
-    try:
-        from streamlit.runtime import exists as streamlit_runtime_exists
-    except Exception:
-        return False
-    return bool(streamlit_runtime_exists())
+def main() -> None:
+    from streamlit_app import main as streamlit_main
+
+    os.environ.setdefault("JR_SKIP_WARM_CACHE", "1")
+    streamlit_main()
 
 
 if __name__ == "__main__":
-    if _running_inside_streamlit():
-        os.environ.setdefault("JR_SKIP_WARM_CACHE", "1")
-        from streamlit_app import main as streamlit_main
-
-        streamlit_main()
-    else:
-        app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 5000)))
+    main()
