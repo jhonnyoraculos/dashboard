@@ -2328,10 +2328,37 @@ def render_cadastro() -> None:
 
             plate_map = _registered_plate_map()
             if plate_map:
+                with st.form("form_editar_placas", clear_on_submit=False):
+                    e1, e2, e3 = st.columns([1.2, 1.0, 1.0])
+                    with e1:
+                        placa_editar = st.selectbox("Editar placa cadastrada", list(plate_map.keys()), key="cad_placa_editar")
+                    with e2:
+                        categoria_atual = plate_map.get(placa_editar, "Transporte")
+                        categoria_index = 1 if categoria_atual == "Vex" else 0
+                        categoria_editar = st.selectbox(
+                            "Nova categoria",
+                            ["Transporte", "Vex"],
+                            index=categoria_index,
+                            key="cad_placa_categoria_editar",
+                        )
+                    with e3:
+                        st.write("")
+                        edit_submitted = st.form_submit_button("Salvar edição", type="primary", width="stretch")
+                    if edit_submitted:
+                        _save_entry(
+                            "placas",
+                            {"PLACA": placa_editar, "Categoria": categoria_editar},
+                            required=["PLACA", "Categoria"],
+                            replace_keys=["PLACA"],
+                            success="Placa atualizada.",
+                        )
+
                 table = pd.DataFrame(
                     [{"Placa": placa, "Categoria": categoria} for placa, categoria in plate_map.items()]
                 )
                 st.dataframe(table, width="stretch", hide_index=True)
+            else:
+                st.info("Cadastre a primeira placa para liberar a edição.")
 
         with tabs[1]:
             with st.form("form_combustivel", clear_on_submit=True):
