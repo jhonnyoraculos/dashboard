@@ -101,7 +101,9 @@ def _unique_sorted(df: pd.DataFrame, column: str) -> list:
     series = df[column].dropna()
     if series.empty:
         return []
-    return sorted(series.astype(str).str.strip().unique().tolist())
+    series = series.astype("string").str.strip()
+    series = series[(series != "") & (~series.str.lower().isin(["nan", "none", "nat", "<na>"]))]
+    return sorted(series.unique().tolist())
 
 
 def _unique_years(df: pd.DataFrame) -> list[int]:
@@ -356,6 +358,28 @@ def _normalize_ascii(value):
     return unicodedata.normalize("NFKD", str(value)).encode("ascii", "ignore").decode("ascii").strip()
 
 
+def _canonical_plate(value):
+    if pd.isna(value):
+        return pd.NA
+    text = _normalize_ascii(value).upper()
+    text = re.sub(r"\s+", " ", text).strip()
+    if not text or text in {"NAN", "NONE", "NAT", "<NA>"}:
+        return pd.NA
+    if "SEM" in text and "PLACA" in text:
+        return "SEM PLACA"
+    compact = re.sub(r"[^A-Z0-9]", "", text)
+    match = re.search(r"[A-Z]{3}[0-9][A-Z0-9][0-9]{2}|[A-Z]{3}[0-9]{4}", compact)
+    if match:
+        return match.group(0)
+    return text
+
+
+def _normalize_plate_series(series: pd.Series) -> pd.Series:
+    if series is None:
+        return pd.Series(dtype="string")
+    return series.apply(_canonical_plate).astype("string")
+
+
 def _canonical_tipo(value):
     if pd.isna(value):
         return None
@@ -434,7 +458,7 @@ def load_combustivel() -> pd.DataFrame:
         if "Mes" not in df_km.columns or "Km Rodados" not in df_km.columns:
             return pd.DataFrame(columns=["Mes", "PLACA", "Km Rodados"])
 
-        df_km["PLACA"] = df_km.get("PLACA").astype("string").str.strip().str.upper()
+        df_km["PLACA"] = _normalize_plate_series(df_km.get("PLACA"))
         df_km["Km Rodados"] = pd.to_numeric(df_km.get("Km Rodados"), errors="coerce")
 
         mes_raw = df_km["Mes"]
@@ -520,9 +544,11 @@ def load_combustivel() -> pd.DataFrame:
         df = df.dropna(subset=["Data"]).copy()
         df["Mes"] = df["Data"].dt.to_period("M").astype(str)
 
-        for col in ["Combustivel", "POSTOS", "PLACA"]:
+        for col in ["Combustivel", "POSTOS"]:
             if col in df.columns:
                 df[col] = df[col].astype("string").str.strip()
+        if "PLACA" in df.columns:
+            df["PLACA"] = _normalize_plate_series(df["PLACA"])
 
         vex_col = next((col for col in df.columns if col.lower() == "vex"), None)
         if vex_col:
@@ -682,9 +708,10 @@ def load_manutencao() -> pd.DataFrame:
         df["Custo"] = _to_numeric_currency(df.get("Custo"))
 
         df = df.dropna(subset=["Mes", "Custo"]).copy()
-        for col in ["PLACA", "OFICINA"]:
-            if col in df.columns:
-                df[col] = df[col].astype("string").str.strip()
+        if "PLACA" in df.columns:
+            df["PLACA"] = _normalize_plate_series(df["PLACA"])
+        if "OFICINA" in df.columns:
+            df["OFICINA"] = df["OFICINA"].astype("string").str.strip()
 
         vex_col = next((col for col in df.columns if col.lower() == "vex"), None)
         if vex_col:
@@ -1120,13 +1147,7 @@ def load_pedagio() -> pd.DataFrame:
             df['Tipo'] = pd.Series(pd.NA, index=df.index, dtype='string')
 
         if 'PLACA' in df.columns:
-            df['PLACA'] = (
-                df['PLACA']
-                .apply(_normalize_ascii)
-                .astype('string')
-                .str.upper()
-                .replace({'': pd.NA})
-            )
+            df['PLACA'] = _normalize_plate_series(df['PLACA'])
         else:
             df['PLACA'] = pd.Series(pd.NA, index=df.index, dtype='string')
 
@@ -1453,11 +1474,9 @@ def data_vex():
         df_placas_base = [df[df["Mes"].isin(meses)] for df in df_placas_base]
     placas_disponiveis: list[str] = []
     if df_placas_base:
-        placas_set = set()
-        for df in df_placas_base:
-            if "PLACA" in df.columns:
-                placas_set.update(df["PLACA"].dropna().astype(str).str.strip().unique().tolist())
-        placas_disponiveis = sorted(placas_set)
+        frames = [df[["PLACA"]] for df in df_placas_base if "PLACA" in df.columns]
+        if frames:
+            placas_disponiveis = _unique_sorted(pd.concat(frames, ignore_index=True), "PLACA")
 
     def _apply_filters(df: pd.DataFrame) -> pd.DataFrame:
         if ano is not None:

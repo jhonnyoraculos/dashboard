@@ -98,7 +98,7 @@ def inject_css() -> None:
           background: linear-gradient(180deg, #fbfdff 0%, #f5f7fc 100%);
           color: var(--jr-blue);
           position: relative;
-          overflow: hidden;
+          overflow-x: hidden;
         }}
 
         .stApp::before,
@@ -257,6 +257,7 @@ def inject_css() -> None:
           top: 80px;
           z-index: 9;
           isolation: isolate;
+          overflow: visible;
         }}
 
         .st-key-comb_filterbar > div,
@@ -776,13 +777,13 @@ def inject_css() -> None:
 
         @media (max-width: 780px) {{
           .block-container {{
-            padding: 0 14px 32px;
+            padding: 0 10px 30px;
           }}
 
           .jr-topbar {{
             margin: 0;
             width: auto;
-            padding: 14px 16px;
+            padding: 10px 12px;
             position: static;
           }}
 
@@ -791,10 +792,27 @@ def inject_css() -> None:
           .st-key-hotel_filterbar,
           .st-key-ped_filterbar,
           .st-key-vex_filterbar {{
-            margin: 0 0 26px;
+            margin: 0 -10px 18px;
             width: auto;
-            padding: 0 16px 16px;
+            padding: 8px 10px 10px;
             position: static;
+            overflow: visible;
+          }}
+
+          .st-key-comb_filterbar [data-testid="stHorizontalBlock"],
+          .st-key-manu_filterbar [data-testid="stHorizontalBlock"],
+          .st-key-hotel_filterbar [data-testid="stHorizontalBlock"],
+          .st-key-ped_filterbar [data-testid="stHorizontalBlock"],
+          .st-key-vex_filterbar [data-testid="stHorizontalBlock"] {{
+            flex-wrap: nowrap !important;
+            align-items: stretch;
+            gap: 8px;
+            overflow-x: auto;
+            overflow-y: visible;
+            padding: 2px 2px 8px;
+            scroll-snap-type: x proximity;
+            -webkit-overflow-scrolling: touch;
+            scrollbar-width: thin;
           }}
 
           .st-key-comb_filterbar [data-testid="column"],
@@ -802,12 +820,42 @@ def inject_css() -> None:
           .st-key-hotel_filterbar [data-testid="column"],
           .st-key-ped_filterbar [data-testid="column"],
           .st-key-vex_filterbar [data-testid="column"] {{
-            flex: 1 1 calc(50% - 8px) !important;
-            min-width: min(240px, 100%) !important;
+            flex: 0 0 clamp(132px, 43vw, 190px) !important;
+            min-width: clamp(132px, 43vw, 190px) !important;
+            max-width: clamp(132px, 43vw, 190px) !important;
+            scroll-snap-align: start;
+          }}
+
+          .st-key-comb_filterbar div[data-baseweb="select"] > div,
+          .st-key-manu_filterbar div[data-baseweb="select"] > div,
+          .st-key-hotel_filterbar div[data-baseweb="select"] > div,
+          .st-key-ped_filterbar div[data-baseweb="select"] > div,
+          .st-key-vex_filterbar div[data-baseweb="select"] > div {{
+            min-height: 36px;
+          }}
+
+          .st-key-comb_filterbar span[data-baseweb="tag"],
+          .st-key-manu_filterbar span[data-baseweb="tag"],
+          .st-key-hotel_filterbar span[data-baseweb="tag"],
+          .st-key-ped_filterbar span[data-baseweb="tag"],
+          .st-key-vex_filterbar span[data-baseweb="tag"] {{
+            max-width: 74px;
+            min-height: 22px;
+          }}
+
+          .st-key-comb_filterbar span[data-baseweb="tag"] span,
+          .st-key-manu_filterbar span[data-baseweb="tag"] span,
+          .st-key-hotel_filterbar span[data-baseweb="tag"] span,
+          .st-key-ped_filterbar span[data-baseweb="tag"] span,
+          .st-key-vex_filterbar span[data-baseweb="tag"] span {{
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+            font-size: 11px;
           }}
 
           .jr-topbar h1 {{
-            font-size: 18px;
+            font-size: 17px;
           }}
 
           .home-wrapper {{
@@ -844,8 +892,9 @@ def inject_css() -> None:
           .st-key-hotel_filterbar [data-testid="column"],
           .st-key-ped_filterbar [data-testid="column"],
           .st-key-vex_filterbar [data-testid="column"] {{
-            flex: 1 1 100% !important;
-            min-width: 100% !important;
+            flex-basis: 150px !important;
+            min-width: 150px !important;
+            max-width: 150px !important;
           }}
 
           .filter-back,
@@ -854,7 +903,10 @@ def inject_css() -> None:
           .st-key-hotel_filterbar .stButton > button,
           .st-key-ped_filterbar .stButton > button,
           .st-key-vex_filterbar .stButton > button {{
-            min-height: 42px;
+            min-height: 36px;
+            padding-left: 8px;
+            padding-right: 8px;
+            font-size: 12px;
           }}
         }}
         </style>
@@ -1010,6 +1062,23 @@ def month_filter_label(value: object) -> str:
 
 def select_all_label(label: str):
     return lambda value: f"{label} (Todos)" if value == "Todos" else str(value)
+
+
+def unique_filter_options(options: list[object]) -> list[object]:
+    cleaned: list[object] = []
+    seen: set[str] = set()
+    for item in options or []:
+        if item is None or item == "Todos":
+            continue
+        text = str(item).strip()
+        if not text or text.lower() in {"nan", "none", "nat", "<na>"}:
+            continue
+        key = text.upper()
+        if key in seen:
+            continue
+        seen.add(key)
+        cleaned.append(item)
+    return cleaned
 
 
 def normalize_multiselect(values: list[object], previous: list[object] | None = None) -> list[object]:
@@ -1808,7 +1877,7 @@ def filter_controls(
             )
 
         month_data = route_json(route, {"ano": None if ano == "Todos" else ano, "mes": ["Todos"]})
-        meses = month_data.get("meses", []) or []
+        meses = unique_filter_options(month_data.get("meses", []) or [])
         mes_options = ["Todos", *meses]
         mes_key = f"{key_prefix}_mes"
         mes_previous_key = f"{mes_key}__previous"
@@ -1835,7 +1904,7 @@ def filter_controls(
 
         params: dict[str, object] = {"ano": None if ano == "Todos" else ano, "mes": query_mes(meses_selected)}
         for idx, (param_name, label, options) in enumerate(extra_filters, start=2):
-            options = ["Todos", *[item for item in options if item != "Todos"]]
+            options = ["Todos", *unique_filter_options(options)]
             current = st.session_state.get(f"{key_prefix}_{param_name}", "Todos")
             if current not in options:
                 current = "Todos"
