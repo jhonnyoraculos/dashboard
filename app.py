@@ -7,6 +7,7 @@ import re
 import threading
 import unicodedata
 from collections import defaultdict
+from datetime import datetime, timezone
 
 import pandas as pd
 
@@ -166,6 +167,132 @@ def _read_database_table(dataset: str, columns: list[str], *, date_columns: list
     df = df[columns + [column for column in df.columns if column not in columns]]
     df.attrs["anos_sheets"] = _db_metadata(f"{dataset}.anos_sheets", [])
     return df.copy()
+
+
+def _quote_identifier(value: str) -> str:
+    return '"' + value.replace('"', '""') + '"'
+
+
+def _metadata_value(value) -> str:
+    return json.dumps(value, ensure_ascii=False, default=str)
+
+
+def _write_metadata(conn, key: str, value) -> None:
+    from sqlalchemy import text
+
+    conn.execute(
+        text(
+            f"""
+            CREATE TABLE IF NOT EXISTS {_quote_identifier(DB_METADATA_TABLE)} (
+                "key" TEXT PRIMARY KEY,
+                value_json TEXT NOT NULL,
+                updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+            )
+            """
+        )
+    )
+    conn.execute(
+        text(
+            f"""
+            INSERT INTO {_quote_identifier(DB_METADATA_TABLE)} ("key", value_json, updated_at)
+            VALUES (:key, :value_json, CURRENT_TIMESTAMP)
+            ON CONFLICT (key)
+            DO UPDATE SET value_json = EXCLUDED.value_json, updated_at = CURRENT_TIMESTAMP
+            """
+        ),
+        {"key": key, "value_json": _metadata_value(value)},
+    )
+
+
+def _clear_dataset_cache(dataset: str) -> None:
+    targets = ["combustivel"] if dataset == "combustivel_km" else [dataset]
+    for target in targets:
+        cache = _CACHE_MAP.get(target)
+        if not cache:
+            continue
+        cache["mtime"] = None
+        cache["df"] = None
+        if target == "combustivel":
+            cache["km_rodados_mensal"] = None
+    _OVERVIEW_CACHE["mtimes"] = None
+    _OVERVIEW_CACHE["dados"] = None
+
+
+def _normalize_insert_value(value):
+    if isinstance(value, str) and value.strip() in ("", "Todos"):
+        return None
+    if isinstance(value, pd.Timestamp):
+        return value.to_pydatetime()
+    try:
+        if pd.isna(value):
+            return None
+    except (TypeError, ValueError):
+        pass
+    return value
+
+
+def _prepare_insert_row(dataset: str, row: dict) -> dict:
+    columns_by_dataset = {
+        "combustivel": _COMBUSTIVEL_COLUMNS,
+        "combustivel_km": _COMBUSTIVEL_KM_COLUMNS,
+        "manutencao": _MANUTENCAO_COLUMNS,
+        "hoteis": _HOTEIS_COLUMNS,
+        "pedagio": _PEDAGIO_COLUMNS,
+    }
+    columns = columns_by_dataset[dataset]
+    prepared = {column: _normalize_insert_value(row.get(column)) for column in columns}
+
+    if prepared.get("Data") is not None and not prepared.get("Mes"):
+        dt = pd.to_datetime(prepared["Data"], errors="coerce")
+        if pd.notna(dt):
+            prepared["Mes"] = dt.to_period("M").strftime("%Y-%m")
+
+    if "PLACA" in prepared:
+        prepared["PLACA"] = _normalize_insert_value(_normalize_plate_value(prepared["PLACA"]))
+    if "Tipo" in prepared and dataset == "pedagio":
+        prepared["Tipo"] = _normalize_tipo_value(prepared["Tipo"])
+    if "Categoria" in prepared:
+        categoria = str(prepared["Categoria"] or "Transporte").strip()
+        prepared["Categoria"] = "Vex" if categoria.lower() == "vex" else "Transporte"
+
+    for column, value in list(prepared.items()):
+        if isinstance(value, str):
+            value = value.strip()
+            prepared[column] = value or None
+    return prepared
+
+
+def save_dashboard_record(dataset: str, row: dict, *, replace_keys: list[str] | None = None) -> str:
+    if dataset not in DB_TABLES:
+        raise ValueError(f"Dataset invalido: {dataset}")
+
+    from sqlalchemy import text
+
+    prepared = _prepare_insert_row(dataset, row)
+    columns = [column for column, value in prepared.items() if value is not None]
+    if not columns:
+        raise ValueError("Nenhum dado valido para salvar.")
+
+    table = _quote_identifier(DB_TABLES[dataset])
+    column_sql = ", ".join(_quote_identifier(column) for column in columns)
+    value_sql = ", ".join(f":{column}" for column in columns)
+    version = datetime.now(timezone.utc).isoformat()
+
+    with _db_engine().begin() as conn:
+        if replace_keys:
+            keys = [key for key in replace_keys if key in prepared and prepared.get(key) is not None]
+            if keys:
+                where_sql = " AND ".join(f"{_quote_identifier(key)} = :replace_{key}" for key in keys)
+                conn.execute(
+                    text(f"DELETE FROM {table} WHERE {where_sql}"),
+                    {f"replace_{key}": prepared[key] for key in keys},
+                )
+        conn.execute(text(f"INSERT INTO {table} ({column_sql}) VALUES ({value_sql})"), {column: prepared[column] for column in columns})
+        _write_metadata(conn, f"{dataset}.version", version)
+        _write_metadata(conn, "import.version", version)
+
+    _clear_dataset_cache(dataset)
+    return version
 
 
 def _normalize_ascii(value):

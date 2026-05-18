@@ -435,6 +435,53 @@ def inject_css() -> None:
           box-shadow: 0 10px 24px rgba(190,30,45,0.25);
         }}
 
+        .home-admin-link {{
+          position: absolute;
+          top: 24px;
+          right: 24px;
+          min-height: 38px;
+          display: inline-flex;
+          align-items: center;
+          justify-content: center;
+          padding: 0 16px;
+          border-radius: 999px;
+          border: 1.5px solid rgba(28,45,107,.16);
+          background: rgba(255,255,255,.86);
+          color: var(--jr-blue) !important;
+          font-size: 13px;
+          font-weight: 800;
+          text-decoration: none !important;
+          box-shadow: 0 10px 24px rgba(16,24,40,.10);
+          backdrop-filter: blur(10px);
+          z-index: 2;
+        }}
+
+        .st-key-cadastro_shell {{
+          max-width: 1120px;
+          margin: 28px auto 48px;
+          padding: 28px;
+          border: 1px solid rgba(255,255,255,.74);
+          border-radius: var(--radius);
+          background: rgba(255,255,255,.76);
+          box-shadow: 0 8px 22px rgba(16,24,40,.10);
+          backdrop-filter: blur(14px);
+        }}
+
+        .st-key-cadastro_shell [data-testid="stForm"] {{
+          border: 1.5px solid var(--card-border);
+          border-radius: var(--radius);
+          background: rgba(255,255,255,.82);
+          padding: 22px;
+          box-shadow: 0 12px 28px rgba(16,24,40,.10);
+        }}
+
+        .st-key-cadastro_shell .stButton > button,
+        .st-key-cadastro_shell [data-testid="stFormSubmitButton"] button {{
+          min-height: 42px;
+          border-radius: 999px;
+          font-weight: 800;
+        }}
+
         .home-total-section {{
           background: rgba(244,247,253,0.68);
           border: 1px solid rgba(255,255,255,0.7);
@@ -924,6 +971,13 @@ def inject_css() -> None:
 
           .home-brand {{
             flex-direction: column;
+          }}
+
+          .home-admin-link {{
+            position: relative;
+            top: auto;
+            right: auto;
+            align-self: flex-start;
           }}
 
           .home-header h1 {{
@@ -2018,6 +2072,7 @@ def render_home() -> None:
     st.markdown(
         f"""
         <header class="home-header">
+          <a class="home-admin-link" href="?page=cadastro" target="_self">Adicionar dados</a>
           <div class="home-brand">
             <img src="{logo}" alt="JR" class="home-logo">
             <div>
@@ -2163,6 +2218,191 @@ def render_home() -> None:
         """,
         unsafe_allow_html=True,
     )
+
+
+def _entry_month(value: date) -> str:
+    return f"{value.year}-{value.month:02d}"
+
+
+def _entry_required_missing(row: dict, fields: list[str]) -> list[str]:
+    missing = []
+    for field in fields:
+        value = row.get(field)
+        if value is None:
+            missing.append(field)
+        elif isinstance(value, str) and not value.strip():
+            missing.append(field)
+    return missing
+
+
+def _save_entry(
+    dataset: str,
+    row: dict,
+    *,
+    required: list[str],
+    success: str,
+    replace_keys: list[str] | None = None,
+) -> bool:
+    missing = _entry_required_missing(row, required)
+    if missing:
+        st.warning("Preencha os campos obrigatórios: " + ", ".join(missing))
+        return False
+    try:
+        backend.save_dashboard_record(dataset, row, replace_keys=replace_keys)
+    except Exception as exc:
+        st.error("Não foi possível salvar no Neon.")
+        st.exception(exc)
+        return False
+    st.success(success)
+    return True
+
+
+def render_cadastro() -> None:
+    topbar("JR DASHBOARD • Adicionar dados", back=True)
+    with st.container(key="cadastro_shell"):
+        tabs = st.tabs(["Combustível", "KM mensal", "Manutenção", "Hotéis", "Pedágio/IPVA"])
+
+        with tabs[0]:
+            with st.form("form_combustivel", clear_on_submit=True):
+                c1, c2, c3 = st.columns(3)
+                with c1:
+                    data = st.date_input("Data", value=date.today(), key="cad_comb_data")
+                    placa = st.text_input("Placa", placeholder="ABC1D23", key="cad_comb_placa").upper()
+                    categoria = st.selectbox("Categoria", ["Transporte", "Vex"], key="cad_comb_categoria")
+                with c2:
+                    combustivel = st.text_input("Combustível", placeholder="Diesel S10", key="cad_comb_combustivel")
+                    posto = st.text_input("Posto", key="cad_comb_posto")
+                    km = st.number_input("KM rodados", min_value=0.0, step=1.0, key="cad_comb_km")
+                with c3:
+                    litros = st.number_input("Litros", min_value=0.0, step=1.0, key="cad_comb_litros")
+                    custo = st.number_input("Custo total", min_value=0.0, step=10.0, format="%.2f", key="cad_comb_custo")
+                    submitted = st.form_submit_button("Salvar combustível", type="primary", width="stretch")
+                if submitted:
+                    _save_entry(
+                        "combustivel",
+                        {
+                            "Data": data,
+                            "Mes": _entry_month(data),
+                            "Km Rodados": km,
+                            "Litros": litros,
+                            "Custo": custo,
+                            "Combustivel": combustivel,
+                            "POSTOS": posto,
+                            "PLACA": placa,
+                            "Categoria": categoria,
+                        },
+                        required=["Data", "PLACA", "Combustivel", "POSTOS"],
+                        success="Lançamento de combustível salvo.",
+                    )
+
+        with tabs[1]:
+            with st.form("form_km_mensal", clear_on_submit=True):
+                c1, c2, c3 = st.columns(3)
+                with c1:
+                    ano = st.number_input("Ano", min_value=2020, max_value=2100, value=CURRENT_YEAR, step=1, key="cad_km_ano")
+                with c2:
+                    mes = st.selectbox("Mês", list(range(1, 13)), format_func=month_label, key="cad_km_mes")
+                    placa = st.text_input("Placa", placeholder="ABC1D23", key="cad_km_placa").upper()
+                with c3:
+                    km = st.number_input("KM do mês", min_value=0.0, step=1.0, key="cad_km_total")
+                    substituir = st.checkbox("Substituir se já existir", value=True, key="cad_km_replace")
+                    submitted = st.form_submit_button("Salvar KM mensal", type="primary", width="stretch")
+                if submitted:
+                    _save_entry(
+                        "combustivel_km",
+                        {"Mes": f"{int(ano)}-{int(mes):02d}", "PLACA": placa, "Km Rodados": km},
+                        required=["Mes", "PLACA"],
+                        replace_keys=["Mes", "PLACA"] if substituir else None,
+                        success="KM mensal salvo.",
+                    )
+
+        with tabs[2]:
+            with st.form("form_manutencao", clear_on_submit=True):
+                c1, c2, c3 = st.columns(3)
+                with c1:
+                    data = st.date_input("Data", value=date.today(), key="cad_manu_data")
+                    placa = st.text_input("Placa", placeholder="ABC1D23", key="cad_manu_placa").upper()
+                with c2:
+                    oficina = st.text_input("Oficina", key="cad_manu_oficina")
+                    categoria = st.selectbox("Categoria", ["Transporte", "Vex"], key="cad_manu_categoria")
+                with c3:
+                    custo = st.number_input("Custo", min_value=0.0, step=10.0, format="%.2f", key="cad_manu_custo")
+                    submitted = st.form_submit_button("Salvar manutenção", type="primary", width="stretch")
+                if submitted:
+                    _save_entry(
+                        "manutencao",
+                        {
+                            "Data": data,
+                            "Mes": _entry_month(data),
+                            "Custo": custo,
+                            "PLACA": placa,
+                            "OFICINA": oficina,
+                            "Categoria": categoria,
+                        },
+                        required=["Data", "PLACA", "OFICINA"],
+                        success="Lançamento de manutenção salvo.",
+                    )
+
+        with tabs[3]:
+            with st.form("form_hoteis", clear_on_submit=True):
+                c1, c2, c3 = st.columns(3)
+                with c1:
+                    data = st.date_input("Data", value=date.today(), key="cad_hotel_data")
+                    cidade = st.text_input("Cidade", key="cad_hotel_cidade")
+                    hotel = st.text_input("Hotel/Pousada", key="cad_hotel_nome")
+                with c2:
+                    motorista = st.text_input("Motorista", key="cad_hotel_motorista")
+                    ajudante = st.text_input("Ajudante", key="cad_hotel_ajudante")
+                    tipo = st.text_input("Tipo", placeholder="Hospedagem", key="cad_hotel_tipo")
+                with c3:
+                    dias = st.number_input("Dias", min_value=0.0, step=1.0, key="cad_hotel_dias")
+                    valor = st.number_input("Valor", min_value=0.0, step=10.0, format="%.2f", key="cad_hotel_valor")
+                    submitted = st.form_submit_button("Salvar hotel", type="primary", width="stretch")
+                if submitted:
+                    _save_entry(
+                        "hoteis",
+                        {
+                            "Data": data,
+                            "Mes": _entry_month(data),
+                            "Valor": valor,
+                            "Dias": dias,
+                            "Motorista": motorista,
+                            "Ajudante": ajudante,
+                            "Cidade": cidade,
+                            "Hotel": hotel,
+                            "Tipo": tipo,
+                            "Categoria": "Transporte",
+                        },
+                        required=["Data", "Cidade", "Hotel"],
+                        success="Reserva/hospedagem salva.",
+                    )
+
+        with tabs[4]:
+            with st.form("form_pedagio", clear_on_submit=True):
+                c1, c2, c3 = st.columns(3)
+                with c1:
+                    data = st.date_input("Data", value=date.today(), key="cad_ped_data")
+                    placa = st.text_input("Placa", placeholder="ABC1D23", key="cad_ped_placa").upper()
+                with c2:
+                    tipo = st.selectbox("Tipo", ["Pedagio", "IPVA", "Seguro", "Licenciamento", "DPVAT", "Outros"], key="cad_ped_tipo")
+                    categoria = st.selectbox("Categoria", ["Transporte", "Vex"], key="cad_ped_categoria")
+                with c3:
+                    custo = st.number_input("Custo", min_value=0.0, step=10.0, format="%.2f", key="cad_ped_custo")
+                    submitted = st.form_submit_button("Salvar pedágio/IPVA", type="primary", width="stretch")
+                if submitted:
+                    _save_entry(
+                        "pedagio",
+                        {
+                            "Data": data,
+                            "Mes": _entry_month(data),
+                            "PLACA": placa,
+                            "Tipo": tipo,
+                            "Custo": custo,
+                            "Categoria": categoria,
+                        },
+                        required=["Data", "PLACA", "Tipo"],
+                        success="Lançamento de pedágio/IPVA salvo.",
+                    )
 
 
 def render_combustivel() -> None:
@@ -2359,6 +2599,8 @@ def main() -> None:
             render_pedagio()
         elif page == "vex":
             render_vex()
+        elif page in {"cadastro", "dados"}:
+            render_cadastro()
         else:
             render_home()
     except Exception as exc:
