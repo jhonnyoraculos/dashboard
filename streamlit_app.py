@@ -23,7 +23,7 @@ MUTED = "#6B7280"
 CARD_BORDER = "#c2d2f3"
 LOGO_PATH = Path(__file__).parent / "static" / "logo-jr.png"
 CURRENT_YEAR = date.today().year
-APP_VERSION = "deploy-010089a-homeexport-v5"
+APP_VERSION = "deploy-cad-postos-combustiveis-v1"
 
 PLOTLY_CONFIG = {
     "responsive": True,
@@ -2273,6 +2273,39 @@ def _registered_plate_map() -> dict[str, str]:
     return dict(sorted(mapping.items()))
 
 
+def _registered_text_options(loader, column: str) -> list[str]:
+    try:
+        df = loader()
+    except Exception:
+        return []
+    if df.empty or column not in df.columns:
+        return []
+    options = []
+    for value in df[column].dropna().tolist():
+        text = clean_text(value).strip()
+        if text:
+            options.append(text)
+    return sorted(set(options))
+
+
+def _select_or_create_text(
+    label: str,
+    options: list[str],
+    prefix: str,
+    create_label: str,
+    manual_label: str,
+    *,
+    placeholder: str = "",
+) -> str:
+    clean_options = [option for option in options if option]
+    if not clean_options:
+        return st.text_input(label, placeholder=placeholder, key=f"{prefix}_manual_only")
+    selected = st.selectbox(label, [*clean_options, create_label], key=f"{prefix}_select")
+    if selected == create_label:
+        return st.text_input(manual_label, placeholder=placeholder, key=f"{prefix}_manual")
+    return selected
+
+
 def _plate_fields(prefix: str, plate_map: dict[str, str] | None = None) -> tuple[str, str]:
     plate_map = plate_map if plate_map is not None else _registered_plate_map()
     options = ["Selecione uma placa", *plate_map.keys(), "Cadastrar nova placa"]
@@ -2299,6 +2332,21 @@ def _save_registered_plate(placa: str, categoria: str) -> bool:
         st.error("Não foi possível salvar a placa no Neon.")
         st.exception(exc)
         return False
+    return True
+
+
+def _save_text_registry(dataset: str, column: str, value: str, success: str) -> bool:
+    text = clean_text(value).strip()
+    if not text:
+        st.warning("Informe um valor para cadastrar.")
+        return False
+    try:
+        backend.save_dashboard_record(dataset, {column: text}, replace_keys=[column])
+    except Exception as exc:
+        st.error("Não foi possível salvar no Neon.")
+        st.exception(exc)
+        return False
+    st.success(success)
     return True
 
 
@@ -2371,14 +2419,55 @@ def render_cadastro() -> None:
                 st.info("Cadastre a primeira placa para liberar a edição.")
 
         with tabs[1]:
+            combustivel_options = _registered_text_options(backend.load_combustiveis, "Combustivel")
+            posto_options = _registered_text_options(backend.load_postos, "POSTOS")
+
+            r1, r2 = st.columns(2)
+            with r1:
+                with st.form("form_cadastrar_combustivel_tipo", clear_on_submit=True):
+                    novo_combustivel = st.text_input("Cadastrar combustível", placeholder="Diesel S10", key="cad_tipo_combustivel")
+                    submit_combustivel = st.form_submit_button("Cadastrar combustível", type="primary", width="stretch")
+                    if submit_combustivel:
+                        if _save_text_registry("combustiveis", "Combustivel", novo_combustivel, "Combustível cadastrado."):
+                            combustivel_options = _registered_text_options(backend.load_combustiveis, "Combustivel")
+            with r2:
+                with st.form("form_cadastrar_posto", clear_on_submit=True):
+                    novo_posto = st.text_input("Cadastrar posto", placeholder="Posto JR", key="cad_posto_nome")
+                    submit_posto = st.form_submit_button("Cadastrar posto", type="primary", width="stretch")
+                    if submit_posto:
+                        if _save_text_registry("postos", "POSTOS", novo_posto, "Posto cadastrado."):
+                            posto_options = _registered_text_options(backend.load_postos, "POSTOS")
+
+            if combustivel_options or posto_options:
+                with st.expander("Ver combustíveis e postos cadastrados"):
+                    l1, l2 = st.columns(2)
+                    with l1:
+                        st.dataframe(pd.DataFrame({"Combustível": combustivel_options}), width="stretch", hide_index=True)
+                    with l2:
+                        st.dataframe(pd.DataFrame({"Posto": posto_options}), width="stretch", hide_index=True)
+
             with st.form("form_combustivel", clear_on_submit=True):
                 c1, c2, c3 = st.columns(3)
                 with c1:
                     data = st.date_input("Data", value=date.today(), key="cad_comb_data")
                     placa, categoria = _plate_fields("cad_comb", plate_map)
                 with c2:
-                    combustivel = st.text_input("Combustível", placeholder="Diesel S10", key="cad_comb_combustivel")
-                    posto = st.text_input("Posto", key="cad_comb_posto")
+                    combustivel = _select_or_create_text(
+                        "Combustível",
+                        combustivel_options,
+                        "cad_comb_combustivel",
+                        "Cadastrar novo combustível",
+                        "Novo combustível",
+                        placeholder="Diesel S10",
+                    )
+                    posto = _select_or_create_text(
+                        "Posto",
+                        posto_options,
+                        "cad_comb_posto",
+                        "Cadastrar novo posto",
+                        "Novo posto",
+                        placeholder="Posto JR",
+                    )
                     km = st.number_input("KM rodados", min_value=0.0, step=1.0, key="cad_comb_km")
                 with c3:
                     litros = st.number_input("Litros", min_value=0.0, step=1.0, key="cad_comb_litros")

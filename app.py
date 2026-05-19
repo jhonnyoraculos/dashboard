@@ -37,6 +37,8 @@ if _running_as_streamlit_entrypoint():
 DB_TABLES = {
     "combustivel": "dashboard_combustivel",
     "combustivel_km": "dashboard_combustivel_km",
+    "combustiveis": "dashboard_combustiveis",
+    "postos": "dashboard_postos",
     "manutencao": "dashboard_manutencao",
     "hoteis": "dashboard_hoteis",
     "pedagio": "dashboard_pedagio",
@@ -69,6 +71,8 @@ _COMBUSTIVEL_COLUMNS = [
     "Categoria",
 ]
 _COMBUSTIVEL_KM_COLUMNS = ["Mes", "PLACA", "Km Rodados"]
+_COMBUSTIVEIS_COLUMNS = ["Combustivel"]
+_POSTOS_COLUMNS = ["POSTOS"]
 _MANUTENCAO_COLUMNS = ["Data", "Mes", "Custo", "PLACA", "OFICINA", "Categoria"]
 _HOTEIS_COLUMNS = [
     "Data",
@@ -211,6 +215,8 @@ def _clear_dataset_cache(dataset: str) -> None:
         targets = ["combustivel"]
     elif dataset == "placas":
         targets = ["combustivel", "manutencao", "pedagio"]
+    elif dataset in {"combustiveis", "postos"}:
+        targets = ["combustivel"]
     else:
         targets = [dataset]
     for target in targets:
@@ -242,6 +248,8 @@ def _prepare_insert_row(dataset: str, row: dict) -> dict:
     columns_by_dataset = {
         "combustivel": _COMBUSTIVEL_COLUMNS,
         "combustivel_km": _COMBUSTIVEL_KM_COLUMNS,
+        "combustiveis": _COMBUSTIVEIS_COLUMNS,
+        "postos": _POSTOS_COLUMNS,
         "manutencao": _MANUTENCAO_COLUMNS,
         "hoteis": _HOTEIS_COLUMNS,
         "pedagio": _PEDAGIO_COLUMNS,
@@ -273,21 +281,30 @@ def _prepare_insert_row(dataset: str, row: dict) -> dict:
 
 
 def _ensure_dataset_table(conn, dataset: str) -> None:
-    if dataset != "placas":
-        return
-
-    from sqlalchemy import text
-
-    conn.execute(
-        text(
-            f"""
+    create_sql = {
+        "placas": f"""
             CREATE TABLE IF NOT EXISTS {_quote_identifier(DB_TABLES["placas"])} (
                 "PLACA" TEXT PRIMARY KEY,
                 "Categoria" TEXT NOT NULL
             )
-            """
-        )
-    )
+            """,
+        "combustiveis": f"""
+            CREATE TABLE IF NOT EXISTS {_quote_identifier(DB_TABLES["combustiveis"])} (
+                "Combustivel" TEXT PRIMARY KEY
+            )
+            """,
+        "postos": f"""
+            CREATE TABLE IF NOT EXISTS {_quote_identifier(DB_TABLES["postos"])} (
+                "POSTOS" TEXT PRIMARY KEY
+            )
+            """,
+    }.get(dataset)
+    if not create_sql:
+        return
+
+    from sqlalchemy import text
+
+    conn.execute(text(create_sql))
 
 
 def save_dashboard_record(dataset: str, row: dict, *, replace_keys: list[str] | None = None) -> str:
@@ -307,6 +324,7 @@ def save_dashboard_record(dataset: str, row: dict, *, replace_keys: list[str] | 
     version = datetime.now(timezone.utc).isoformat()
 
     plate_registry_changed = dataset == "placas"
+    text_registry_changed: set[str] = set()
     with _db_engine().begin() as conn:
         _ensure_dataset_table(conn, dataset)
         if replace_keys:
@@ -328,10 +346,37 @@ def save_dashboard_record(dataset: str, row: dict, *, replace_keys: list[str] | 
                 {"placa": prepared["PLACA"], "categoria": prepared["Categoria"]},
             )
             _write_metadata(conn, "placas.version", version)
+        if dataset == "combustivel":
+            registry_targets = (
+                ("combustiveis", "Combustivel", prepared.get("Combustivel")),
+                ("postos", "POSTOS", prepared.get("POSTOS")),
+            )
+            for registry_dataset, column, value in registry_targets:
+                if not value:
+                    continue
+                text_registry_changed.add(registry_dataset)
+                _ensure_dataset_table(conn, registry_dataset)
+                registry_table = _quote_identifier(DB_TABLES[registry_dataset])
+                quoted_column = _quote_identifier(column)
+                conn.execute(
+                    text(
+                        f"""
+                        INSERT INTO {registry_table} ({quoted_column})
+                        VALUES (:value)
+                        ON CONFLICT ({quoted_column}) DO NOTHING
+                        """
+                    ),
+                    {"value": value},
+                )
+                _write_metadata(conn, f"{registry_dataset}.version", version)
         _write_metadata(conn, f"{dataset}.version", version)
         _write_metadata(conn, "import.version", version)
 
-    _clear_dataset_cache("placas" if plate_registry_changed else dataset)
+    if plate_registry_changed:
+        _clear_dataset_cache("placas")
+    _clear_dataset_cache(dataset)
+    for registry_dataset in text_registry_changed:
+        _clear_dataset_cache(registry_dataset)
     return version
 
 
@@ -792,6 +837,51 @@ def load_combustivel() -> pd.DataFrame:
         return df.copy()
 
 
+def _load_text_registry(dataset: str, columns: list[str], column: str) -> pd.DataFrame:
+    frames: list[pd.DataFrame] = []
+    try:
+        registered = _read_database_table(dataset, columns)
+        if column in registered.columns:
+            frames.append(registered[[column]].copy())
+    except Exception:
+        pass
+
+    try:
+        historical = _read_database_table("combustivel", _COMBUSTIVEL_COLUMNS)
+        if column in historical.columns:
+            frames.append(historical[[column]].copy())
+    except Exception:
+        pass
+
+    if not frames:
+        return _empty(columns)
+
+    df = pd.concat(frames, ignore_index=True)
+    _normalize_text_column(df, column)
+    df = df.dropna(subset=[column]).drop_duplicates(subset=[column], keep="last")
+    if df.empty:
+        return _empty(columns)
+    return df[columns].sort_values(column).reset_index(drop=True)
+
+
+def load_combustiveis() -> pd.DataFrame:
+    return _load_text_registry("combustiveis", _COMBUSTIVEIS_COLUMNS, "Combustivel")
+
+
+def load_postos() -> pd.DataFrame:
+    return _load_text_registry("postos", _POSTOS_COLUMNS, "POSTOS")
+
+
+def _registry_values(df: pd.DataFrame, column: str, loader) -> list:
+    values = set(_unique_sorted(df, column))
+    try:
+        registry = loader()
+    except Exception:
+        registry = _empty([column])
+    values.update(_unique_sorted(registry, column))
+    return sorted(values)
+
+
 def agg_combustivel(df: pd.DataFrame, *, km_override: pd.DataFrame | None = None) -> dict:
     custo_total = float(pd.to_numeric(df.get("Custo"), errors="coerce").sum()) if "Custo" in df else 0.0
     if km_override is not None and "Km Rodados" in km_override.columns:
@@ -820,8 +910,8 @@ def agg_combustivel(df: pd.DataFrame, *, km_override: pd.DataFrame | None = None
         "gasto_por_combustivel": _group_sum(df, "Combustivel"),
         "gasto_por_placa": _group_sum(df, "PLACA"),
         "placas": _unique_sorted(df, "PLACA"),
-        "postos": _unique_sorted(df, "POSTOS"),
-        "combustiveis": _unique_sorted(df, "Combustivel"),
+        "postos": _registry_values(df, "POSTOS", load_postos),
+        "combustiveis": _registry_values(df, "Combustivel", load_combustiveis),
         "meses": _unique_sorted(df, "Mes"),
         "segmentos": _unique_sorted(df, "Categoria"),
         "gasto_semana": _weekly_series(df, "Data", "Custo", "Custo"),
