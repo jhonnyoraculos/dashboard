@@ -2283,6 +2283,12 @@ def _reset_plate_editor() -> None:
     st.session_state["cad_placas_editor_nonce"] = st.session_state.get("cad_placas_editor_nonce", 0) + 1
 
 
+def _clear_stale_plate_editor_state(active_key: str) -> None:
+    for key in list(st.session_state.keys()):
+        if key == "cad_placas_editor" or (key.startswith("cad_placas_editor_") and key != active_key):
+            del st.session_state[key]
+
+
 def _registered_text_options(loader, column: str) -> list[str]:
     try:
         df = loader()
@@ -2453,6 +2459,7 @@ def render_cadastro() -> None:
                 editor_token = _plate_editor_token(plate_map)
                 editor_nonce = st.session_state.get("cad_placas_editor_nonce", 0)
                 editor_key = f"cad_placas_editor_{editor_token}_{editor_nonce}"
+                _clear_stale_plate_editor_state(editor_key)
                 table = pd.DataFrame(
                     [
                         {"Placa atual": placa, "Placa": placa, "Categoria": categoria}
