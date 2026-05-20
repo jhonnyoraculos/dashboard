@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import base64
+import hashlib
 import html
 import os
 from io import BytesIO
@@ -2273,6 +2274,15 @@ def _registered_plate_map() -> dict[str, str]:
     return dict(sorted(mapping.items()))
 
 
+def _plate_editor_token(plate_map: dict[str, str]) -> str:
+    raw = "|".join(f"{placa}:{categoria}" for placa, categoria in sorted(plate_map.items()))
+    return hashlib.sha1(raw.encode("utf-8")).hexdigest()[:12]
+
+
+def _reset_plate_editor() -> None:
+    st.session_state["cad_placas_editor_nonce"] = st.session_state.get("cad_placas_editor_nonce", 0) + 1
+
+
 def _registered_text_options(loader, column: str) -> list[str]:
     try:
         df = loader()
@@ -2388,6 +2398,7 @@ def _save_plate_sheet(original_map: dict[str, str], edited: pd.DataFrame) -> boo
         st.warning("Informe pelo menos uma placa.")
         return False
 
+    changed = False
     try:
         for old_plate, new_plate in rows:
             categoria = final_categories.get(new_plate, "Transporte")
@@ -2395,14 +2406,20 @@ def _save_plate_sheet(original_map: dict[str, str], edited: pd.DataFrame) -> boo
                 if old_plate == new_plate and original_map.get(old_plate, "Transporte") == categoria:
                     continue
                 backend.rename_plate(old_plate, new_plate, categoria)
+                changed = True
             else:
                 backend.save_dashboard_record("placas", {"PLACA": new_plate, "Categoria": categoria}, replace_keys=["PLACA"])
+                changed = True
     except Exception as exc:
         st.error("NÃ£o foi possÃ­vel salvar a tabela de placas no Neon.")
         st.exception(exc)
         return False
 
-    st.success("Tabela de placas salva.")
+    _reset_plate_editor()
+    if changed:
+        st.success("Tabela de placas salva.")
+    else:
+        st.info("Nenhuma alteraÃ§Ã£o para salvar.")
     st.rerun()
     return True
 
@@ -2433,6 +2450,9 @@ def render_cadastro() -> None:
 
             plate_map = _registered_plate_map()
             if plate_map:
+                editor_token = _plate_editor_token(plate_map)
+                editor_nonce = st.session_state.get("cad_placas_editor_nonce", 0)
+                editor_key = f"cad_placas_editor_{editor_token}_{editor_nonce}"
                 table = pd.DataFrame(
                     [
                         {"Placa atual": placa, "Placa": placa, "Categoria": categoria}
@@ -2454,9 +2474,10 @@ def render_cadastro() -> None:
                             required=True,
                         ),
                     },
-                    key="cad_placas_editor",
+                    key=editor_key,
                 )
-                if st.button("Salvar tabela de placas", type="primary", width="stretch", key="cad_placas_sheet_save"):
+                save_key = f"cad_placas_sheet_save_{editor_token}_{editor_nonce}"
+                if st.button("Salvar tabela de placas", type="primary", width="stretch", key=save_key):
                     _save_plate_sheet(plate_map, edited_plates)
             else:
                 st.info("Cadastre a primeira placa para liberar a edição.")
