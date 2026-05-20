@@ -2430,6 +2430,107 @@ def _save_plate_sheet(original_map: dict[str, str], edited: pd.DataFrame) -> boo
     return True
 
 
+def _editor_empty_value(value: object) -> bool:
+    if value is None:
+        return True
+    try:
+        if pd.isna(value):
+            return True
+    except (TypeError, ValueError):
+        pass
+    if isinstance(value, str):
+        return not value.strip()
+    return False
+
+
+def _prepare_editor_rows(dataset: str, edited: pd.DataFrame, columns: list[str], required: list[str]) -> list[dict] | None:
+    if edited is None:
+        return []
+
+    rows: list[dict] = []
+    for idx, row in edited.iterrows():
+        item = {column: row.get(column) for column in columns}
+        if all(_editor_empty_value(value) for value in item.values()):
+            continue
+        if "Data" in item and not _editor_empty_value(item.get("Data")):
+            item["Mes"] = _entry_month(item["Data"])
+        missing = [column for column in required if _editor_empty_value(item.get(column))]
+        if missing:
+            st.warning(f"Linha {idx + 1}: preencha {', '.join(missing)}.")
+            return None
+        rows.append(item)
+    return rows
+
+
+def _reset_dataset_editor(key_prefix: str) -> None:
+    key = f"{key_prefix}_editor_nonce"
+    st.session_state[key] = st.session_state.get(key, 0) + 1
+
+
+def _save_dataset_editor(dataset: str, edited: pd.DataFrame, columns: list[str], required: list[str], key_prefix: str) -> bool:
+    rows = _prepare_editor_rows(dataset, edited, columns, required)
+    if rows is None:
+        return False
+    try:
+        backend.replace_dashboard_records(dataset, rows)
+    except Exception as exc:
+        st.error("Não foi possível salvar a tabela no Neon.")
+        st.exception(exc)
+        return False
+    _reset_dataset_editor(key_prefix)
+    st.success("Tabela salva no Neon.")
+    st.rerun()
+    return True
+
+
+def _render_dataset_editor(
+    dataset: str,
+    loader,
+    columns: list[str],
+    required: list[str],
+    key_prefix: str,
+    column_config: dict,
+) -> None:
+    try:
+        df = loader()
+    except Exception as exc:
+        st.error("Não foi possível carregar a tabela do Neon.")
+        st.exception(exc)
+        return
+
+    table = df[[column for column in columns if column in df.columns]].copy() if not df.empty else pd.DataFrame(columns=columns)
+    for column in columns:
+        if column not in table.columns:
+            table[column] = pd.NA
+    table = table[columns]
+
+    st.markdown("#### Tabela cadastrada")
+    nonce = st.session_state.get(f"{key_prefix}_editor_nonce", 0)
+    edited = st.data_editor(
+        table,
+        width="stretch",
+        height=420,
+        hide_index=True,
+        num_rows="dynamic",
+        column_config=column_config,
+        key=f"{key_prefix}_sheet_editor_{nonce}",
+    )
+    if st.button("Salvar tabela", type="primary", width="stretch", key=f"{key_prefix}_sheet_save_{nonce}"):
+        _save_dataset_editor(dataset, edited, columns, required, key_prefix)
+
+
+def _date_col(label: str = "Data"):
+    return st.column_config.DateColumn(label, format="DD/MM/YYYY")
+
+
+def _money_col(label: str):
+    return st.column_config.NumberColumn(label, min_value=0.0, step=10.0, format="R$ %.2f")
+
+
+def _number_col(label: str):
+    return st.column_config.NumberColumn(label, min_value=0.0, step=1.0)
+
+
 def render_cadastro() -> None:
     topbar("JR DASHBOARD • Adicionar dados", back=True)
     with st.container(key="cadastro_shell"):
@@ -2562,6 +2663,25 @@ def render_cadastro() -> None:
                         success="Lançamento de combustível salvo.",
                     )
 
+            _render_dataset_editor(
+                "combustivel",
+                backend.load_combustivel,
+                ["Data", "Mes", "PLACA", "Categoria", "Combustivel", "POSTOS", "Km Rodados", "Litros", "Custo"],
+                ["Data", "PLACA", "Combustivel", "POSTOS"],
+                "cad_comb_table",
+                {
+                    "Data": _date_col(),
+                    "Mes": st.column_config.TextColumn("Mes"),
+                    "PLACA": st.column_config.TextColumn("Placa"),
+                    "Categoria": st.column_config.SelectboxColumn("Categoria", options=["Transporte", "Vex"], required=True),
+                    "Combustivel": st.column_config.TextColumn("Combustivel"),
+                    "POSTOS": st.column_config.TextColumn("Posto"),
+                    "Km Rodados": _number_col("KM rodados"),
+                    "Litros": _number_col("Litros"),
+                    "Custo": _money_col("Custo"),
+                },
+            )
+
         with tabs[2]:
             with st.form("form_km_mensal", clear_on_submit=True):
                 c1, c2, c3 = st.columns(3)
@@ -2583,6 +2703,19 @@ def render_cadastro() -> None:
                             replace_keys=["Mes", "PLACA"] if substituir else None,
                             success="KM mensal salvo.",
                         )
+
+            _render_dataset_editor(
+                "combustivel_km",
+                backend.load_combustivel_km,
+                ["Mes", "PLACA", "Km Rodados"],
+                ["Mes", "PLACA"],
+                "cad_km_table",
+                {
+                    "Mes": st.column_config.TextColumn("Mes"),
+                    "PLACA": st.column_config.TextColumn("Placa"),
+                    "Km Rodados": _number_col("KM rodados"),
+                },
+            )
 
         with tabs[3]:
             with st.form("form_manutencao", clear_on_submit=True):
@@ -2609,6 +2742,22 @@ def render_cadastro() -> None:
                         required=["Data", "PLACA", "OFICINA"],
                         success="Lançamento de manutenção salvo.",
                     )
+
+            _render_dataset_editor(
+                "manutencao",
+                backend.load_manutencao,
+                ["Data", "Mes", "PLACA", "Categoria", "OFICINA", "Custo"],
+                ["Data", "PLACA", "OFICINA"],
+                "cad_manu_table",
+                {
+                    "Data": _date_col(),
+                    "Mes": st.column_config.TextColumn("Mes"),
+                    "PLACA": st.column_config.TextColumn("Placa"),
+                    "Categoria": st.column_config.SelectboxColumn("Categoria", options=["Transporte", "Vex"], required=True),
+                    "OFICINA": st.column_config.TextColumn("Oficina"),
+                    "Custo": _money_col("Custo"),
+                },
+            )
 
         with tabs[4]:
             with st.form("form_hoteis", clear_on_submit=True):
@@ -2644,6 +2793,26 @@ def render_cadastro() -> None:
                         success="Reserva/hospedagem salva.",
                     )
 
+            _render_dataset_editor(
+                "hoteis",
+                backend.load_hoteis,
+                ["Data", "Mes", "Cidade", "Hotel", "Tipo", "Motorista", "Ajudante", "Dias", "Valor", "Categoria"],
+                ["Data", "Cidade", "Hotel"],
+                "cad_hotel_table",
+                {
+                    "Data": _date_col(),
+                    "Mes": st.column_config.TextColumn("Mes"),
+                    "Cidade": st.column_config.TextColumn("Cidade"),
+                    "Hotel": st.column_config.TextColumn("Hotel/Pousada"),
+                    "Tipo": st.column_config.TextColumn("Tipo"),
+                    "Motorista": st.column_config.TextColumn("Motorista"),
+                    "Ajudante": st.column_config.TextColumn("Ajudante"),
+                    "Dias": _number_col("Dias"),
+                    "Valor": _money_col("Valor"),
+                    "Categoria": st.column_config.SelectboxColumn("Categoria", options=["Transporte", "Vex"], required=True),
+                },
+            )
+
         with tabs[5]:
             with st.form("form_pedagio", clear_on_submit=True):
                 c1, c2, c3 = st.columns(3)
@@ -2669,6 +2838,21 @@ def render_cadastro() -> None:
                         required=["Data", "PLACA", "Tipo"],
                         success="Lançamento de pedágio/IPVA salvo.",
                     )
+            _render_dataset_editor(
+                "pedagio",
+                backend.load_pedagio,
+                ["Data", "Mes", "PLACA", "Categoria", "Tipo", "Custo"],
+                ["Data", "PLACA", "Tipo"],
+                "cad_ped_table",
+                {
+                    "Data": _date_col(),
+                    "Mes": st.column_config.TextColumn("Mes"),
+                    "PLACA": st.column_config.TextColumn("Placa"),
+                    "Categoria": st.column_config.SelectboxColumn("Categoria", options=["Transporte", "Vex"], required=True),
+                    "Tipo": st.column_config.SelectboxColumn("Tipo", options=["Pedagio", "IPVA", "Seguro", "Licenciamento", "DPVAT", "Outros"], required=True),
+                    "Custo": _money_col("Custo"),
+                },
+            )
 
 
 def render_combustivel() -> None:
