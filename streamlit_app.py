@@ -2443,6 +2443,9 @@ def _editor_empty_value(value: object) -> bool:
     return False
 
 
+ROW_ID_COLUMN = "Linha"
+
+
 def _prepare_editor_rows(dataset: str, edited: pd.DataFrame, columns: list[str], required: list[str]) -> list[dict] | None:
     if edited is None:
         return []
@@ -2462,13 +2465,73 @@ def _prepare_editor_rows(dataset: str, edited: pd.DataFrame, columns: list[str],
     return rows
 
 
+def _prepare_editor_records(edited: pd.DataFrame, columns: list[str], required: list[str]) -> list[tuple[int | None, dict]] | None:
+    if edited is None:
+        return []
+
+    records: list[tuple[int | None, dict]] = []
+    for idx, row in edited.iterrows():
+        item = {column: row.get(column) for column in columns}
+        if all(_editor_empty_value(value) for value in item.values()):
+            continue
+        if "Data" in item and not _editor_empty_value(item.get("Data")):
+            item["Mes"] = _entry_month(item["Data"])
+        missing = [column for column in required if _editor_empty_value(item.get(column))]
+        if missing:
+            st.warning(f"Linha {idx + 1}: preencha {', '.join(missing)}.")
+            return None
+
+        row_id = row.get(ROW_ID_COLUMN)
+        try:
+            row_id = int(row_id) if not _editor_empty_value(row_id) else None
+        except (TypeError, ValueError):
+            row_id = None
+        records.append((row_id, item))
+    return records
+
+
+def _merge_filtered_editor_rows(
+    original_table: pd.DataFrame,
+    edited: pd.DataFrame,
+    columns: list[str],
+    required: list[str],
+    visible_row_ids: set[int],
+) -> list[dict] | None:
+    records = _prepare_editor_records(edited, columns, required)
+    if records is None:
+        return None
+
+    edited_by_id = {row_id: item for row_id, item in records if row_id is not None}
+    new_rows = [item for row_id, item in records if row_id is None]
+    merged: list[dict] = []
+
+    for idx, row in original_table.reset_index(drop=True).iterrows():
+        row_id = idx + 1
+        if row_id in visible_row_ids:
+            if row_id in edited_by_id:
+                merged.append(edited_by_id[row_id])
+            continue
+        merged.append({column: row.get(column) for column in columns})
+
+    merged.extend(new_rows)
+    return merged
+
+
 def _reset_dataset_editor(key_prefix: str) -> None:
     key = f"{key_prefix}_editor_nonce"
     st.session_state[key] = st.session_state.get(key, 0) + 1
 
 
-def _save_dataset_editor(dataset: str, edited: pd.DataFrame, columns: list[str], required: list[str], key_prefix: str) -> bool:
-    rows = _prepare_editor_rows(dataset, edited, columns, required)
+def _save_dataset_editor(
+    dataset: str,
+    edited: pd.DataFrame,
+    columns: list[str],
+    required: list[str],
+    key_prefix: str,
+    original_table: pd.DataFrame,
+    visible_row_ids: set[int],
+) -> bool:
+    rows = _merge_filtered_editor_rows(original_table, edited, columns, required, visible_row_ids)
     if rows is None:
         return False
     try:
@@ -2483,6 +2546,46 @@ def _save_dataset_editor(dataset: str, edited: pd.DataFrame, columns: list[str],
     return True
 
 
+def _filter_text_options(series: pd.Series) -> list[str]:
+    if series is None or series.empty:
+        return []
+    values = series.dropna().astype("string").str.strip()
+    values = values[(values != "") & (~values.str.lower().isin(["nan", "none", "nat", "<na>"]))]
+    return sorted(values.unique().tolist())
+
+
+def _clear_table_filter_state(key_prefix: str) -> None:
+    for key in list(st.session_state.keys()):
+        if key == f"{key_prefix}_search" or key.startswith(f"{key_prefix}_filter_"):
+            del st.session_state[key]
+
+
+def _apply_table_filters(table: pd.DataFrame, columns: list[str], key_prefix: str, filter_columns: list[str]) -> pd.DataFrame:
+    filtered = table.copy()
+    with st.expander("Filtros da tabela", expanded=False):
+        search = st.text_input("Buscar", key=f"{key_prefix}_search", placeholder="Digite para buscar em qualquer coluna")
+        if search.strip():
+            needle = search.strip().lower()
+            search_frame = filtered[columns].astype("string").fillna("").apply(lambda col: col.str.lower())
+            mask = search_frame.apply(lambda row: any(needle in value for value in row), axis=1)
+            filtered = filtered.loc[mask].copy()
+
+        if filter_columns:
+            filter_cols = st.columns(min(4, len(filter_columns)))
+            for idx, column in enumerate(filter_columns):
+                if column not in table.columns:
+                    continue
+                options = _filter_text_options(table[column])
+                with filter_cols[idx % len(filter_cols)]:
+                    selected = st.multiselect(column, options, key=f"{key_prefix}_filter_{column}")
+                if selected:
+                    values = filtered[column].astype("string").fillna("").str.strip()
+                    filtered = filtered.loc[values.isin(selected)].copy()
+
+        st.button("Limpar filtros", key=f"{key_prefix}_clear_filters", on_click=_clear_table_filter_state, args=(key_prefix,))
+    return filtered
+
+
 def _render_dataset_editor(
     dataset: str,
     loader,
@@ -2490,6 +2593,7 @@ def _render_dataset_editor(
     required: list[str],
     key_prefix: str,
     column_config: dict,
+    filter_columns: list[str],
 ) -> None:
     try:
         df = loader()
@@ -2503,20 +2607,27 @@ def _render_dataset_editor(
         if column not in table.columns:
             table[column] = pd.NA
     table = table[columns]
+    table = table.reset_index(drop=True)
+    table.insert(0, ROW_ID_COLUMN, range(1, len(table) + 1))
 
     st.markdown("#### Tabela cadastrada")
+    filtered_table = _apply_table_filters(table, columns, key_prefix, filter_columns)
+    visible_row_ids = set(pd.to_numeric(filtered_table[ROW_ID_COLUMN], errors="coerce").dropna().astype(int).tolist())
     nonce = st.session_state.get(f"{key_prefix}_editor_nonce", 0)
+    editor_config = {ROW_ID_COLUMN: st.column_config.NumberColumn("Linha")}
+    editor_config.update(column_config)
     edited = st.data_editor(
-        table,
+        filtered_table,
         width="stretch",
         height=420,
         hide_index=True,
         num_rows="dynamic",
-        column_config=column_config,
+        disabled=[ROW_ID_COLUMN],
+        column_config=editor_config,
         key=f"{key_prefix}_sheet_editor_{nonce}",
     )
     if st.button("Salvar tabela", type="primary", width="stretch", key=f"{key_prefix}_sheet_save_{nonce}"):
-        _save_dataset_editor(dataset, edited, columns, required, key_prefix)
+        _save_dataset_editor(dataset, edited, columns, required, key_prefix, table[columns], visible_row_ids)
 
 
 def _date_col(label: str = "Data"):
@@ -2680,6 +2791,7 @@ def render_cadastro() -> None:
                     "Litros": _number_col("Litros"),
                     "Custo": _money_col("Custo"),
                 },
+                ["Mes", "PLACA", "Categoria", "Combustivel", "POSTOS"],
             )
 
         with tabs[2]:
@@ -2715,6 +2827,7 @@ def render_cadastro() -> None:
                     "PLACA": st.column_config.TextColumn("Placa"),
                     "Km Rodados": _number_col("KM rodados"),
                 },
+                ["Mes", "PLACA"],
             )
 
         with tabs[3]:
@@ -2757,6 +2870,7 @@ def render_cadastro() -> None:
                     "OFICINA": st.column_config.TextColumn("Oficina"),
                     "Custo": _money_col("Custo"),
                 },
+                ["Mes", "PLACA", "Categoria", "OFICINA"],
             )
 
         with tabs[4]:
@@ -2811,6 +2925,7 @@ def render_cadastro() -> None:
                     "Valor": _money_col("Valor"),
                     "Categoria": st.column_config.SelectboxColumn("Categoria", options=["Transporte", "Vex"], required=True),
                 },
+                ["Mes", "Cidade", "Hotel", "Tipo", "Motorista", "Categoria"],
             )
 
         with tabs[5]:
@@ -2852,6 +2967,7 @@ def render_cadastro() -> None:
                     "Tipo": st.column_config.SelectboxColumn("Tipo", options=["Pedagio", "IPVA", "Seguro", "Licenciamento", "DPVAT", "Outros"], required=True),
                     "Custo": _money_col("Custo"),
                 },
+                ["Mes", "PLACA", "Categoria", "Tipo"],
             )
 
 
