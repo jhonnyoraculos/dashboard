@@ -2680,7 +2680,6 @@ def render_combustivel() -> None:
             ("placa", "Placa", seed.get("placas", []) or []),
             ("posto", "Posto", seed.get("postos", []) or []),
             ("combustivel", "Combustível", seed.get("combustiveis", []) or []),
-            ("segmento", "Categoria", seed.get("segmentos", []) or []),
         ],
         key_prefix="comb",
     )

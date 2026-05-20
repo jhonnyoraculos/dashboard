@@ -665,11 +665,41 @@ def _exclude_vex(df: pd.DataFrame) -> pd.DataFrame:
     return df.loc[mask].copy()
 
 
+def _only_transporte(df: pd.DataFrame) -> pd.DataFrame:
+    if "Categoria" not in df.columns:
+        return df.iloc[0:0].copy()
+    mask = _normalize_categoria(df["Categoria"]) == "transporte"
+    return df.loc[mask].copy()
+
+
 def _only_vex(df: pd.DataFrame) -> pd.DataFrame:
     if "Categoria" not in df.columns:
         return df.iloc[0:0].copy()
     mask = _normalize_categoria(df["Categoria"]) == "vex"
     return df.loc[mask].copy()
+
+
+def _registered_plates_for_category(categoria: str) -> set[str]:
+    try:
+        registry = load_placas()
+    except Exception:
+        return set()
+    if registry.empty or "PLACA" not in registry.columns or "Categoria" not in registry.columns:
+        return set()
+    target = str(categoria or "").strip().lower()
+    mask = _normalize_categoria(registry["Categoria"]) == target
+    return set(registry.loc[mask, "PLACA"].astype("string").dropna().tolist())
+
+
+def _only_registered_category(df: pd.DataFrame, categoria: str) -> pd.DataFrame:
+    if df.empty or "PLACA" not in df.columns:
+        return df.iloc[0:0].copy()
+    plates = _registered_plates_for_category(categoria)
+    if not plates:
+        return _only_vex(df) if str(categoria).strip().lower() == "vex" else _only_transporte(df)
+    filtered = df[df["PLACA"].isin(plates)].copy()
+    filtered["Categoria"] = "Vex" if str(categoria).strip().lower() == "vex" else "Transporte"
+    return filtered
 
 
 def _filter_by_period(
@@ -1114,15 +1144,15 @@ def agg_pedagio(df: pd.DataFrame) -> dict:
 
 def data_comb(params: dict | None = None) -> dict:
     params = params or {}
-    df = _exclude_vex(load_combustivel())
+    df = _only_registered_category(load_combustivel(), "Transporte")
     km_rodados = _COMBUSTIVEL_CACHE.get("km_rodados_mensal")
+    transport_plates = set(_unique_sorted(df, "PLACA"))
 
     ano = _parse_int(_param(params, "ano"))
     meses = _parse_mes_list(params.get("mes"))
     placa = _param(params, "placa")
     posto = _param(params, "posto")
     combustivel = _param(params, "combustivel")
-    segmento = _param(params, "segmento")
 
     if placa and placa != "Todos":
         df = df[df["PLACA"] == _normalize_plate_value(placa)]
@@ -1130,8 +1160,6 @@ def data_comb(params: dict | None = None) -> dict:
         df = df[df["POSTOS"] == posto]
     if combustivel and combustivel != "Todos":
         df = df[df["Combustivel"] == combustivel]
-    if segmento and segmento != "Todos" and "Categoria" in df.columns:
-        df = df[df["Categoria"] == segmento]
 
     anos_disponiveis = sorted({*_unique_years(df), *df.attrs.get("anos_sheets", [])})
     df_meses = _filter_by_period(df, ano=ano) if ano is not None else df
@@ -1145,6 +1173,10 @@ def data_comb(params: dict | None = None) -> dict:
     km_override = None
     if isinstance(km_rodados, pd.DataFrame) and not km_rodados.empty:
         km_override = km_rodados.copy()
+        if transport_plates:
+            km_override = km_override[km_override["PLACA"].isin(transport_plates)]
+        else:
+            km_override = km_override.iloc[0:0].copy()
         if placa and placa != "Todos":
             km_override = km_override[km_override["PLACA"] == _normalize_plate_value(placa)]
         if ano is not None:
@@ -1267,10 +1299,10 @@ def data_vex(params: dict | None = None) -> dict:
     meses = _parse_mes_list(params.get("mes"))
     placa = _param(params, "placa")
 
-    df_comb = _only_vex(load_combustivel())
-    df_manu = _only_vex(load_manutencao())
+    df_comb = _only_registered_category(load_combustivel(), "Vex")
+    df_manu = _only_registered_category(load_manutencao(), "Vex")
     df_hoteis = load_hoteis().iloc[0:0].copy()
-    df_ped = _only_vex(load_pedagio())
+    df_ped = _only_registered_category(load_pedagio(), "Vex")
     km_rodados = _COMBUSTIVEL_CACHE.get("km_rodados_mensal")
 
     anos_disponiveis: set[int] = set()
