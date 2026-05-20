@@ -2370,7 +2370,7 @@ def _save_plate_sheet(original_map: dict[str, str], edited: pd.DataFrame) -> boo
         return False
 
     rows = []
-    seen: set[str] = set()
+    final_categories: dict[str, str] = {}
     for _, row in edited.iterrows():
         old_plate = clean_text(row.get("Placa atual")).strip().upper()
         new_plate = clean_text(row.get("Placa")).strip().upper()
@@ -2380,18 +2380,17 @@ def _save_plate_sheet(original_map: dict[str, str], edited: pd.DataFrame) -> boo
         if not new_plate:
             st.warning("Existe uma linha sem placa preenchida.")
             return False
-        if new_plate in seen:
-            st.warning(f"A placa {new_plate} aparece repetida na tabela.")
-            return False
-        seen.add(new_plate)
-        rows.append((old_plate, new_plate, "Vex" if categoria.lower() == "vex" else "Transporte"))
+        categoria_final = "Vex" if categoria.lower() == "vex" else "Transporte"
+        final_categories[new_plate] = categoria_final
+        rows.append((old_plate, new_plate))
 
     if not rows:
         st.warning("Informe pelo menos uma placa.")
         return False
 
     try:
-        for old_plate, new_plate, categoria in rows:
+        for old_plate, new_plate in rows:
+            categoria = final_categories.get(new_plate, "Transporte")
             if old_plate:
                 if old_plate == new_plate and original_map.get(old_plate, "Transporte") == categoria:
                     continue
