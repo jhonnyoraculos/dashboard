@@ -2364,6 +2364,50 @@ def _edit_registered_plate(old_plate: str, new_plate: str, categoria: str) -> bo
     return True
 
 
+def _save_plate_sheet(original_map: dict[str, str], edited: pd.DataFrame) -> bool:
+    if edited is None or edited.empty:
+        st.warning("Informe pelo menos uma placa.")
+        return False
+
+    rows = []
+    seen: set[str] = set()
+    for _, row in edited.iterrows():
+        old_plate = clean_text(row.get("Placa atual")).strip().upper()
+        new_plate = clean_text(row.get("Placa")).strip().upper()
+        categoria = clean_text(row.get("Categoria") or "Transporte").strip()
+        if not old_plate and not new_plate:
+            continue
+        if not new_plate:
+            st.warning("Existe uma linha sem placa preenchida.")
+            return False
+        if new_plate in seen:
+            st.warning(f"A placa {new_plate} aparece repetida na tabela.")
+            return False
+        seen.add(new_plate)
+        rows.append((old_plate, new_plate, "Vex" if categoria.lower() == "vex" else "Transporte"))
+
+    if not rows:
+        st.warning("Informe pelo menos uma placa.")
+        return False
+
+    try:
+        for old_plate, new_plate, categoria in rows:
+            if old_plate:
+                if old_plate == new_plate and original_map.get(old_plate, "Transporte") == categoria:
+                    continue
+                backend.rename_plate(old_plate, new_plate, categoria)
+            else:
+                backend.save_dashboard_record("placas", {"PLACA": new_plate, "Categoria": categoria}, replace_keys=["PLACA"])
+    except Exception as exc:
+        st.error("NÃ£o foi possÃ­vel salvar a tabela de placas no Neon.")
+        st.exception(exc)
+        return False
+
+    st.success("Tabela de placas salva.")
+    st.rerun()
+    return True
+
+
 def render_cadastro() -> None:
     topbar("JR DASHBOARD • Adicionar dados", back=True)
     with st.container(key="cadastro_shell"):
@@ -2390,31 +2434,31 @@ def render_cadastro() -> None:
 
             plate_map = _registered_plate_map()
             if plate_map:
-                with st.form("form_editar_placas", clear_on_submit=False):
-                    e1, e2, e3, e4 = st.columns([1.05, 1.05, 0.9, 1.0])
-                    with e1:
-                        placa_editar = st.selectbox("Editar placa cadastrada", list(plate_map.keys()), key="cad_placa_editar")
-                    with e2:
-                        nova_placa = st.text_input("Nome correto da placa", value=placa_editar, key="cad_placa_nome_editar").upper()
-                    with e3:
-                        categoria_atual = plate_map.get(placa_editar, "Transporte")
-                        categoria_index = 1 if categoria_atual == "Vex" else 0
-                        categoria_editar = st.selectbox(
-                            "Nova categoria",
-                            ["Transporte", "Vex"],
-                            index=categoria_index,
-                            key="cad_placa_categoria_editar",
-                        )
-                    with e4:
-                        st.write("")
-                        edit_submitted = st.form_submit_button("Salvar edição", type="primary", width="stretch")
-                    if edit_submitted:
-                        _edit_registered_plate(placa_editar, nova_placa, categoria_editar)
-
                 table = pd.DataFrame(
-                    [{"Placa": placa, "Categoria": categoria} for placa, categoria in plate_map.items()]
+                    [
+                        {"Placa atual": placa, "Placa": placa, "Categoria": categoria}
+                        for placa, categoria in plate_map.items()
+                    ]
                 )
-                st.dataframe(table, width="stretch", hide_index=True)
+                edited_plates = st.data_editor(
+                    table,
+                    width="stretch",
+                    hide_index=True,
+                    num_rows="dynamic",
+                    disabled=["Placa atual"],
+                    column_config={
+                        "Placa atual": st.column_config.TextColumn("Placa atual"),
+                        "Placa": st.column_config.TextColumn("Placa"),
+                        "Categoria": st.column_config.SelectboxColumn(
+                            "Categoria",
+                            options=["Transporte", "Vex"],
+                            required=True,
+                        ),
+                    },
+                    key="cad_placas_editor",
+                )
+                if st.button("Salvar tabela de placas", type="primary", width="stretch", key="cad_placas_sheet_save"):
+                    _save_plate_sheet(plate_map, edited_plates)
             else:
                 st.info("Cadastre a primeira placa para liberar a edição.")
 
