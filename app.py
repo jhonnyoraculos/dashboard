@@ -98,6 +98,25 @@ _DATASET_COLUMNS = {
     "pedagio": _PEDAGIO_COLUMNS,
     "placas": _PLACAS_COLUMNS,
 }
+_COLUMN_SQL_TYPES = {
+    "Data": "TIMESTAMP",
+    "Mes": "TEXT",
+    "Km Rodados": "DOUBLE PRECISION",
+    "Litros": "DOUBLE PRECISION",
+    "Custo": "DOUBLE PRECISION",
+    "Combustivel": "TEXT",
+    "POSTOS": "TEXT",
+    "PLACA": "TEXT",
+    "Categoria": "TEXT",
+    "Valor": "DOUBLE PRECISION",
+    "Dias": "DOUBLE PRECISION",
+    "Motorista": "TEXT",
+    "Ajudante": "TEXT",
+    "Cidade": "TEXT",
+    "Hotel": "TEXT",
+    "Tipo": "TEXT",
+    "OFICINA": "TEXT",
+}
 
 
 def _database_url() -> str | None:
@@ -281,6 +300,11 @@ def _prepare_insert_row(dataset: str, row: dict) -> dict:
 
 
 def _ensure_dataset_table(conn, dataset: str) -> None:
+    if dataset not in DB_TABLES or dataset not in _DATASET_COLUMNS:
+        return
+
+    from sqlalchemy import text
+
     create_sql = {
         "placas": f"""
             CREATE TABLE IF NOT EXISTS {_quote_identifier(DB_TABLES["placas"])} (
@@ -298,13 +322,18 @@ def _ensure_dataset_table(conn, dataset: str) -> None:
                 "POSTOS" TEXT PRIMARY KEY
             )
             """,
-    }.get(dataset)
-    if not create_sql:
-        return
-
-    from sqlalchemy import text
+    }.get(dataset) or f"""
+        CREATE TABLE IF NOT EXISTS {_quote_identifier(DB_TABLES[dataset])} (
+            "__jr_schema_marker" TEXT
+        )
+        """
 
     conn.execute(text(create_sql))
+
+    table = _quote_identifier(DB_TABLES[dataset])
+    for column in _DATASET_COLUMNS[dataset]:
+        sql_type = _COLUMN_SQL_TYPES.get(column, "TEXT")
+        conn.execute(text(f"ALTER TABLE {table} ADD COLUMN IF NOT EXISTS {_quote_identifier(column)} {sql_type}"))
 
 
 def save_dashboard_record(dataset: str, row: dict, *, replace_keys: list[str] | None = None) -> str:
