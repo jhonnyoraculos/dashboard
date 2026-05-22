@@ -2730,14 +2730,55 @@ def _read_uploaded_sheet(uploaded_file) -> pd.DataFrame:
     name = clean_text(getattr(uploaded_file, "name", "")).lower()
     if name.endswith(".csv"):
         raw = pd.read_csv(uploaded_file, sep=None, engine="python", header=None)
-    else:
-        raw = pd.read_excel(uploaded_file, header=None)
+        return _detect_pedagio_sheet_header(raw)
+    raw = _read_uploaded_excel_rows(uploaded_file)
     return _detect_pedagio_sheet_header(raw)
+
+
+def _read_uploaded_excel_rows(uploaded_file) -> pd.DataFrame:
+    from openpyxl import load_workbook
+
+    try:
+        uploaded_file.seek(0)
+    except Exception:
+        pass
+
+    workbook = load_workbook(uploaded_file, read_only=True, data_only=True)
+    worksheet = workbook.active
+    rows: list[list[object]] = []
+    header_found = False
+    blank_after_header = 0
+    aliases = {
+        "PLACA": ["PLACA", "PLACAS"],
+        "TIPO": ["TIPO"],
+        "CUSTO": ["CUSTO", "VALOR"],
+        "MES": ["MES", "MS"],
+    }
+
+    for row in worksheet.iter_rows(values_only=True):
+        values = list(row)
+        has_value = any(not _editor_empty_value(value) for value in values)
+        rows.append(values)
+
+        if not header_found:
+            normalized = [_normalize_sheet_header(value) for value in values]
+            header_found = all(any(alias in normalized for alias in field_aliases) for field_aliases in aliases.values())
+            continue
+
+        if has_value:
+            blank_after_header = 0
+        else:
+            blank_after_header += 1
+            if blank_after_header >= 50:
+                break
+
+    workbook.close()
+    return pd.DataFrame(rows)
 
 
 def _detect_pedagio_sheet_header(raw: pd.DataFrame) -> pd.DataFrame:
     aliases = {
-        "PLACA": ["PLACA"],
+        "PLACA": ["PLACA", "PLACAS"],
         "TIPO": ["TIPO"],
         "CUSTO": ["CUSTO", "VALOR"],
         "MES": ["MES", "MS"],
@@ -2758,7 +2799,7 @@ def _detect_pedagio_sheet_header(raw: pd.DataFrame) -> pd.DataFrame:
 def _pedagio_rows_from_sheet(df: pd.DataFrame, plate_map: dict[str, str]) -> tuple[list[dict], list[str]]:
     header_map = {_normalize_sheet_header(column): column for column in df.columns}
     aliases = {
-        "PLACA": ["PLACA"],
+        "PLACA": ["PLACA", "PLACAS"],
         "TIPO": ["TIPO"],
         "CUSTO": ["CUSTO", "VALOR"],
         "MES": ["MES", "MS"],
