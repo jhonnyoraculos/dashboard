@@ -2742,7 +2742,7 @@ def _pedagio_rows_from_sheet(df: pd.DataFrame, plate_map: dict[str, str]) -> tup
         "MES": ["MES", "MS"],
     }
     resolved = {field: next((header_map[key] for key in keys if key in header_map), None) for field, keys in aliases.items()}
-    labels = {"PLACA": "PLACA", "TIPO": "TIPO", "CUSTO": "Custo", "MES": "MÊS"}
+    labels = {"PLACA": "PLACA", "TIPO": "TIPO", "CUSTO": "Custo", "MES": "MES"}
     missing = [labels[field] for field, column in resolved.items() if column is None]
     if missing:
         return [], [f"Colunas faltando: {', '.join(missing)}."]
@@ -2765,7 +2765,7 @@ def _pedagio_rows_from_sheet(df: pd.DataFrame, plate_map: dict[str, str]) -> tup
         if custo is None:
             missing_row.append("Custo")
         if mes_info is None:
-            missing_row.append("MÊS")
+            missing_row.append("MES")
         if missing_row:
             errors.append(f"Linha {idx + 2}: preencher {', '.join(missing_row)}.")
             continue
@@ -2784,8 +2784,43 @@ def _pedagio_rows_from_sheet(df: pd.DataFrame, plate_map: dict[str, str]) -> tup
     return rows, errors
 
 
+def _clear_pedagio_last_import() -> None:
+    st.session_state.pop("cad_ped_last_import_rows", None)
+    st.session_state.pop("cad_ped_last_import_count", None)
+
+
+def _undo_pedagio_last_import() -> None:
+    rows = st.session_state.get("cad_ped_last_import_rows") or []
+    if not rows:
+        st.warning("Nao ha importacao recente para apagar.")
+        return
+    try:
+        deleted = backend.delete_matching_dashboard_records("pedagio", rows)
+    except Exception as exc:
+        st.error("Nao foi possivel apagar a ultima importacao.")
+        st.exception(exc)
+        return
+    _clear_pedagio_last_import()
+    _reset_dataset_editor("cad_ped_table")
+    st.success(f"{deleted} lancamento(s) apagado(s).")
+    st.rerun()
+
+
 def _render_pedagio_sheet_import(plate_map: dict[str, str]) -> None:
-    with st.expander("Adicionar pedágio/IPVA por planilha", expanded=False):
+    last_rows = st.session_state.get("cad_ped_last_import_rows") or []
+    if last_rows:
+        last_count = st.session_state.get("cad_ped_last_import_count", len(last_rows))
+        st.warning(f"Ultima importacao por planilha: {last_count} lancamento(s).")
+        undo_col, clear_col = st.columns([1, 1])
+        with undo_col:
+            if st.button("Apagar ultima importacao", type="primary", width="stretch", key="cad_ped_undo_import"):
+                _undo_pedagio_last_import()
+        with clear_col:
+            if st.button("Manter importacao", width="stretch", key="cad_ped_keep_import"):
+                _clear_pedagio_last_import()
+                st.rerun()
+
+    with st.expander("Adicionar pedagio/IPVA por planilha", expanded=False):
         uploaded = st.file_uploader("Enviar planilha", type=["xlsx", "csv"], key="cad_ped_upload")
         if uploaded is None:
             return
@@ -2793,7 +2828,7 @@ def _render_pedagio_sheet_import(plate_map: dict[str, str]) -> None:
         try:
             raw_df = _read_uploaded_sheet(uploaded)
         except Exception as exc:
-            st.error("Não foi possível ler a planilha. Envie um arquivo .xlsx ou .csv.")
+            st.error("Nao foi possivel ler a planilha. Envie um arquivo .xlsx ou .csv.")
             st.exception(exc)
             return
 
@@ -2811,15 +2846,17 @@ def _render_pedagio_sheet_import(plate_map: dict[str, str]) -> None:
 
         preview = pd.DataFrame(rows)
         st.dataframe(preview[["Mes", "PLACA", "Categoria", "Tipo", "Custo"]], width="stretch", hide_index=True)
-        if st.button(f"Importar {len(rows)} lançamentos", type="primary", width="stretch", key="cad_ped_import_sheet"):
+        if st.button(f"Importar {len(rows)} lancamentos", type="primary", width="stretch", key="cad_ped_import_sheet"):
             try:
                 backend.append_dashboard_records("pedagio", rows)
             except Exception as exc:
-                st.error("Não foi possível importar a planilha para o Neon.")
+                st.error("Nao foi possivel importar a planilha para o Neon.")
                 st.exception(exc)
                 return
+            st.session_state["cad_ped_last_import_rows"] = rows
+            st.session_state["cad_ped_last_import_count"] = len(rows)
             _reset_dataset_editor("cad_ped_table")
-            st.success(f"{len(rows)} lançamentos importados.")
+            st.success(f"{len(rows)} lancamentos importados.")
             st.rerun()
 
 

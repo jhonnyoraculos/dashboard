@@ -523,6 +523,54 @@ def append_dashboard_records(dataset: str, rows: list[dict]) -> str:
     return version
 
 
+def delete_matching_dashboard_records(dataset: str, rows: list[dict]) -> int:
+    if dataset not in DB_TABLES or dataset not in _DATASET_COLUMNS:
+        raise ValueError(f"Dataset invalido: {dataset}")
+
+    from sqlalchemy import text
+
+    columns = _DATASET_COLUMNS[dataset]
+    prepared_rows = []
+    for row in rows:
+        prepared = _prepare_insert_row(dataset, row)
+        if any(prepared.get(column) is not None for column in columns):
+            prepared_rows.append(prepared)
+    if not prepared_rows:
+        raise ValueError("Nenhum dado valido para apagar.")
+
+    table = _quote_identifier(DB_TABLES[dataset])
+    where_sql = " AND ".join(f"{_quote_identifier(column)} IS NOT DISTINCT FROM :{column}" for column in columns)
+    version = datetime.now(timezone.utc).isoformat()
+    deleted = 0
+
+    with _db_engine().begin() as conn:
+        for prepared in prepared_rows:
+            result = conn.execute(
+                text(
+                    f"""
+                    DELETE FROM {table}
+                    WHERE ctid IN (
+                        SELECT ctid FROM {table}
+                        WHERE {where_sql}
+                        LIMIT 1
+                    )
+                    """
+                ),
+                {column: prepared.get(column) for column in columns},
+            )
+            deleted += max(result.rowcount or 0, 0)
+
+        if dataset in {"combustivel", "manutencao", "pedagio"}:
+            _write_metadata(conn, "placas.version", version)
+        _write_metadata(conn, f"{dataset}.version", version)
+        _write_metadata(conn, "import.version", version)
+
+    if dataset in {"combustivel", "manutencao", "pedagio"}:
+        _clear_dataset_cache("placas")
+    _clear_dataset_cache(dataset)
+    return deleted
+
+
 def rename_plate(old_plate, new_plate, categoria: str) -> str:
     old_value = _normalize_plate_value(old_plate)
     new_value = _normalize_plate_value(new_plate)
