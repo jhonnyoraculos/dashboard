@@ -2869,6 +2869,26 @@ def _undo_pedagio_last_import() -> None:
     st.rerun()
 
 
+def _append_records_in_batches(dataset: str, rows: list[dict], *, batch_size: int = 100) -> list[dict]:
+    imported: list[dict] = []
+    total = len(rows)
+    progress = st.progress(0, text="Preparando envio...")
+    status = st.empty()
+
+    for start in range(0, total, batch_size):
+        batch = rows[start : start + batch_size]
+        batch_number = (start // batch_size) + 1
+        batch_total = (total + batch_size - 1) // batch_size
+        status.info(f"Enviando lote {batch_number}/{batch_total} ({start + 1}-{min(start + len(batch), total)} de {total})...")
+        backend.append_dashboard_records(dataset, batch, update_plate_registry=False)
+        imported.extend(batch)
+        progress.progress(min(len(imported) / total, 1.0), text=f"{len(imported)} de {total} lancamentos enviados")
+
+    status.empty()
+    progress.empty()
+    return imported
+
+
 def _render_pedagio_sheet_import(plate_map: dict[str, str]) -> None:
     last_rows = st.session_state.get("cad_ped_last_import_rows") or []
     if last_rows:
@@ -2910,16 +2930,22 @@ def _render_pedagio_sheet_import(plate_map: dict[str, str]) -> None:
         preview = pd.DataFrame(rows)
         st.dataframe(preview[["Mes", "PLACA", "Categoria", "Tipo", "Custo"]], width="stretch", hide_index=True)
         if st.button(f"Importar {len(rows)} lancamentos", type="primary", width="stretch", key="cad_ped_import_sheet"):
+            imported_rows: list[dict] = []
             try:
-                backend.append_dashboard_records("pedagio", rows)
+                imported_rows = _append_records_in_batches("pedagio", rows, batch_size=100)
             except Exception as exc:
-                st.error("Nao foi possivel importar a planilha para o Neon.")
+                if imported_rows:
+                    st.session_state["cad_ped_last_import_rows"] = imported_rows
+                    st.session_state["cad_ped_last_import_count"] = len(imported_rows)
+                    st.error(f"O envio parou depois de {len(imported_rows)} lancamento(s). Voce pode apagar essa importacao parcial pelo botao acima.")
+                else:
+                    st.error("Nao foi possivel importar a planilha para o Neon.")
                 st.exception(exc)
                 return
-            st.session_state["cad_ped_last_import_rows"] = rows
-            st.session_state["cad_ped_last_import_count"] = len(rows)
+            st.session_state["cad_ped_last_import_rows"] = imported_rows
+            st.session_state["cad_ped_last_import_count"] = len(imported_rows)
             _reset_dataset_editor("cad_ped_table")
-            st.success(f"{len(rows)} lancamentos importados.")
+            st.success(f"{len(imported_rows)} lancamentos importados.")
             st.rerun()
 
 

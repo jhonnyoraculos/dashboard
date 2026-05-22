@@ -480,7 +480,7 @@ def replace_dashboard_records(dataset: str, rows: list[dict]) -> str:
     return version
 
 
-def append_dashboard_records(dataset: str, rows: list[dict]) -> str:
+def append_dashboard_records(dataset: str, rows: list[dict], *, update_plate_registry: bool = True) -> str:
     if dataset not in DB_TABLES or dataset not in _DATASET_COLUMNS:
         raise ValueError(f"Dataset invalido: {dataset}")
 
@@ -506,7 +506,7 @@ def append_dashboard_records(dataset: str, rows: list[dict]) -> str:
         for prepared in prepared_rows:
             conn.execute(text(f"INSERT INTO {table} ({column_sql}) VALUES ({value_sql})"), {column: prepared.get(column) for column in columns})
 
-            if dataset in {"combustivel", "manutencao", "pedagio"} and prepared.get("PLACA") and prepared.get("Categoria"):
+            if update_plate_registry and dataset in {"combustivel", "manutencao", "pedagio"} and prepared.get("PLACA") and prepared.get("Categoria"):
                 _ensure_dataset_table(conn, "placas")
                 placas_table = _quote_identifier(DB_TABLES["placas"])
                 conn.execute(text(f"DELETE FROM {placas_table} WHERE \"PLACA\" = :placa"), {"placa": prepared["PLACA"]})
@@ -539,12 +539,12 @@ def append_dashboard_records(dataset: str, rows: list[dict]) -> str:
                     )
                     _write_metadata(conn, f"{registry_dataset}.version", version)
 
-        if dataset in {"combustivel", "manutencao", "pedagio"}:
+        if update_plate_registry and dataset in {"combustivel", "manutencao", "pedagio"}:
             _write_metadata(conn, "placas.version", version)
         _write_metadata(conn, f"{dataset}.version", version)
         _write_metadata(conn, "import.version", version)
 
-    if dataset in {"combustivel", "manutencao", "pedagio"}:
+    if update_plate_registry and dataset in {"combustivel", "manutencao", "pedagio"}:
         _clear_dataset_cache("placas")
     _clear_dataset_cache(dataset)
     for registry_dataset in text_registry_changed:
