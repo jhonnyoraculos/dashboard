@@ -2729,8 +2729,30 @@ def _parse_sheet_month(value: object) -> tuple[str, date] | None:
 def _read_uploaded_sheet(uploaded_file) -> pd.DataFrame:
     name = clean_text(getattr(uploaded_file, "name", "")).lower()
     if name.endswith(".csv"):
-        return pd.read_csv(uploaded_file, sep=None, engine="python")
-    return pd.read_excel(uploaded_file)
+        raw = pd.read_csv(uploaded_file, sep=None, engine="python", header=None)
+    else:
+        raw = pd.read_excel(uploaded_file, header=None)
+    return _detect_pedagio_sheet_header(raw)
+
+
+def _detect_pedagio_sheet_header(raw: pd.DataFrame) -> pd.DataFrame:
+    aliases = {
+        "PLACA": ["PLACA"],
+        "TIPO": ["TIPO"],
+        "CUSTO": ["CUSTO", "VALOR"],
+        "MES": ["MES", "MS"],
+    }
+
+    for idx, row in raw.iterrows():
+        normalized = [_normalize_sheet_header(value) for value in row.tolist()]
+        if all(any(alias in normalized for alias in field_aliases) for field_aliases in aliases.values()):
+            df = raw.iloc[idx + 1 :].copy()
+            df.columns = [clean_text(value).strip() or f"Coluna {pos + 1}" for pos, value in enumerate(row.tolist())]
+            return df.dropna(how="all").reset_index(drop=True)
+
+    raw = raw.copy()
+    raw.columns = [clean_text(value).strip() or f"Coluna {idx + 1}" for idx, value in enumerate(raw.iloc[0].tolist())]
+    return raw.iloc[1:].dropna(how="all").reset_index(drop=True)
 
 
 def _pedagio_rows_from_sheet(df: pd.DataFrame, plate_map: dict[str, str]) -> tuple[list[dict], list[str]]:
