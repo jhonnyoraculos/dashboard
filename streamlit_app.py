@@ -4,6 +4,7 @@ import base64
 import hashlib
 import html
 import os
+import unicodedata
 from io import BytesIO
 from datetime import date
 from pathlib import Path
@@ -2642,6 +2643,186 @@ def _number_col(label: str):
     return st.column_config.NumberColumn(label, min_value=0.0, step=1.0)
 
 
+def _normalize_sheet_header(value: object) -> str:
+    text = unicodedata.normalize("NFKD", str(value or "")).encode("ascii", "ignore").decode("ascii")
+    return "".join(ch for ch in text.upper() if ch.isalnum())
+
+
+def _parse_brl_number(value: object) -> float | None:
+    if _editor_empty_value(value):
+        return None
+    if isinstance(value, (int, float)):
+        return float(value)
+    text = clean_text(value)
+    text = text.replace("R$", "").replace("\u00a0", " ").strip()
+    text = "".join(ch for ch in text if ch.isdigit() or ch in ",.-")
+    if not text:
+        return None
+    if "," in text and "." in text:
+        text = text.replace(".", "").replace(",", ".")
+    elif "," in text:
+        text = text.replace(",", ".")
+    try:
+        return float(text)
+    except ValueError:
+        return None
+
+
+def _parse_sheet_month(value: object) -> tuple[str, date] | None:
+    if _editor_empty_value(value):
+        return None
+    if not isinstance(value, str):
+        parsed = pd.to_datetime(value, errors="coerce")
+        if pd.notna(parsed):
+            year, month = int(parsed.year), int(parsed.month)
+            return f"{year}-{month:02d}", date(year, month, 1)
+
+    text = unicodedata.normalize("NFKD", str(value or "")).encode("ascii", "ignore").decode("ascii").lower().strip()
+    month = None
+    month_names = {
+        "jan": 1,
+        "janeiro": 1,
+        "fev": 2,
+        "fevereiro": 2,
+        "mar": 3,
+        "marco": 3,
+        "abr": 4,
+        "abril": 4,
+        "mai": 5,
+        "maio": 5,
+        "jun": 6,
+        "junho": 6,
+        "jul": 7,
+        "julho": 7,
+        "ago": 8,
+        "agosto": 8,
+        "set": 9,
+        "setembro": 9,
+        "out": 10,
+        "outubro": 10,
+        "nov": 11,
+        "novembro": 11,
+        "dez": 12,
+        "dezembro": 12,
+    }
+    for label, number in month_names.items():
+        if label in text:
+            month = number
+            break
+
+    digits = [int(part) for part in "".join(ch if ch.isdigit() else " " for ch in text).split()]
+    year = None
+    if month is not None and digits:
+        year = digits[-1]
+    elif len(digits) >= 2:
+        if digits[0] > 31:
+            year, month = digits[0], digits[1]
+        else:
+            month, year = digits[0], digits[-1]
+    if year is not None and year < 100:
+        year += 2000
+    if not year or not month or not (1 <= month <= 12):
+        return None
+    return f"{year}-{month:02d}", date(year, month, 1)
+
+
+def _read_uploaded_sheet(uploaded_file) -> pd.DataFrame:
+    name = clean_text(getattr(uploaded_file, "name", "")).lower()
+    if name.endswith(".csv"):
+        return pd.read_csv(uploaded_file, sep=None, engine="python")
+    return pd.read_excel(uploaded_file)
+
+
+def _pedagio_rows_from_sheet(df: pd.DataFrame, plate_map: dict[str, str]) -> tuple[list[dict], list[str]]:
+    header_map = {_normalize_sheet_header(column): column for column in df.columns}
+    aliases = {
+        "PLACA": ["PLACA"],
+        "TIPO": ["TIPO"],
+        "CUSTO": ["CUSTO", "VALOR"],
+        "MES": ["MES", "MS"],
+    }
+    resolved = {field: next((header_map[key] for key in keys if key in header_map), None) for field, keys in aliases.items()}
+    labels = {"PLACA": "PLACA", "TIPO": "TIPO", "CUSTO": "Custo", "MES": "MÊS"}
+    missing = [labels[field] for field, column in resolved.items() if column is None]
+    if missing:
+        return [], [f"Colunas faltando: {', '.join(missing)}."]
+
+    rows: list[dict] = []
+    errors: list[str] = []
+    for idx, row in df.iterrows():
+        placa = clean_text(row.get(resolved["PLACA"])).strip().upper()
+        tipo = clean_text(row.get(resolved["TIPO"])).strip()
+        custo = _parse_brl_number(row.get(resolved["CUSTO"]))
+        mes_info = _parse_sheet_month(row.get(resolved["MES"]))
+
+        if not placa and not tipo and custo is None and mes_info is None:
+            continue
+        missing_row = []
+        if not placa:
+            missing_row.append("PLACA")
+        if not tipo:
+            missing_row.append("TIPO")
+        if custo is None:
+            missing_row.append("Custo")
+        if mes_info is None:
+            missing_row.append("MÊS")
+        if missing_row:
+            errors.append(f"Linha {idx + 2}: preencher {', '.join(missing_row)}.")
+            continue
+
+        mes, data = mes_info
+        rows.append(
+            {
+                "Data": data,
+                "Mes": mes,
+                "PLACA": placa,
+                "Tipo": tipo,
+                "Custo": custo,
+                "Categoria": plate_map.get(placa, "Transporte"),
+            }
+        )
+    return rows, errors
+
+
+def _render_pedagio_sheet_import(plate_map: dict[str, str]) -> None:
+    with st.expander("Adicionar pedágio/IPVA por planilha", expanded=False):
+        uploaded = st.file_uploader("Enviar planilha", type=["xlsx", "csv"], key="cad_ped_upload")
+        if uploaded is None:
+            return
+
+        try:
+            raw_df = _read_uploaded_sheet(uploaded)
+        except Exception as exc:
+            st.error("Não foi possível ler a planilha. Envie um arquivo .xlsx ou .csv.")
+            st.exception(exc)
+            return
+
+        rows, errors = _pedagio_rows_from_sheet(raw_df, plate_map)
+        if errors:
+            st.warning("Revise a planilha antes de importar.")
+            for error in errors[:8]:
+                st.write(error)
+            if len(errors) > 8:
+                st.write(f"...mais {len(errors) - 8} erro(s).")
+            return
+        if not rows:
+            st.warning("Nenhuma linha válida encontrada na planilha.")
+            return
+
+        preview = pd.DataFrame(rows)
+        st.dataframe(preview[["Mes", "PLACA", "Categoria", "Tipo", "Custo"]], width="stretch", hide_index=True)
+        if st.button(f"Importar {len(rows)} lançamentos", type="primary", width="stretch", key="cad_ped_import_sheet"):
+            try:
+                backend.append_dashboard_records("pedagio", rows)
+            except Exception as exc:
+                st.error("Não foi possível importar a planilha para o Neon.")
+                st.exception(exc)
+                return
+            _reset_dataset_editor("cad_ped_table")
+            st.success(f"{len(rows)} lançamentos importados.")
+            st.rerun()
+
+
 def render_cadastro() -> None:
     topbar("JR DASHBOARD • Adicionar dados", back=True)
     with st.container(key="cadastro_shell"):
@@ -2929,6 +3110,8 @@ def render_cadastro() -> None:
             )
 
         with tabs[5]:
+            _render_pedagio_sheet_import(plate_map)
+
             with st.form("form_pedagio", clear_on_submit=True):
                 c1, c2, c3 = st.columns(3)
                 with c1:

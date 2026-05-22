@@ -451,6 +451,78 @@ def replace_dashboard_records(dataset: str, rows: list[dict]) -> str:
     return version
 
 
+def append_dashboard_records(dataset: str, rows: list[dict]) -> str:
+    if dataset not in DB_TABLES or dataset not in _DATASET_COLUMNS:
+        raise ValueError(f"Dataset invalido: {dataset}")
+
+    from sqlalchemy import text
+
+    columns = _DATASET_COLUMNS[dataset]
+    prepared_rows = []
+    for row in rows:
+        prepared = _prepare_insert_row(dataset, row)
+        if any(prepared.get(column) is not None for column in columns):
+            prepared_rows.append(prepared)
+    if not prepared_rows:
+        raise ValueError("Nenhum dado valido para salvar.")
+
+    table = _quote_identifier(DB_TABLES[dataset])
+    column_sql = ", ".join(_quote_identifier(column) for column in columns)
+    value_sql = ", ".join(f":{column}" for column in columns)
+    version = datetime.now(timezone.utc).isoformat()
+    text_registry_changed: set[str] = set()
+
+    with _db_engine().begin() as conn:
+        _ensure_dataset_table(conn, dataset)
+        for prepared in prepared_rows:
+            conn.execute(text(f"INSERT INTO {table} ({column_sql}) VALUES ({value_sql})"), {column: prepared.get(column) for column in columns})
+
+            if dataset in {"combustivel", "manutencao", "pedagio"} and prepared.get("PLACA") and prepared.get("Categoria"):
+                _ensure_dataset_table(conn, "placas")
+                placas_table = _quote_identifier(DB_TABLES["placas"])
+                conn.execute(text(f"DELETE FROM {placas_table} WHERE \"PLACA\" = :placa"), {"placa": prepared["PLACA"]})
+                conn.execute(
+                    text(f"INSERT INTO {placas_table} (\"PLACA\", \"Categoria\") VALUES (:placa, :categoria)"),
+                    {"placa": prepared["PLACA"], "categoria": prepared["Categoria"]},
+                )
+
+            if dataset == "combustivel":
+                registry_targets = (
+                    ("combustiveis", "Combustivel", prepared.get("Combustivel")),
+                    ("postos", "POSTOS", prepared.get("POSTOS")),
+                )
+                for registry_dataset, column, value in registry_targets:
+                    if not value:
+                        continue
+                    text_registry_changed.add(registry_dataset)
+                    _ensure_dataset_table(conn, registry_dataset)
+                    registry_table = _quote_identifier(DB_TABLES[registry_dataset])
+                    quoted_column = _quote_identifier(column)
+                    conn.execute(
+                        text(
+                            f"""
+                            INSERT INTO {registry_table} ({quoted_column})
+                            VALUES (:value)
+                            ON CONFLICT ({quoted_column}) DO NOTHING
+                            """
+                        ),
+                        {"value": value},
+                    )
+                    _write_metadata(conn, f"{registry_dataset}.version", version)
+
+        if dataset in {"combustivel", "manutencao", "pedagio"}:
+            _write_metadata(conn, "placas.version", version)
+        _write_metadata(conn, f"{dataset}.version", version)
+        _write_metadata(conn, "import.version", version)
+
+    if dataset in {"combustivel", "manutencao", "pedagio"}:
+        _clear_dataset_cache("placas")
+    _clear_dataset_cache(dataset)
+    for registry_dataset in text_registry_changed:
+        _clear_dataset_cache(registry_dataset)
+    return version
+
+
 def rename_plate(old_plate, new_plate, categoria: str) -> str:
     old_value = _normalize_plate_value(old_plate)
     new_value = _normalize_plate_value(new_plate)
