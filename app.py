@@ -56,6 +56,7 @@ _MANUTENCAO_CACHE = {"mtime": None, "df": None, "lock": threading.Lock()}
 _HOTEIS_CACHE = {"mtime": None, "df": None, "lock": threading.Lock()}
 _OVERVIEW_CACHE = {"mtimes": None, "dados": None}
 _PLATE_REGISTRY_CACHE = {"mtime": None, "df": None, "lock": threading.Lock()}
+_PLACAS_CACHE = {"mtime": None, "df": None, "lock": threading.Lock()}
 _TEXT_REGISTRY_CACHES = {
     "combustiveis": {"mtime": None, "df": None, "lock": threading.Lock()},
     "postos": {"mtime": None, "df": None, "lock": threading.Lock()},
@@ -298,6 +299,8 @@ def _clear_dataset_cache(dataset: str) -> None:
     if dataset in {"placas", "combustivel", "manutencao", "pedagio"}:
         _PLATE_REGISTRY_CACHE["mtime"] = None
         _PLATE_REGISTRY_CACHE["df"] = None
+        _PLACAS_CACHE["mtime"] = None
+        _PLACAS_CACHE["df"] = None
     if dataset in {"combustivel", "combustiveis"}:
         _TEXT_REGISTRY_CACHES["combustiveis"]["mtime"] = None
         _TEXT_REGISTRY_CACHES["combustiveis"]["df"] = None
@@ -896,17 +899,34 @@ def _derived_plate_registry() -> pd.DataFrame:
 
 
 def load_placas() -> pd.DataFrame:
+    version = (
+        _db_version("placas"),
+        _db_version("combustivel"),
+        _db_version("manutencao"),
+        _db_version("pedagio"),
+    )
+    with _PLACAS_CACHE["lock"]:
+        cached = _PLACAS_CACHE.get("df")
+        if cached is not None and _PLACAS_CACHE.get("mtime") == version:
+            return cached.copy()
+
     derived = _derived_plate_registry()
     registered = _read_plate_registry()
     frames = [df for df in (derived, registered) if not df.empty]
     if not frames:
-        return _empty(_PLACAS_COLUMNS)
-    df = pd.concat(frames, ignore_index=True)
-    df["PLACA"] = _normalize_plate_series(df["PLACA"])
-    _normalize_category_column(df)
-    df = df.dropna(subset=["PLACA"]).drop_duplicates(subset=["PLACA"], keep="last")
-    df = df[df["PLACA"].apply(_is_plate_identifier)]
-    return df[_PLACAS_COLUMNS].sort_values("PLACA").reset_index(drop=True)
+        df = _empty(_PLACAS_COLUMNS)
+    else:
+        df = pd.concat(frames, ignore_index=True)
+        df["PLACA"] = _normalize_plate_series(df["PLACA"])
+        _normalize_category_column(df)
+        df = df.dropna(subset=["PLACA"]).drop_duplicates(subset=["PLACA"], keep="last")
+        df = df[df["PLACA"].apply(_is_plate_identifier)]
+        df = df[_PLACAS_COLUMNS].sort_values("PLACA").reset_index(drop=True)
+
+    with _PLACAS_CACHE["lock"]:
+        _PLACAS_CACHE["mtime"] = version
+        _PLACAS_CACHE["df"] = df.copy()
+    return df.copy()
 
 
 def _normalize_mes(df: pd.DataFrame) -> None:
@@ -1235,12 +1255,24 @@ def _load_text_registry(dataset: str, columns: list[str], column: str) -> pd.Dat
     except Exception:
         pass
 
-    try:
-        historical = _read_database_table("combustivel", _COMBUSTIVEL_COLUMNS)
-        if column in historical.columns:
-            frames.append(historical[[column]].copy())
-    except Exception:
-        pass
+    historical = None
+    with _COMBUSTIVEL_CACHE["lock"]:
+        combustivel_mtime = _COMBUSTIVEL_CACHE.get("mtime")
+        combustivel_df = _COMBUSTIVEL_CACHE.get("df")
+        if (
+            combustivel_df is not None
+            and isinstance(combustivel_mtime, tuple)
+            and combustivel_mtime
+            and combustivel_mtime[0] == version[1]
+        ):
+            historical = combustivel_df
+    if historical is None:
+        try:
+            historical = _read_database_table("combustivel", _COMBUSTIVEL_COLUMNS)
+        except Exception:
+            historical = None
+    if historical is not None and column in historical.columns:
+        frames.append(historical[[column]].copy())
 
     if not frames:
         df = _empty(columns)
@@ -1879,7 +1911,7 @@ def compute_overview_totals(*, ano: int | None = None, mes: int | None = None, m
     segmento_totais = defaultdict(float)
     periodos_unicos: set[str] = set()
     anos_extra: set[int] = set()
-    max_workers = len(areas) if ano is None and mes is None else 1
+    max_workers = len(areas)
 
     with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as pool:
         future_map = {
