@@ -26,7 +26,7 @@ MUTED = "#6B7280"
 CARD_BORDER = "#c2d2f3"
 LOGO_PATH = Path(__file__).parent / "static" / "logo-jr.png"
 CURRENT_YEAR = date.today().year
-APP_VERSION = "deploy-compare-total-acentos-v1"
+APP_VERSION = "deploy-compare-bar-labels-v1"
 
 PLOTLY_CONFIG = {
     "responsive": True,
@@ -1656,6 +1656,7 @@ def multi_bar_chart(
         max_value = 0.0
         for item, value_map in zip(clean_series, maps):
             values = [value_map.get(label, 0.0) for label in ordered_labels]
+            text = [fmt_brl_compact(value) if currency else fmt_num(value) for value in values]
             max_value = max(max_value, max(values) if values else 0.0)
             fig.add_trace(
                 go.Bar(
@@ -1664,15 +1665,19 @@ def multi_bar_chart(
                     orientation="h",
                     name=item.get("label", ""),
                     marker={"color": item.get("color", JR_BLUE)},
+                    text=text,
+                    textposition="outside",
+                    textfont={"size": 10, "color": item.get("color", JR_BLUE)},
+                    cliponaxis=False,
                     hovertemplate="<b>%{fullData.name}</b><br>%{y}<br>R$ %{x:,.2f}<extra></extra>"
                     if currency
                     else "<b>%{fullData.name}</b><br>%{y}<br>%{x:,.0f}<extra></extra>",
                 )
             )
         fig.update_layout(barmode="group", showlegend=True, legend={"orientation": "h", "x": 0, "y": 1.12})
-        fig.update_xaxes(tickprefix="R$ " if currency else "", range=[0, max_value * 1.14] if max_value else None, rangemode="tozero")
+        fig.update_xaxes(tickprefix="R$ " if currency else "", range=[0, max_value * 1.34] if max_value else None, rangemode="tozero")
         fig.update_yaxes(autorange="reversed", automargin=True, tickfont={"size": 11})
-        fig = apply_theme(fig, height=chart_height, margin={"l": 130, "r": 50, "t": 70, "b": 45})
+        fig = apply_theme(fig, height=chart_height, margin={"l": 130, "r": 105, "t": 70, "b": 45})
         fig.update_layout(meta={"jr_horizontal_bar": True, "jr_row_count": len(ordered_labels)})
         return fig
 
@@ -1684,6 +1689,7 @@ def multi_bar_chart(
     for item in clean_series:
         value_map = _series_value_map(item.get("raw_labels", []), item.get("values", []))
         values = [value_map.get(label, 0.0) for label in ordered_labels]
+        text = [fmt_brl_compact(value) if currency else fmt_num(value) for value in values]
         max_value = max(max_value, max(values) if values else 0.0)
         fig.add_trace(
             go.Bar(
@@ -1691,6 +1697,10 @@ def multi_bar_chart(
                 y=values,
                 name=item.get("label", ""),
                 marker={"color": item.get("color", JR_BLUE)},
+                text=text,
+                textposition="outside",
+                textfont={"size": 10, "color": item.get("color", JR_BLUE)},
+                cliponaxis=False,
                 hovertemplate="<b>%{fullData.name}</b><br>%{x}<br>R$ %{y:,.2f}<extra></extra>"
                 if currency
                 else "<b>%{fullData.name}</b><br>%{x}<br>%{y:,.0f}<extra></extra>",
@@ -1701,10 +1711,10 @@ def multi_bar_chart(
     fig.update_yaxes(
         title="R$" if currency else "",
         tickprefix="R$ " if currency else "",
-        range=[0, max_value * 1.12] if max_value else None,
+        range=[0, max_value * 1.26] if max_value else None,
         rangemode="tozero",
     )
-    return apply_theme(fig, height=height or 360, margin={"l": 60, "r": 35, "t": 70, "b": 60})
+    return apply_theme(fig, height=height or 360, margin={"l": 60, "r": 35, "t": 78, "b": 60})
 
 
 def report_font(size: int, *, bold: bool = False) -> ImageFont.ImageFont:
