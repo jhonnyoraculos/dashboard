@@ -25,7 +25,7 @@ MUTED = "#6B7280"
 CARD_BORDER = "#c2d2f3"
 LOGO_PATH = Path(__file__).parent / "static" / "logo-jr.png"
 CURRENT_YEAR = date.today().year
-APP_VERSION = "deploy-compare-mode-v1"
+APP_VERSION = "deploy-compare-kpis-v1"
 
 PLOTLY_CONFIG = {
     "responsive": True,
@@ -609,6 +609,16 @@ def inject_css() -> None:
           align-items: center;
           justify-content: center;
           text-align: center;
+          position: relative;
+          overflow: hidden;
+        }}
+
+        .kpi::before {{
+          content: "";
+          position: absolute;
+          inset: 0 0 auto 0;
+          height: 4px;
+          background: var(--kpi-accent, var(--jr-red));
         }}
 
         .home-total-label,
@@ -644,7 +654,7 @@ def inject_css() -> None:
         .kpi-value {{
           font-size: clamp(18px, 1.8vw, 26px);
           font-weight: 800;
-          color: var(--jr-red);
+          color: var(--kpi-accent, var(--jr-red));
           line-height: 1.05;
           margin-top: 8px;
           overflow-wrap: anywhere;
@@ -1297,11 +1307,13 @@ def topbar(title: str, *, back: bool = True) -> None:
     )
 
 
-def render_kpis(items: list[tuple[str, str]]) -> None:
+def render_kpis(items: list[tuple]) -> None:
     cards = []
-    for label, value in items:
+    for item in items:
+        label, value = item[0], item[1]
+        color = item[2] if len(item) > 2 and item[2] else JR_RED
         cards.append(
-            f'<div class="kpi"><div class="kpi-title">{h(label)}</div><div class="kpi-value">{h(value)}</div></div>'
+            f'<div class="kpi" style="--kpi-accent: {h(color)}"><div class="kpi-title">{h(label)}</div><div class="kpi-value">{h(value)}</div></div>'
         )
     st.markdown(f'<section class="kpis">{"".join(cards)}</section>', unsafe_allow_html=True)
 
@@ -2090,9 +2102,9 @@ def dashboard_controls(
     key_prefix: str,
     *,
     title: str,
-    kpis: list[tuple[str, str, str]],
+    kpis: list[tuple],
     charts: list[tuple[str, str, go.Figure]],
-) -> tuple[bool, bool, list[tuple[str, str, str]], list[tuple[str, str, go.Figure]]]:
+) -> tuple[bool, bool, list[tuple], list[tuple[str, str, go.Figure]]]:
     hide_cards_key = f"{key_prefix}_hide_cards"
     hide_charts_key = f"{key_prefix}_hide_charts"
     export_ready_key = f"{key_prefix}_export_ready"
@@ -2113,9 +2125,9 @@ def dashboard_controls(
                 ("page_pdf", "Página PDF", "pagina", "pdf"),
             ]
             selected_kpis_preview = [
-                (label, value)
-                for item_id, label, value in kpis
-                if st.session_state.get(f"{key_prefix}_visible_{item_id}", True)
+                (item[1], item[2])
+                for item in kpis
+                if st.session_state.get(f"{key_prefix}_visible_{item[0]}", True)
             ]
             selected_charts_preview = [
                 (chart_title, fig)
@@ -2180,7 +2192,7 @@ def dashboard_controls(
                     st.rerun()
 
             st.markdown('<div class="control-row-spacer"></div><div class="control-row-label">Itens</div>', unsafe_allow_html=True)
-            checkbox_items = [("cards", item_id, label) for item_id, label, _ in kpis]
+            checkbox_items = [("cards", item[0], item[1]) for item in kpis]
             checkbox_items.extend(("charts", item_id, label) for item_id, label, _ in charts)
             checkbox_cols = 4
             for index in range(0, len(checkbox_items), checkbox_cols):
@@ -2202,7 +2214,7 @@ def render_controlled_dashboard(
     key_prefix: str,
     *,
     title: str,
-    kpis: list[tuple[str, str, str]],
+    kpis: list[tuple],
     charts: list[tuple[str, str, go.Figure]],
 ) -> None:
     show_cards, show_charts, visible_kpis, visible_charts = dashboard_controls(
@@ -2212,7 +2224,7 @@ def render_controlled_dashboard(
         charts=charts,
     )
     if show_cards and visible_kpis:
-        render_kpis([(label, value) for _, label, value in visible_kpis])
+        render_kpis([(item[1], item[2], item[3] if len(item) > 3 else None) for item in visible_kpis])
     if show_charts and visible_charts:
         chart_grid([(chart_title, fig) for _, chart_title, fig in visible_charts])
 
@@ -2368,6 +2380,63 @@ def compare_chart_series(bundle: list[tuple[str, dict]], metric: str) -> list[di
             }
         )
     return series
+
+
+def color_kpis(kpis: list[tuple], route: str, *, prefix: bool = False) -> list[tuple]:
+    color = _series_color(route)
+    route_label = _series_label(route)
+    colored = []
+    for item in kpis:
+        item_id, label, value = item[0], item[1], item[2]
+        display_label = f"{route_label} • {label}" if prefix else label
+        colored.append((item_id, display_label, value, color))
+    return colored
+
+
+def compare_kpi_cards(bundle: list[tuple[str, dict]]) -> list[tuple]:
+    cards: list[tuple] = []
+    for route, data in bundle:
+        color = _series_color(route)
+        label = _series_label(route)
+        if route == "combustivel":
+            route_cards = [
+                ("total", "Total (R$)", fmt_brl(data.get("custo_total"))),
+                ("media", "Média mensal (R$)", fmt_brl(data.get("media_mensal"))),
+                ("km", "KM total", fmt_num(data.get("km_total"))),
+                ("litros", "Total litros", fmt_num(data.get("litros_total"))),
+            ]
+        elif route == "manutencao":
+            route_cards = [
+                ("total", "Custo total (R$)", fmt_brl(data.get("custo_total"))),
+                ("servicos", "Serviços", fmt_num(data.get("total_servicos"))),
+                ("ticket", "Ticket médio", fmt_brl(data.get("media_servico"))),
+                ("media", "Média mensal (R$)", fmt_brl(data.get("media_mensal"))),
+            ]
+        elif route == "hoteis":
+            route_cards = [
+                ("total", "Valor total (R$)", fmt_brl(data.get("valor_total"))),
+                ("reservas", "Reservas", fmt_num(data.get("reservas_total"))),
+                ("media_reserva", "Média por reserva", fmt_brl(data.get("valor_medio_reserva"))),
+                ("media", "Média mensal", fmt_brl(data.get("media_mensal"))),
+            ]
+        elif route == "pedagio":
+            route_cards = [
+                ("total", "Gasto total (R$)", fmt_brl(data.get("custo_total"))),
+                ("media", "Média mensal (R$)", fmt_brl(data.get("media_mensal"))),
+                ("pedagio", "Gasto pedágio", fmt_brl(data.get("gasto_pedagio"))),
+                ("lancamentos", "Lançamentos", fmt_num(data.get("total_lancamentos"))),
+            ]
+        elif route == "vex":
+            route_cards = [
+                ("total", "Gasto Vex total (R$)", fmt_brl(data.get("total_vex"))),
+                ("combustivel", "Combustível Vex (R$)", fmt_brl(data.get("combustivel_total"))),
+                ("manutencao", "Manutenção Vex (R$)", fmt_brl(data.get("manutencao_total"))),
+                ("pedagio", "Pedágio/Seguro Vex (R$)", fmt_brl(data.get("pedagio_total"))),
+            ]
+        else:
+            route_cards = []
+        cards.extend((f"compare_{route}_{item_id}", f"{label} • {card_label}", value, color) for item_id, card_label, value in route_cards)
+    return cards
 
 
 def render_home() -> None:
@@ -3611,6 +3680,8 @@ def render_combustivel() -> None:
     litros_labels, litros_values = sorted_series(data.get("litros_mensal", {}), "Mes", "Litros", include_year=include_year, fallback_year=fallback_year)
     compare_selected = filter_state.get("_compare", [])
     compare_data = compare_bundle("combustivel", data, params, compare_selected)
+    if compare_selected:
+        kpis = color_kpis(kpis, "combustivel", prefix=True) + compare_kpi_cards(compare_data[1:])
     monthly_fig = (
         multi_line_chart(compare_chart_series(compare_data, "monthly"), include_year=include_year, fallback_year=fallback_year)
         if compare_selected
@@ -3662,6 +3733,8 @@ def render_manutencao() -> None:
     mensal_labels, mensal_values = sorted_series(data.get("custo_mensal", {}), "Mes", "Custo", include_year=include_year, fallback_year=params.get("ano"))
     compare_selected = filter_state.get("_compare", [])
     compare_data = compare_bundle("manutencao", data, params, compare_selected)
+    if compare_selected:
+        kpis = color_kpis(kpis, "manutencao", prefix=True) + compare_kpi_cards(compare_data[1:])
     monthly_fig = (
         multi_line_chart(compare_chart_series(compare_data, "monthly"), include_year=include_year, fallback_year=params.get("ano"))
         if compare_selected
@@ -3716,6 +3789,8 @@ def render_hoteis() -> None:
         week_colors.append("#F59E0B" if is_unplanned else JR_BLUE)
     compare_selected = filter_state.get("_compare", [])
     compare_data = compare_bundle("hoteis", data, params, compare_selected)
+    if compare_selected:
+        kpis = color_kpis(kpis, "hoteis", prefix=True) + compare_kpi_cards(compare_data[1:])
     monthly_fig = (
         multi_line_chart(compare_chart_series(compare_data, "monthly"), include_year=include_year, fallback_year=params.get("ano"))
         if compare_selected
@@ -3762,6 +3837,8 @@ def render_pedagio() -> None:
     mensal_labels, mensal_values = sorted_series(data.get("custo_mensal", {}), "Mes", "Custo", include_year=include_year, fallback_year=params.get("ano"))
     compare_selected = filter_state.get("_compare", [])
     compare_data = compare_bundle("pedagio", data, params, compare_selected)
+    if compare_selected:
+        kpis = color_kpis(kpis, "pedagio", prefix=True) + compare_kpi_cards(compare_data[1:])
     monthly_fig = (
         multi_line_chart(compare_chart_series(compare_data, "monthly"), include_year=include_year, fallback_year=params.get("ano"))
         if compare_selected
@@ -3812,6 +3889,8 @@ def render_vex() -> None:
     mensal_labels, mensal_values = sorted_series(data.get("mensal_total", {}), "Mes", "Valor", include_year=include_year, fallback_year=params.get("ano"))
     compare_selected = filter_state.get("_compare", [])
     compare_data = compare_bundle("vex", data, params, compare_selected)
+    if compare_selected:
+        kpis = color_kpis(kpis, "vex", prefix=True) + compare_kpi_cards(compare_data[1:])
     monthly_fig = (
         multi_line_chart(compare_chart_series(compare_data, "monthly"), include_year=include_year, fallback_year=params.get("ano"))
         if compare_selected
