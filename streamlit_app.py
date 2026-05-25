@@ -26,7 +26,7 @@ MUTED = "#6B7280"
 CARD_BORDER = "#c2d2f3"
 LOGO_PATH = Path(__file__).parent / "static" / "logo-jr.png"
 CURRENT_YEAR = date.today().year
-APP_VERSION = "deploy-cache-neon-v1"
+APP_VERSION = "deploy-compare-kpis-v1"
 
 PLOTLY_CONFIG = {
     "responsive": True,
@@ -605,6 +605,50 @@ def inject_css() -> None:
           gap: 28px;
         }}
 
+        .kpi-sections {{
+          display: grid;
+          grid-template-columns: repeat(2, minmax(0, 1fr));
+          gap: 24px;
+          margin: 18px 0 28px;
+        }}
+
+        .kpi-section--summary {{
+          grid-column: 1 / -1;
+        }}
+
+        .kpi-section {{
+          border: 1px solid rgba(194,210,243,.9);
+          border-radius: var(--radius);
+          padding: 18px;
+          background: rgba(255,255,255,.46);
+          box-shadow: 0 12px 28px rgba(16,24,40,0.08);
+        }}
+
+        .kpi-section-title {{
+          display: flex;
+          align-items: center;
+          gap: 10px;
+          margin: 0 0 16px;
+          color: var(--jr-blue);
+          font-size: 13px;
+          font-weight: 800;
+          text-transform: uppercase;
+          letter-spacing: .05em;
+        }}
+
+        .kpi-section-title::before {{
+          content: "";
+          width: 32px;
+          height: 4px;
+          border-radius: 999px;
+          background: var(--section-accent, var(--jr-red));
+        }}
+
+        .kpi-section .kpis {{
+          margin: 0;
+          gap: 18px;
+        }}
+
         .kpi {{
           padding: 24px;
           min-height: 116px;
@@ -1035,6 +1079,7 @@ def inject_css() -> None:
           }}
 
           .home-total-grid,
+          .kpi-sections,
           .kpis,
           .home-grid,
           .home-export-bar {{
@@ -1350,14 +1395,35 @@ def topbar(title: str, *, back: bool = True) -> None:
 
 
 def render_kpis(items: list[tuple]) -> None:
-    cards = []
-    for item in items:
+    def card_html(item: tuple) -> str:
         label, value = item[0], item[1]
         color = item[2] if len(item) > 2 and item[2] else JR_RED
-        cards.append(
-            f'<div class="kpi" style="--kpi-accent: {h(color)}"><div class="kpi-title">{h(label)}</div><div class="kpi-value">{h(value)}</div></div>'
+        return f'<div class="kpi" style="--kpi-accent: {h(color)}"><div class="kpi-title">{h(label)}</div><div class="kpi-value">{h(value)}</div></div>'
+
+    has_sections = any(len(item) > 3 and item[3] for item in items)
+    if not has_sections:
+        st.html(f'<section class="kpis">{"".join(card_html(item) for item in items)}</section>')
+        return
+
+    sections: dict[str, dict[str, object]] = {}
+    for item in items:
+        section = clean_text(item[3] if len(item) > 3 and item[3] else "Resumo").strip() or "Resumo"
+        color = item[2] if len(item) > 2 and item[2] else JR_RED
+        sections.setdefault(section, {"color": color, "items": []})
+        sections[section]["items"].append(item)
+
+    section_html = []
+    for section, payload in sections.items():
+        color = payload["color"]
+        cards = "".join(card_html(item) for item in payload["items"])
+        summary_class = " kpi-section--summary" if section == "Comparativo geral" else ""
+        section_html.append(
+            f'<section class="kpi-section{summary_class}" style="--section-accent: {h(color)}">'
+            f'<h3 class="kpi-section-title">{h(section)}</h3>'
+            f'<div class="kpis">{cards}</div>'
+            f'</section>'
         )
-    st.html(f'<section class="kpis">{"".join(cards)}</section>')
+    st.html(f'<div class="kpi-sections">{"".join(section_html)}</div>')
 
 
 def render_home_totals(cards: list[tuple[str, str, str]]) -> None:
@@ -2218,6 +2284,12 @@ def chart_grid(charts: list[tuple[str, go.Figure]]) -> None:
                 chart_card(item[0], item[1])
 
 
+def kpi_control_label(item: tuple) -> str:
+    label = clean_text(item[1])
+    section = clean_text(item[4] if len(item) > 4 and item[4] else "").strip()
+    return f"{section} - {label}" if section else label
+
+
 def dashboard_controls(
     key_prefix: str,
     *,
@@ -2245,7 +2317,7 @@ def dashboard_controls(
                 ("page_pdf", "Página PDF", "pagina", "pdf"),
             ]
             selected_kpis_preview = [
-                (item[1], item[2])
+                (kpi_control_label(item), item[2])
                 for item in kpis
                 if st.session_state.get(f"{key_prefix}_visible_{item[0]}", True)
             ]
@@ -2312,7 +2384,7 @@ def dashboard_controls(
                     st.rerun()
 
             st.markdown('<div class="control-row-spacer"></div><div class="control-row-label">Itens</div>', unsafe_allow_html=True)
-            checkbox_items = [("cards", item[0], item[1]) for item in kpis]
+            checkbox_items = [("cards", item[0], kpi_control_label(item)) for item in kpis]
             checkbox_items.extend(("charts", item_id, label) for item_id, label, _ in charts)
             checkbox_cols = 4
             for index in range(0, len(checkbox_items), checkbox_cols):
@@ -2344,7 +2416,7 @@ def render_controlled_dashboard(
         charts=charts,
     )
     if show_cards and visible_kpis:
-        render_kpis([(item[1], item[2], item[3] if len(item) > 3 else None) for item in visible_kpis])
+        render_kpis([(item[1], item[2], item[3] if len(item) > 3 else None, item[4] if len(item) > 4 else None) for item in visible_kpis])
     if show_charts and visible_charts:
         chart_grid([(chart_title, fig) for _, chart_title, fig in visible_charts])
 
@@ -2503,16 +2575,14 @@ def compare_chart_series(bundle: list[tuple[str, dict]], metric: str) -> list[di
     return series
 
 
-COMBINED_KPI_IDS = {
-    "combustivel": {"total", "media_mensal"},
-    "manutencao": {"custo_total", "media_mensal"},
-    "hoteis": {"valor_total", "media_mensal"},
-    "pedagio": {"gasto_total", "media_mensal"},
-    "vex": {"gasto_vex"},
-}
-
-
-def color_kpis(kpis: list[tuple], route: str, *, prefix: bool = False, exclude_ids: set[str] | None = None) -> list[tuple]:
+def color_kpis(
+    kpis: list[tuple],
+    route: str,
+    *,
+    prefix: bool = False,
+    exclude_ids: set[str] | None = None,
+    section: str | None = None,
+) -> list[tuple]:
     color = _series_color(route)
     route_label = _series_label(route)
     exclude_ids = exclude_ids or set()
@@ -2522,7 +2592,10 @@ def color_kpis(kpis: list[tuple], route: str, *, prefix: bool = False, exclude_i
         if item_id in exclude_ids:
             continue
         display_label = f"{route_label} - {label}" if prefix else label
-        colored.append((item_id, display_label, value, color))
+        if section:
+            colored.append((item_id, display_label, value, color, section))
+        else:
+            colored.append((item_id, display_label, value, color))
     return colored
 
 
@@ -2561,8 +2634,8 @@ def compare_combined_kpis(bundle: list[tuple[str, dict]]) -> list[tuple]:
     total = sum(_compare_total(route, data) for route, data in bundle)
     media = sum(_compare_media(route, data) for route, data in bundle)
     return [
-        ("compare_total_geral", "Total comparado (R$)", fmt_brl(total), JR_RED),
-        ("compare_media_geral", "Média mensal comparada (R$)", fmt_brl(media), JR_RED),
+        ("compare_total_geral", "Total comparado (R$)", fmt_brl(total), JR_RED, "Comparativo geral"),
+        ("compare_media_geral", "Média mensal comparada (R$)", fmt_brl(media), JR_RED, "Comparativo geral"),
     ]
 
 
@@ -2573,38 +2646,56 @@ def compare_kpi_cards(bundle: list[tuple[str, dict]]) -> list[tuple]:
         label = _series_label(route)
         if route == "combustivel":
             route_cards = [
+                ("total", "Total (R$)", fmt_brl(data.get("custo_total"))),
+                ("media_mensal", "Média mensal (R$)", fmt_brl(data.get("media_mensal"))),
                 ("km", "KM total", fmt_num(data.get("km_total"))),
                 ("litros", "Total litros", fmt_num(data.get("litros_total"))),
                 ("custo_km", "Custo médio por KM", fmt_brl(data.get("custo_por_km"))),
                 ("kml", "Média KM/L", f"{fmt_num(data.get('km_por_litro'), 2)} km/L"),
+                ("custo_litro", "Custo médio por litro", fmt_brl(data.get("custo_por_litro"))),
             ]
         elif route == "manutencao":
             route_cards = [
+                ("custo_total", "Custo total (R$)", fmt_brl(data.get("custo_total"))),
+                ("media_mensal", "Média mensal (R$)", fmt_brl(data.get("media_mensal"))),
                 ("servicos", "Serviços", fmt_num(data.get("total_servicos"))),
                 ("ticket", "Ticket médio", fmt_brl(data.get("media_servico"))),
             ]
         elif route == "hoteis":
             route_cards = [
+                ("valor_total", "Valor total (R$)", fmt_brl(data.get("valor_total"))),
+                ("media_mensal", "Média mensal", fmt_brl(data.get("media_mensal"))),
                 ("reservas", "Reservas", fmt_num(data.get("reservas_total"))),
                 ("nao_planejadas", "Reservas não planejadas", fmt_num(data.get("reservas_nao_planejadas"))),
                 ("media_reserva", "Média por reserva", fmt_brl(data.get("valor_medio_reserva"))),
+                ("sabados", "Gasto aos sábados (R$)", fmt_brl(data.get("valor_sabado"))),
+                ("nao_planejado", "Gasto não planejado (R$)", fmt_brl(data.get("valor_nao_planejado"))),
             ]
         elif route == "pedagio":
             route_cards = [
+                ("gasto_total", "Gasto total (R$)", fmt_brl(data.get("custo_total"))),
+                ("media_mensal", "Média mensal (R$)", fmt_brl(data.get("media_mensal"))),
                 ("pedagio", "Gasto pedágio", fmt_brl(data.get("gasto_pedagio"))),
                 ("ipva", "Gasto IPVA", fmt_brl(data.get("gasto_ipva"))),
                 ("seguro", "Gasto seguro", fmt_brl(data.get("gasto_seguro"))),
+                ("media_valores", "Média de valores", fmt_brl(data.get("media_valores", data.get("ticket_medio")))),
                 ("lancamentos", "Lançamentos", fmt_num(data.get("total_lancamentos"))),
             ]
         elif route == "vex":
             route_cards = [
+                ("gasto_vex", "Gasto Vex total (R$)", fmt_brl(data.get("total_vex"))),
                 ("combustivel", "Combustível Vex (R$)", fmt_brl(data.get("combustivel_total"))),
+                ("km_total", "KM total", fmt_num(data.get("km_total"))),
+                ("litros_total", "Total litros", fmt_num(data.get("litros_total"))),
+                ("custo_km", "Custo médio por KM", fmt_brl(data.get("custo_por_km"))),
+                ("media_kml", "Média KM/L", fmt_num(data.get("km_por_litro"), 2)),
+                ("custo_litro", "Custo médio por litro", fmt_brl(data.get("custo_por_litro"))),
                 ("manutencao", "Manutenção Vex (R$)", fmt_brl(data.get("manutencao_total"))),
                 ("pedagio", "Pedágio/Seguro Vex (R$)", fmt_brl(data.get("pedagio_total"))),
             ]
         else:
             route_cards = []
-        cards.extend((f"compare_{route}_{item_id}", f"{label} - {card_label}", value, color) for item_id, card_label, value in route_cards)
+        cards.extend((f"compare_{route}_{item_id}", card_label, value, color, label) for item_id, card_label, value in route_cards)
     return cards
 
 
@@ -3862,7 +3953,7 @@ def render_combustivel() -> None:
     compare_selected = filter_state.get("_compare", [])
     compare_data = compare_bundle("combustivel", data, params, compare_selected)
     if compare_selected:
-        kpis = compare_combined_kpis(compare_data) + color_kpis(kpis, "combustivel", prefix=True, exclude_ids=COMBINED_KPI_IDS["combustivel"]) + compare_kpi_cards(compare_data[1:])
+        kpis = compare_combined_kpis(compare_data) + color_kpis(kpis, "combustivel", section=_series_label("combustivel")) + compare_kpi_cards(compare_data[1:])
     monthly_fig = (
         multi_line_chart(compare_chart_series(compare_data, "monthly"), include_year=include_year, fallback_year=fallback_year)
         if compare_selected
@@ -3930,7 +4021,7 @@ def render_manutencao() -> None:
     compare_selected = filter_state.get("_compare", [])
     compare_data = compare_bundle("manutencao", data, params, compare_selected)
     if compare_selected:
-        kpis = compare_combined_kpis(compare_data) + color_kpis(kpis, "manutencao", prefix=True, exclude_ids=COMBINED_KPI_IDS["manutencao"]) + compare_kpi_cards(compare_data[1:])
+        kpis = compare_combined_kpis(compare_data) + color_kpis(kpis, "manutencao", section=_series_label("manutencao")) + compare_kpi_cards(compare_data[1:])
     monthly_fig = (
         multi_line_chart(compare_chart_series(compare_data, "monthly"), include_year=include_year, fallback_year=params.get("ano"))
         if compare_selected
@@ -3989,7 +4080,7 @@ def render_hoteis() -> None:
     compare_selected = filter_state.get("_compare", [])
     compare_data = compare_bundle("hoteis", data, params, compare_selected)
     if compare_selected:
-        kpis = compare_combined_kpis(compare_data) + color_kpis(kpis, "hoteis", prefix=True, exclude_ids=COMBINED_KPI_IDS["hoteis"]) + compare_kpi_cards(compare_data[1:])
+        kpis = compare_combined_kpis(compare_data) + color_kpis(kpis, "hoteis", section=_series_label("hoteis")) + compare_kpi_cards(compare_data[1:])
     monthly_fig = (
         multi_line_chart(compare_chart_series(compare_data, "monthly"), include_year=include_year, fallback_year=params.get("ano"))
         if compare_selected
@@ -4040,7 +4131,7 @@ def render_pedagio() -> None:
     compare_selected = filter_state.get("_compare", [])
     compare_data = compare_bundle("pedagio", data, params, compare_selected)
     if compare_selected:
-        kpis = compare_combined_kpis(compare_data) + color_kpis(kpis, "pedagio", prefix=True, exclude_ids=COMBINED_KPI_IDS["pedagio"]) + compare_kpi_cards(compare_data[1:])
+        kpis = compare_combined_kpis(compare_data) + color_kpis(kpis, "pedagio", section=_series_label("pedagio")) + compare_kpi_cards(compare_data[1:])
     monthly_fig = (
         multi_line_chart(compare_chart_series(compare_data, "monthly"), include_year=include_year, fallback_year=params.get("ano"))
         if compare_selected
@@ -4095,7 +4186,7 @@ def render_vex() -> None:
     compare_selected = filter_state.get("_compare", [])
     compare_data = compare_bundle("vex", data, params, compare_selected)
     if compare_selected:
-        kpis = compare_combined_kpis(compare_data) + color_kpis(kpis, "vex", prefix=True, exclude_ids=COMBINED_KPI_IDS["vex"]) + compare_kpi_cards(compare_data[1:])
+        kpis = compare_combined_kpis(compare_data) + color_kpis(kpis, "vex", section=_series_label("vex")) + compare_kpi_cards(compare_data[1:])
     monthly_fig = (
         multi_line_chart(compare_chart_series(compare_data, "monthly"), include_year=include_year, fallback_year=params.get("ano"))
         if compare_selected
