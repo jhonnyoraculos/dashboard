@@ -26,7 +26,7 @@ MUTED = "#6B7280"
 CARD_BORDER = "#c2d2f3"
 LOGO_PATH = Path(__file__).parent / "static" / "logo-jr.png"
 CURRENT_YEAR = date.today().year
-APP_VERSION = "deploy-html-entities-acentos-v1"
+APP_VERSION = "deploy-st-html-acentos-v1"
 
 PLOTLY_CONFIG = {
     "responsive": True,
@@ -1324,7 +1324,7 @@ def render_kpis(items: list[tuple]) -> None:
         cards.append(
             f'<div class="kpi" style="--kpi-accent: {h(color)}"><div class="kpi-title">{h(label)}</div><div class="kpi-value">{h(value)}</div></div>'
         )
-    st.markdown(f'<section class="kpis">{"".join(cards)}</section>', unsafe_allow_html=True)
+    st.html(f'<section class="kpis">{"".join(cards)}</section>')
 
 
 def render_home_totals(cards: list[tuple[str, str, str]]) -> None:
@@ -2100,7 +2100,7 @@ def export_file_name(prefix: str, scope: str, ext: str) -> str:
 
 def chart_card(title: str, fig: go.Figure) -> None:
     with st.container(border=True):
-        st.markdown(f'<div class="chart-title">{h(title)}</div>', unsafe_allow_html=True)
+        st.html(f'<div class="chart-title">{h(title)}</div>')
         scroll_height = chart_scroll_height(fig)
         if scroll_height:
             with st.container(height=scroll_height, border=False):
