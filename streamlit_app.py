@@ -26,7 +26,7 @@ MUTED = "#6B7280"
 CARD_BORDER = "#c2d2f3"
 LOGO_PATH = Path(__file__).parent / "static" / "logo-jr.png"
 CURRENT_YEAR = date.today().year
-APP_VERSION = "deploy-st-html-acentos-v1"
+APP_VERSION = "deploy-mes-atual-km-v1"
 
 PLOTLY_CONFIG = {
     "responsive": True,
@@ -3545,7 +3545,7 @@ def render_cadastro() -> None:
                 with c1:
                     ano = st.number_input("Ano", min_value=2020, max_value=2100, value=CURRENT_YEAR, step=1, key="cad_km_ano")
                 with c2:
-                    mes = st.selectbox("Mês", list(range(1, 13)), format_func=month_label, key="cad_km_mes")
+                    mes = st.selectbox("Mês", list(range(1, 13)), index=date.today().month - 1, format_func=month_label, key="cad_km_mes")
                     placa, categoria = _plate_fields("cad_km", plate_map)
                 with c3:
                     km = st.number_input("KM do mês", min_value=0.0, step=1.0, key="cad_km_total")
