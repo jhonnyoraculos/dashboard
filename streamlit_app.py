@@ -50,6 +50,7 @@ MONTH_NAMES = [
     "Dezembro",
 ]
 MONTH_ABBR = ["jan", "fev", "mar", "abr", "mai", "jun", "jul", "ago", "set", "out", "nov", "dez"]
+YEAR_SERIES_COLORS = [JR_BLUE, JR_RED, "#0F766E", "#D97706", "#7C3AED", "#4B5563", "#9CA3AF"]
 
 ROUTES = {
     "combustivel": backend.data_comb,
@@ -1432,6 +1433,57 @@ def sorted_series(data: dict, label_key: str, value_key: str, *, include_year: b
     return [format_month_for_chart(item[2], include_year=include_year, fallback_year=fallback_year) for item in rows], [item[3] for item in rows]
 
 
+def yearly_month_series(data: dict, label_key: str, value_key: str, *, fallback_year=None) -> list[dict]:
+    labels = list(data.get(label_key, []) or [])
+    values = list(data.get(value_key, []) or [])
+    grouped: dict[int, dict[int, float]] = {}
+    for index, label in enumerate(labels):
+        key = parse_month_key(label, fallback_year)
+        if not key:
+            continue
+        year, month = key
+        value = values[index] if index < len(values) else 0
+        try:
+            number = float(value or 0)
+        except (TypeError, ValueError):
+            number = 0.0
+        grouped.setdefault(year, {})
+        grouped[year][month] = grouped[year].get(month, 0.0) + number
+
+    series = []
+    for index, year in enumerate(sorted(grouped)):
+        months = sorted(grouped[year])
+        series.append(
+            {
+                "label": str(year),
+                "color": YEAR_SERIES_COLORS[index % len(YEAR_SERIES_COLORS)],
+                "raw_labels": [f"{year}-{month:02d}" for month in months],
+                "values": [grouped[year][month] for month in months],
+            }
+        )
+    return series
+
+
+def yearly_month_line_chart(data: dict, label_key: str, value_key: str, *, fallback_year=None) -> go.Figure:
+    return multi_line_chart(yearly_month_series(data, label_key, value_key, fallback_year=fallback_year), include_year=False, fallback_year=fallback_year)
+
+
+def yearly_month_bar_chart(
+    data: dict,
+    label_key: str,
+    value_key: str,
+    *,
+    fallback_year=None,
+    currency: bool = True,
+) -> go.Figure:
+    return multi_bar_chart(
+        yearly_month_series(data, label_key, value_key, fallback_year=fallback_year),
+        currency=currency,
+        label_mode="month",
+        fallback_year=fallback_year,
+    )
+
+
 def line_chart(labels: list[str], values: list[float]) -> go.Figure:
     values = [float(value or 0) for value in values]
     if values:
@@ -1560,7 +1612,7 @@ def _ordered_month_labels(series: list[dict], *, include_year: bool, fallback_ye
             formatted = format_month_for_chart(raw_label, include_year=include_year, fallback_year=fallback_year)
             key = parse_month_key(raw_label, fallback_year)
             if key:
-                order = (key[0] * 100 + key[1], 0)
+                order = ((key[0] * 100 + key[1]) if include_year else key[1], 0)
             else:
                 fallback_order += 1
                 order = (999999, fallback_order)
@@ -1656,21 +1708,33 @@ def multi_bar_chart(
     sort_desc: bool = False,
     currency: bool = True,
     height: int | None = None,
+    label_mode: str = "day",
+    fallback_year=None,
 ) -> go.Figure:
     clean_series = [item for item in series if item.get("raw_labels")]
     if not clean_series:
         return bar_chart([], [], horizontal=horizontal, currency=currency)
     if len(clean_series) == 1:
         item = clean_series[0]
+        labels = item.get("raw_labels", [])
+        values = item.get("values", [])
+        if label_mode == "month":
+            labels, values = sorted_series(
+                {"Mes": labels, "Valor": values},
+                "Mes",
+                "Valor",
+                include_year=False,
+                fallback_year=fallback_year,
+            )
         return bar_chart(
-            item.get("raw_labels", []),
-            item.get("values", []),
+            labels,
+            values,
             horizontal=horizontal,
             sort_desc=sort_desc,
             currency=currency,
-            show_text=horizontal,
+            show_text=horizontal or label_mode == "month",
             height=height,
-            marker_colors=[item.get("color", JR_BLUE)] * len(item.get("raw_labels", [])),
+            marker_colors=[item.get("color", JR_BLUE)] * len(labels),
         )
 
     if horizontal:
@@ -1714,13 +1778,18 @@ def multi_bar_chart(
         fig.update_layout(meta={"jr_horizontal_bar": True, "jr_row_count": len(ordered_labels)})
         return fig
 
-    ordered_labels = _ordered_day_labels(clean_series)
+    label_formatter = None
+    if label_mode == "month":
+        ordered_labels = _ordered_month_labels(clean_series, include_year=False, fallback_year=fallback_year)
+        label_formatter = lambda raw: format_month_for_chart(raw, include_year=False, fallback_year=fallback_year)
+    else:
+        ordered_labels = _ordered_day_labels(clean_series)
     if not ordered_labels:
         ordered_labels = [label for item in clean_series for label in item.get("raw_labels", [])]
     fig = go.Figure()
     max_value = 0.0
     for item in clean_series:
-        value_map = _series_value_map(item.get("raw_labels", []), item.get("values", []))
+        value_map = _series_value_map(item.get("raw_labels", []), item.get("values", []), label_formatter=label_formatter)
         values = [value_map.get(label, 0.0) for label in ordered_labels]
         text = [fmt_brl_compact(value) if currency else fmt_num(value) for value in values]
         max_value = max(max_value, max(values) if values else 0.0)
@@ -3797,6 +3866,8 @@ def render_combustivel() -> None:
     monthly_fig = (
         multi_line_chart(compare_chart_series(compare_data, "monthly"), include_year=include_year, fallback_year=fallback_year)
         if compare_selected
+        else yearly_month_line_chart(data.get("custo_mensal", {}), "Mes", "Custo", fallback_year=fallback_year)
+        if include_year
         else line_chart(mensal_labels, mensal_values)
     )
     weekly_fig = (
@@ -3815,8 +3886,20 @@ def render_combustivel() -> None:
         ("gasto_posto", "Gasto por posto", pie_chart(data.get("gasto_por_posto", {}).get("POSTOS", []), data.get("gasto_por_posto", {}).get("Custo", []))),
         ("gasto_combustivel", "Gasto por combustível", pie_chart(data.get("gasto_por_combustivel", {}).get("Combustivel", []), data.get("gasto_por_combustivel", {}).get("Custo", []))),
         ("gasto_placa", "Gasto por placa", plate_fig),
-        ("km_mes", "KM por mês", bar_chart(km_labels, km_values, currency=False, show_text=True)),
-        ("litros_mes", "Litros por mês", bar_chart(litros_labels, litros_values, currency=False, show_text=True)),
+        (
+            "km_mes",
+            "KM por mês",
+            yearly_month_bar_chart(data.get("km_mensal", {}), "Mes", "Km Rodados", fallback_year=fallback_year, currency=False)
+            if include_year
+            else bar_chart(km_labels, km_values, currency=False, show_text=True),
+        ),
+        (
+            "litros_mes",
+            "Litros por mês",
+            yearly_month_bar_chart(data.get("litros_mensal", {}), "Mes", "Litros", fallback_year=fallback_year, currency=False)
+            if include_year
+            else bar_chart(litros_labels, litros_values, currency=False, show_text=True),
+        ),
     ]
     render_controlled_dashboard("comb", title="JR Dashboard - Combustível", kpis=kpis, charts=charts)
     footer("Dados atualizados pelo Neon. © JR")
@@ -3851,6 +3934,8 @@ def render_manutencao() -> None:
     monthly_fig = (
         multi_line_chart(compare_chart_series(compare_data, "monthly"), include_year=include_year, fallback_year=params.get("ano"))
         if compare_selected
+        else yearly_month_line_chart(data.get("custo_mensal", {}), "Mes", "Custo", fallback_year=params.get("ano"))
+        if include_year
         else line_chart(mensal_labels, mensal_values)
     )
     weekly_fig = (
@@ -3908,6 +3993,8 @@ def render_hoteis() -> None:
     monthly_fig = (
         multi_line_chart(compare_chart_series(compare_data, "monthly"), include_year=include_year, fallback_year=params.get("ano"))
         if compare_selected
+        else yearly_month_line_chart(data.get("valor_mensal", {}), "Mes", "Valor", fallback_year=params.get("ano"))
+        if include_year
         else line_chart(mensal_labels, mensal_values)
     )
     weekly_fig = (
@@ -3957,6 +4044,8 @@ def render_pedagio() -> None:
     monthly_fig = (
         multi_line_chart(compare_chart_series(compare_data, "monthly"), include_year=include_year, fallback_year=params.get("ano"))
         if compare_selected
+        else yearly_month_line_chart(data.get("custo_mensal", {}), "Mes", "Custo", fallback_year=params.get("ano"))
+        if include_year
         else line_chart(mensal_labels, mensal_values)
     )
     weekly_fig = (
@@ -4010,6 +4099,8 @@ def render_vex() -> None:
     monthly_fig = (
         multi_line_chart(compare_chart_series(compare_data, "monthly"), include_year=include_year, fallback_year=params.get("ano"))
         if compare_selected
+        else yearly_month_line_chart(data.get("mensal_total", {}), "Mes", "Valor", fallback_year=params.get("ano"))
+        if include_year
         else line_chart(mensal_labels, mensal_values)
     )
     plate_fig = (
