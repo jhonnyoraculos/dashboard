@@ -5,6 +5,7 @@ import json
 import os
 import re
 import threading
+import time
 import unicodedata
 from collections import defaultdict
 from datetime import datetime, timezone
@@ -46,12 +47,19 @@ DB_TABLES = {
 }
 DB_METADATA_TABLE = "dashboard_metadata"
 _DB_ENGINE = None
+_METADATA_CACHE_SECONDS = float(os.environ.get("JR_METADATA_CACHE_SECONDS", "30") or 30)
+_METADATA_CACHE = {"loaded": False, "loaded_at": 0.0, "values": {}, "lock": threading.Lock()}
 
 _PEDAGIO_CACHE = {"mtime": None, "df": None, "lock": threading.Lock()}
 _COMBUSTIVEL_CACHE = {"mtime": None, "df": None, "lock": threading.Lock()}
 _MANUTENCAO_CACHE = {"mtime": None, "df": None, "lock": threading.Lock()}
 _HOTEIS_CACHE = {"mtime": None, "df": None, "lock": threading.Lock()}
 _OVERVIEW_CACHE = {"mtimes": None, "dados": None}
+_PLATE_REGISTRY_CACHE = {"mtime": None, "df": None, "lock": threading.Lock()}
+_TEXT_REGISTRY_CACHES = {
+    "combustiveis": {"mtime": None, "df": None, "lock": threading.Lock()},
+    "postos": {"mtime": None, "df": None, "lock": threading.Lock()},
+}
 _CACHE_MAP = {
     "combustivel": _COMBUSTIVEL_CACHE,
     "manutencao": _MANUTENCAO_CACHE,
@@ -158,24 +166,60 @@ def _db_engine():
     return _DB_ENGINE
 
 
-def _db_metadata(key: str, default=None):
+def _metadata_table_values(*, force: bool = False) -> dict:
+    now = time.monotonic()
+    with _METADATA_CACHE["lock"]:
+        loaded = bool(_METADATA_CACHE["loaded"])
+        loaded_at = float(_METADATA_CACHE["loaded_at"] or 0.0)
+        if loaded and not force and now - loaded_at < _METADATA_CACHE_SECONDS:
+            return dict(_METADATA_CACHE["values"])
+
     try:
         from sqlalchemy import text
 
-        query = text(f'SELECT value_json FROM "{DB_METADATA_TABLE}" WHERE "key" = :key')
-        rows = pd.read_sql_query(query, _db_engine(), params={"key": key})
+        query = text(f'SELECT "key", value_json FROM "{DB_METADATA_TABLE}"')
+        rows = pd.read_sql_query(query, _db_engine())
     except Exception:
-        return default
-    if rows.empty:
-        return default
-    try:
-        return json.loads(rows.iloc[0]["value_json"])
-    except Exception:
-        return default
+        with _METADATA_CACHE["lock"]:
+            if _METADATA_CACHE["loaded"]:
+                return dict(_METADATA_CACHE["values"])
+            _METADATA_CACHE["loaded"] = True
+            _METADATA_CACHE["loaded_at"] = time.monotonic()
+            _METADATA_CACHE["values"] = {}
+        return {}
+
+    values = {}
+    for _, row in rows.iterrows():
+        key = str(row.get("key") or "").strip()
+        if not key:
+            continue
+        try:
+            values[key] = json.loads(row.get("value_json"))
+        except Exception:
+            continue
+
+    with _METADATA_CACHE["lock"]:
+        _METADATA_CACHE["loaded"] = True
+        _METADATA_CACHE["loaded_at"] = time.monotonic()
+        _METADATA_CACHE["values"] = values
+    return dict(values)
+
+
+def _update_metadata_cache(key: str, value) -> None:
+    with _METADATA_CACHE["lock"]:
+        if not _METADATA_CACHE["loaded"]:
+            return
+        _METADATA_CACHE["values"][key] = value
+        _METADATA_CACHE["loaded_at"] = time.monotonic()
+
+
+def _db_metadata(key: str, default=None):
+    return _metadata_table_values().get(key, default)
 
 
 def _db_version(dataset: str):
-    return _db_metadata(f"{dataset}.version", _db_metadata("import.version", "database"))
+    metadata = _metadata_table_values()
+    return metadata.get(f"{dataset}.version", metadata.get("import.version", "database"))
 
 
 def _empty(columns: list[str]) -> pd.DataFrame:
@@ -247,9 +291,20 @@ def _write_metadata(conn, key: str, value) -> None:
         ),
         {"key": key, "value_json": _metadata_value(value)},
     )
+    _update_metadata_cache(key, value)
 
 
 def _clear_dataset_cache(dataset: str) -> None:
+    if dataset in {"placas", "combustivel", "manutencao", "pedagio"}:
+        _PLATE_REGISTRY_CACHE["mtime"] = None
+        _PLATE_REGISTRY_CACHE["df"] = None
+    if dataset in {"combustivel", "combustiveis"}:
+        _TEXT_REGISTRY_CACHES["combustiveis"]["mtime"] = None
+        _TEXT_REGISTRY_CACHES["combustiveis"]["df"] = None
+    if dataset in {"combustivel", "postos"}:
+        _TEXT_REGISTRY_CACHES["postos"]["mtime"] = None
+        _TEXT_REGISTRY_CACHES["postos"]["df"] = None
+
     if dataset == "combustivel_km":
         targets = ["combustivel"]
     elif dataset == "placas":
@@ -767,18 +822,29 @@ def _normalize_tipo_value(value):
 
 
 def _read_plate_registry() -> pd.DataFrame:
-    try:
-        df = _read_database_table("placas", _PLACAS_COLUMNS)
-    except Exception:
-        return _empty(_PLACAS_COLUMNS)
-    if df.empty:
-        return _empty(_PLACAS_COLUMNS)
-    df = df[_PLACAS_COLUMNS].copy()
-    df["PLACA"] = _normalize_plate_series(df["PLACA"])
-    _normalize_category_column(df)
-    df = df.dropna(subset=["PLACA"]).drop_duplicates(subset=["PLACA"], keep="last")
-    df = df[df["PLACA"].apply(_is_plate_identifier)]
-    return df
+    cache = _PLATE_REGISTRY_CACHE
+    with cache["lock"]:
+        version = _db_version("placas")
+        cached = cache.get("df")
+        if cached is not None and cache.get("mtime") == version:
+            return cached.copy()
+
+        try:
+            df = _read_database_table("placas", _PLACAS_COLUMNS)
+        except Exception:
+            df = _empty(_PLACAS_COLUMNS)
+        if not df.empty:
+            df = df[_PLACAS_COLUMNS].copy()
+            df["PLACA"] = _normalize_plate_series(df["PLACA"])
+            _normalize_category_column(df)
+            df = df.dropna(subset=["PLACA"]).drop_duplicates(subset=["PLACA"], keep="last")
+            df = df[df["PLACA"].apply(_is_plate_identifier)]
+        else:
+            df = _empty(_PLACAS_COLUMNS)
+
+        cache["mtime"] = version
+        cache["df"] = df.copy()
+        return df.copy()
 
 
 def _apply_plate_categories(df: pd.DataFrame) -> pd.DataFrame:
@@ -1151,6 +1217,16 @@ def load_combustivel_km() -> pd.DataFrame:
 
 
 def _load_text_registry(dataset: str, columns: list[str], column: str) -> pd.DataFrame:
+    cache = _TEXT_REGISTRY_CACHES.get(dataset)
+    version = (_db_version(dataset), _db_version("combustivel"))
+    if cache is None:
+        cached = None
+    else:
+        with cache["lock"]:
+            cached = cache.get("df")
+            if cached is not None and cache.get("mtime") == version:
+                return cached.copy()
+
     frames: list[pd.DataFrame] = []
     try:
         registered = _read_database_table(dataset, columns)
@@ -1167,16 +1243,23 @@ def _load_text_registry(dataset: str, columns: list[str], column: str) -> pd.Dat
         pass
 
     if not frames:
-        return _empty(columns)
+        df = _empty(columns)
+    else:
+        df = pd.concat(frames, ignore_index=True)
+        _normalize_text_column(df, column)
+        if column == "Combustivel":
+            _normalize_combustivel_column(df)
+        df = df.dropna(subset=[column]).drop_duplicates(subset=[column], keep="last")
+        if df.empty:
+            df = _empty(columns)
+        else:
+            df = df[columns].sort_values(column).reset_index(drop=True)
 
-    df = pd.concat(frames, ignore_index=True)
-    _normalize_text_column(df, column)
-    if column == "Combustivel":
-        _normalize_combustivel_column(df)
-    df = df.dropna(subset=[column]).drop_duplicates(subset=[column], keep="last")
-    if df.empty:
-        return _empty(columns)
-    return df[columns].sort_values(column).reset_index(drop=True)
+    if cache is not None:
+        with cache["lock"]:
+            cache["mtime"] = version
+            cache["df"] = df.copy()
+    return df.copy()
 
 
 def load_combustiveis() -> pd.DataFrame:

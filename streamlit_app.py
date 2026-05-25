@@ -26,7 +26,7 @@ MUTED = "#6B7280"
 CARD_BORDER = "#c2d2f3"
 LOGO_PATH = Path(__file__).parent / "static" / "logo-jr.png"
 CURRENT_YEAR = date.today().year
-APP_VERSION = "deploy-mes-atual-km-v1"
+APP_VERSION = "deploy-cache-neon-v1"
 
 PLOTLY_CONFIG = {
     "responsive": True,
@@ -1098,17 +1098,49 @@ def inject_css() -> None:
     )
 
 
-def route_json(route: str, params: dict[str, object] | None = None) -> dict:
-    func = ROUTES[route]
+def _freeze_route_params(params: dict[str, object] | None = None) -> tuple[tuple[str, object], ...]:
     params = params or {}
-    clean_params: dict[str, object] = {}
+    clean_items: list[tuple[str, object]] = []
     for key, value in params.items():
         if value is None:
             continue
-        if isinstance(value, list):
-            clean_params[key] = [item for item in value if item is not None]
-        elif value != "":
-            clean_params[key] = value
+        if isinstance(value, str) and value in ("", "Todos"):
+            continue
+        if isinstance(value, (list, tuple, set)):
+            values = tuple(item for item in value if item not in (None, "", "Todos"))
+            if values:
+                clean_items.append((key, values))
+        else:
+            clean_items.append((key, value))
+    return tuple(sorted(clean_items))
+
+
+@st.cache_data(ttl=30, show_spinner=False)
+def _route_json_cached(route: str, frozen_params: tuple[tuple[str, object], ...], version: str) -> dict:
+    func = ROUTES[route]
+    params = {
+        key: list(value) if isinstance(value, tuple) else value
+        for key, value in frozen_params
+    }
+    return func(params) or {}
+
+
+def clear_cached_reads() -> None:
+    try:
+        _route_json_cached.clear()
+    except Exception:
+        pass
+
+
+def route_json(route: str, params: dict[str, object] | None = None) -> dict:
+    return _route_json_cached(route, _freeze_route_params(params), APP_VERSION)
+
+
+def route_json_uncached(route: str, params: dict[str, object] | None = None) -> dict:
+    func = ROUTES[route]
+    clean_params: dict[str, object] = {}
+    for key, value in _freeze_route_params(params):
+        clean_params[key] = list(value) if isinstance(value, tuple) else value
     return func(clean_params) or {}
 
 
@@ -2253,8 +2285,9 @@ def filter_controls(
     *,
     extra_filters: list[tuple[str, str, list]],
     key_prefix: str,
+    all_data: dict | None = None,
 ) -> tuple[dict[str, object], dict]:
-    all_data = route_json(route, {"ano": "Todos", "mes": ["Todos"]})
+    all_data = all_data if all_data is not None else route_json(route, {"ano": "Todos", "mes": ["Todos"]})
     years = all_data.get("anos", []) or []
     year_options = ["Todos", *years]
     year_default = selected_or_default(years, st.session_state.get(f"{key_prefix}_ano"), default_current_year=True)
@@ -2275,7 +2308,7 @@ def filter_controls(
                 label_visibility="collapsed",
             )
 
-        month_data = route_json(route, {"ano": None if ano == "Todos" else ano, "mes": ["Todos"]})
+        month_data = all_data if ano == "Todos" else route_json(route, {"ano": ano, "mes": ["Todos"]})
         meses = unique_filter_options(month_data.get("meses", []) or [])
         mes_options = ["Todos", *meses]
         mes_key = f"{key_prefix}_mes"
@@ -2532,7 +2565,7 @@ def render_home() -> None:
     default_year = CURRENT_YEAR if CURRENT_YEAR in year_options else "Todos"
     ano_state = st.session_state.get("home_ano", default_year)
     ano = ano_state if ano_state in year_options else default_year
-    months_seed = route_json("overview", {"ano": None if ano == "Todos" else ano})
+    months_seed = overview_all if ano == "Todos" else route_json("overview", {"ano": ano})
     month_options = ["Todos", *(months_seed.get("meses_disponiveis", []) or [])]
     home_mes_exists = "home_mes" in st.session_state
     home_mes_previous_key = "home_mes__previous"
@@ -2545,13 +2578,16 @@ def render_home() -> None:
         st.session_state[home_mes_previous_key] = current_months
     meses = normalize_multiselect(current_months, st.session_state.get(home_mes_previous_key, ["Todos"]))
 
-    overview = route_json(
-        "overview",
-        {
-            "ano": None if ano == "Todos" else ano,
-            "mes": ["Todos"] if meses == ["Todos"] else [int(item) for item in meses],
-        },
-    )
+    if meses == ["Todos"]:
+        overview = months_seed
+    else:
+        overview = route_json(
+            "overview",
+            {
+                "ano": None if ano == "Todos" else ano,
+                "mes": [int(item) for item in meses],
+            },
+        )
     filter_text = ""
     if ano != "Todos":
         filter_text = f"Filtro aplicado: {ano}."
@@ -2693,6 +2729,7 @@ def _save_entry(
         st.error("Não foi possível salvar no Neon.")
         st.exception(exc)
         return False
+    clear_cached_reads()
     st.success(success)
     return True
 
@@ -2787,6 +2824,7 @@ def _save_registered_plate(placa: str, categoria: str) -> bool:
         st.error("Não foi possível salvar a placa no Neon.")
         st.exception(exc)
         return False
+    clear_cached_reads()
     return True
 
 
@@ -2801,6 +2839,7 @@ def _save_text_registry(dataset: str, column: str, value: str, success: str) -> 
         st.error("Não foi possível salvar no Neon.")
         st.exception(exc)
         return False
+    clear_cached_reads()
     st.success(success)
     return True
 
@@ -2815,6 +2854,7 @@ def _edit_registered_plate(old_plate: str, new_plate: str, categoria: str) -> bo
         st.error("Não foi possível editar a placa no Neon.")
         st.exception(exc)
         return False
+    clear_cached_reads()
     st.success("Placa atualizada nos cadastros e lançamentos.")
     return True
 
@@ -2862,6 +2902,7 @@ def _save_plate_sheet(original_map: dict[str, str], edited: pd.DataFrame) -> boo
 
     _reset_plate_editor()
     if changed:
+        clear_cached_reads()
         st.success("Tabela de placas salva.")
     else:
         st.info("Nenhuma alteraÃ§Ã£o para salvar.")
@@ -2980,6 +3021,7 @@ def _save_dataset_editor(
         st.exception(exc)
         return False
     _reset_dataset_editor(key_prefix)
+    clear_cached_reads()
     st.success("Tabela salva no Neon.")
     st.rerun()
     return True
@@ -3303,6 +3345,7 @@ def _undo_pedagio_last_import() -> None:
         return
     _clear_pedagio_last_import()
     _reset_dataset_editor("cad_ped_table")
+    clear_cached_reads()
     st.success(f"{deleted} lancamento(s) apagado(s).")
     st.rerun()
 
@@ -3324,6 +3367,7 @@ def _append_records_in_batches(dataset: str, rows: list[dict], *, batch_size: in
 
     status.empty()
     progress.empty()
+    clear_cached_reads()
     return imported
 
 
@@ -3729,6 +3773,7 @@ def render_combustivel() -> None:
             ("combustivel", "Combustível", seed.get("combustiveis", []) or []),
         ],
         key_prefix="comb",
+        all_data=seed,
     )
     data = route_json("combustivel", params)
     kpis = [
@@ -3788,6 +3833,7 @@ def render_manutencao() -> None:
             ("segmento", "Categoria", seed.get("segmentos", []) or []),
         ],
         key_prefix="manu",
+        all_data=seed,
     )
     data = route_json("manutencao", params)
     kpis = [
@@ -3837,6 +3883,7 @@ def render_hoteis() -> None:
             ("hotel", "Hotel/Pousada", seed.get("hoteis", []) or []),
         ],
         key_prefix="hotel",
+        all_data=seed,
     )
     data = route_json("hoteis", params)
     kpis = [
@@ -3889,6 +3936,7 @@ def render_pedagio() -> None:
             ("segmento", "Segmento", seed.get("segmentos", []) or []),
         ],
         key_prefix="ped",
+        all_data=seed,
     )
     data = route_json("pedagio", params)
     kpis = [
@@ -3939,6 +3987,7 @@ def render_vex() -> None:
         "vex",
         extra_filters=[("placa", "Placa", seed.get("placas", []) or [])],
         key_prefix="vex",
+        all_data=seed,
     )
     data = route_json("vex", params)
     kpis = [
