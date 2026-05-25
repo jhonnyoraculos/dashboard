@@ -288,6 +288,8 @@ def _prepare_insert_row(dataset: str, row: dict) -> dict:
             prepared["PLACA"] = None
     if "Tipo" in prepared and dataset == "pedagio":
         prepared["Tipo"] = _normalize_tipo_value(prepared["Tipo"])
+    if "Combustivel" in prepared:
+        prepared["Combustivel"] = _normalize_combustivel_value(prepared["Combustivel"])
     if "Categoria" in prepared:
         categoria = str(prepared["Categoria"] or "Transporte").strip()
         prepared["Categoria"] = "Vex" if categoria.lower() == "vex" else "Transporte"
@@ -686,6 +688,40 @@ def _normalize_text_column(df: pd.DataFrame, column: str) -> None:
     df[column] = series
 
 
+def _normalize_combustivel_value(value):
+    if pd.isna(value):
+        return pd.NA
+    text = re.sub(r"\s+", " ", str(value).strip())
+    if not text or text.lower() in {"nan", "none", "nat", "<na>"}:
+        return pd.NA
+
+    key = _normalize_ascii(text).upper()
+    compact = re.sub(r"[^A-Z0-9]", "", key)
+    if compact in {"DIESELS10", "S10", "DIESELS010"}:
+        return "Diesel S10"
+    if compact in {"DIESELS50", "S50", "DIESELS050"}:
+        return "Diesel S50"
+    if compact == "DIESEL":
+        return "Diesel"
+    if "ARLA" in compact and "32" in compact:
+        return "Arla 32"
+    if "GASOLINAADITIVADA" in compact:
+        return "Gasolina Aditivada"
+    if "GASOLINACOMUM" in compact:
+        return "Gasolina Comum"
+
+    normalized = text.title()
+    normalized = re.sub(r"\bS\s*(\d+)\b", lambda match: f"S{match.group(1)}", normalized, flags=re.IGNORECASE)
+    normalized = re.sub(r"\bArla\b", "Arla", normalized, flags=re.IGNORECASE)
+    return normalized
+
+
+def _normalize_combustivel_column(df: pd.DataFrame) -> None:
+    if "Combustivel" not in df.columns:
+        return
+    df["Combustivel"] = df["Combustivel"].apply(_normalize_combustivel_value).astype("string")
+
+
 def _normalize_category_column(df: pd.DataFrame, *, default: str = "Transporte") -> None:
     if "Categoria" not in df.columns:
         df["Categoria"] = default
@@ -1049,6 +1085,8 @@ def _finalize_common(
             df[column] = pd.to_numeric(df[column], errors="coerce")
     for column in text_columns or []:
         _normalize_text_column(df, column)
+    if "Combustivel" in df.columns:
+        _normalize_combustivel_column(df)
     for column in plate_columns or []:
         if column in df.columns:
             df[column] = _normalize_plate_series(df[column])
@@ -1118,6 +1156,8 @@ def _load_text_registry(dataset: str, columns: list[str], column: str) -> pd.Dat
 
     df = pd.concat(frames, ignore_index=True)
     _normalize_text_column(df, column)
+    if column == "Combustivel":
+        _normalize_combustivel_column(df)
     df = df.dropna(subset=[column]).drop_duplicates(subset=[column], keep="last")
     if df.empty:
         return _empty(columns)

@@ -25,7 +25,7 @@ MUTED = "#6B7280"
 CARD_BORDER = "#c2d2f3"
 LOGO_PATH = Path(__file__).parent / "static" / "logo-jr.png"
 CURRENT_YEAR = date.today().year
-APP_VERSION = "deploy-compare-kpis-v1"
+APP_VERSION = "deploy-normaliza-combustivel-v1"
 
 PLOTLY_CONFIG = {
     "responsive": True,
