@@ -26,7 +26,7 @@ MUTED = "#6B7280"
 CARD_BORDER = "#c2d2f3"
 LOGO_PATH = Path(__file__).parent / "static" / "logo-jr.png"
 CURRENT_YEAR = date.today().year
-APP_VERSION = "deploy-compare-kpis-v1"
+APP_VERSION = "deploy-hoteis-import-v1"
 
 PLOTLY_CONFIG = {
     "responsive": True,
@@ -3308,15 +3308,22 @@ def _parse_brl_number(value: object) -> float | None:
         return None
 
 
-def _parse_sheet_month(value: object) -> tuple[str, date] | None:
+def _parse_sheet_date(value: object) -> tuple[date, str] | None:
     if _editor_empty_value(value):
         return None
-    if not isinstance(value, str):
-        parsed = pd.to_datetime(value, errors="coerce")
-        if pd.notna(parsed):
-            year, month = int(parsed.year), int(parsed.month)
-            return f"{year}-{month:02d}", date(year, month, 1)
+    parsed = pd.to_datetime(value, dayfirst=True, errors="coerce")
+    if pd.notna(parsed):
+        parsed_date = date(int(parsed.year), int(parsed.month), int(parsed.day))
+        return parsed_date, f"{parsed_date.year}-{parsed_date.month:02d}"
 
+    return None
+
+
+def _parse_sheet_month(value: object) -> tuple[str, date] | None:
+    parsed_date = _parse_sheet_date(value)
+    if parsed_date:
+        data, mes = parsed_date
+        return mes, date(data.year, data.month, 1)
     text = unicodedata.normalize("NFKD", str(value or "")).encode("ascii", "ignore").decode("ascii").lower().strip()
     month = None
     month_names = {
@@ -3366,16 +3373,31 @@ def _parse_sheet_month(value: object) -> tuple[str, date] | None:
     return f"{year}-{month:02d}", date(year, month, 1)
 
 
-def _read_uploaded_sheet(uploaded_file) -> pd.DataFrame:
+PEDAGIO_SHEET_ALIASES = {
+    "PLACA": ["PLACA", "PLACAS"],
+    "TIPO": ["TIPO"],
+    "CUSTO": ["CUSTO", "VALOR"],
+    "MES": ["MES", "MS"],
+}
+
+HOTEIS_SHEET_ALIASES = {
+    "DATA": ["DATA", "DT"],
+    "CIDADE": ["CIDADE"],
+    "VALOR": ["VALOR", "CUSTO"],
+    "HOTEL": ["HOTELPOUSADA", "HOTEL", "POUSADA"],
+}
+
+
+def _read_uploaded_sheet(uploaded_file, aliases: dict[str, list[str]]) -> pd.DataFrame:
     name = clean_text(getattr(uploaded_file, "name", "")).lower()
     if name.endswith(".csv"):
         raw = pd.read_csv(uploaded_file, sep=None, engine="python", header=None)
-        return _detect_pedagio_sheet_header(raw)
-    raw = _read_uploaded_excel_rows(uploaded_file)
-    return _detect_pedagio_sheet_header(raw)
+        return _detect_sheet_header(raw, aliases)
+    raw = _read_uploaded_excel_rows(uploaded_file, aliases)
+    return _detect_sheet_header(raw, aliases)
 
 
-def _read_uploaded_excel_rows(uploaded_file) -> pd.DataFrame:
+def _read_uploaded_excel_rows(uploaded_file, aliases: dict[str, list[str]]) -> pd.DataFrame:
     from openpyxl import load_workbook
 
     try:
@@ -3388,13 +3410,6 @@ def _read_uploaded_excel_rows(uploaded_file) -> pd.DataFrame:
     rows: list[list[object]] = []
     header_found = False
     blank_after_header = 0
-    aliases = {
-        "PLACA": ["PLACA", "PLACAS"],
-        "TIPO": ["TIPO"],
-        "CUSTO": ["CUSTO", "VALOR"],
-        "MES": ["MES", "MS"],
-    }
-
     for row in worksheet.iter_rows(values_only=True):
         values = list(row)
         has_value = any(not _editor_empty_value(value) for value in values)
@@ -3416,14 +3431,7 @@ def _read_uploaded_excel_rows(uploaded_file) -> pd.DataFrame:
     return pd.DataFrame(rows)
 
 
-def _detect_pedagio_sheet_header(raw: pd.DataFrame) -> pd.DataFrame:
-    aliases = {
-        "PLACA": ["PLACA", "PLACAS"],
-        "TIPO": ["TIPO"],
-        "CUSTO": ["CUSTO", "VALOR"],
-        "MES": ["MES", "MS"],
-    }
-
+def _detect_sheet_header(raw: pd.DataFrame, aliases: dict[str, list[str]]) -> pd.DataFrame:
     for idx, row in raw.iterrows():
         normalized = [_normalize_sheet_header(value) for value in row.tolist()]
         if all(any(alias in normalized for alias in field_aliases) for field_aliases in aliases.values()):
@@ -3485,6 +3493,159 @@ def _pedagio_rows_from_sheet(df: pd.DataFrame, plate_map: dict[str, str]) -> tup
             }
         )
     return rows, errors
+
+
+def _sheet_text(row: pd.Series, column: str | None, *, upper: bool = False) -> str:
+    if not column:
+        return ""
+    text = clean_text(row.get(column)).strip()
+    return text.upper() if upper else text
+
+
+def _hoteis_rows_from_sheet(df: pd.DataFrame) -> tuple[list[dict], list[str]]:
+    header_map = {_normalize_sheet_header(column): column for column in df.columns}
+    aliases = {
+        "DATA": ["DATA", "DT"],
+        "MOTORISTA": ["MOTORISTA"],
+        "AJUDANTE": ["AJUDANTE"],
+        "CIDADE": ["CIDADE"],
+        "VALOR": ["VALOR", "CUSTO"],
+        "HOTEL": ["HOTELPOUSADA", "HOTEL", "POUSADA"],
+        "DIAS": ["DIAS", "DIA"],
+        "TIPO": ["TIPO"],
+    }
+    resolved = {field: next((header_map[key] for key in keys if key in header_map), None) for field, keys in aliases.items()}
+    labels = {"DATA": "DATA", "CIDADE": "CIDADE", "VALOR": "VALOR", "HOTEL": "HOTEL/POUSADA"}
+    missing = [labels[field] for field in labels if resolved.get(field) is None]
+    if missing:
+        return [], [f"Colunas faltando: {', '.join(missing)}."]
+
+    rows: list[dict] = []
+    errors: list[str] = []
+    for idx, row in df.iterrows():
+        data_info = _parse_sheet_date(row.get(resolved["DATA"]))
+        motorista = _sheet_text(row, resolved.get("MOTORISTA"), upper=True)
+        ajudante = _sheet_text(row, resolved.get("AJUDANTE"), upper=True)
+        cidade = _sheet_text(row, resolved.get("CIDADE"), upper=True)
+        hotel = _sheet_text(row, resolved.get("HOTEL"), upper=True)
+        valor = _parse_brl_number(row.get(resolved["VALOR"]))
+        dias = _parse_brl_number(row.get(resolved.get("DIAS"))) if resolved.get("DIAS") else 1.0
+        tipo = _sheet_text(row, resolved.get("TIPO"), upper=True) or "Hospedagem"
+
+        if not any([data_info, motorista, ajudante, cidade, hotel, valor is not None]):
+            continue
+        missing_row = []
+        if data_info is None:
+            missing_row.append("DATA")
+        if not cidade:
+            missing_row.append("CIDADE")
+        if valor is None:
+            missing_row.append("VALOR")
+        if not hotel:
+            missing_row.append("HOTEL/POUSADA")
+        if missing_row:
+            errors.append(f"Linha {idx + 2}: preencher {', '.join(missing_row)}.")
+            continue
+
+        data, mes = data_info
+        rows.append(
+            {
+                "Data": data,
+                "Mes": mes,
+                "Valor": valor,
+                "Dias": dias if dias is not None else 1.0,
+                "Motorista": motorista,
+                "Ajudante": ajudante,
+                "Cidade": cidade,
+                "Hotel": hotel,
+                "Tipo": tipo,
+                "Categoria": "Transporte",
+            }
+        )
+    return rows, errors
+
+
+def _clear_hoteis_last_import() -> None:
+    st.session_state.pop("cad_hotel_last_import_rows", None)
+    st.session_state.pop("cad_hotel_last_import_count", None)
+
+
+def _undo_hoteis_last_import() -> None:
+    rows = st.session_state.get("cad_hotel_last_import_rows") or []
+    if not rows:
+        st.warning("Nao ha importacao recente para apagar.")
+        return
+    try:
+        deleted = backend.delete_matching_dashboard_records("hoteis", rows)
+    except Exception as exc:
+        st.error("Nao foi possivel apagar a ultima importacao.")
+        st.exception(exc)
+        return
+    _clear_hoteis_last_import()
+    _reset_dataset_editor("cad_hotel_table")
+    clear_cached_reads()
+    st.success(f"{deleted} hospedagem(ns) apagada(s).")
+    st.rerun()
+
+
+def _render_hoteis_sheet_import() -> None:
+    last_rows = st.session_state.get("cad_hotel_last_import_rows") or []
+    if last_rows:
+        last_count = st.session_state.get("cad_hotel_last_import_count", len(last_rows))
+        st.warning(f"Ultima importacao por planilha: {last_count} hospedagem(ns).")
+        undo_col, clear_col = st.columns([1, 1])
+        with undo_col:
+            if st.button("Apagar ultima importacao", type="primary", width="stretch", key="cad_hotel_undo_import"):
+                _undo_hoteis_last_import()
+        with clear_col:
+            if st.button("Manter importacao", width="stretch", key="cad_hotel_keep_import"):
+                _clear_hoteis_last_import()
+                st.rerun()
+
+    with st.expander("Adicionar hoteis por planilha", expanded=False):
+        uploaded = st.file_uploader("Enviar planilha", type=["xlsx", "csv"], key="cad_hotel_upload")
+        if uploaded is None:
+            return
+
+        try:
+            raw_df = _read_uploaded_sheet(uploaded, HOTEIS_SHEET_ALIASES)
+        except Exception as exc:
+            st.error("Nao foi possivel ler a planilha. Envie um arquivo .xlsx ou .csv.")
+            st.exception(exc)
+            return
+
+        rows, errors = _hoteis_rows_from_sheet(raw_df)
+        if errors:
+            st.warning("Revise a planilha antes de importar.")
+            for error in errors[:8]:
+                st.write(error)
+            if len(errors) > 8:
+                st.write(f"...mais {len(errors) - 8} erro(s).")
+            return
+        if not rows:
+            st.warning("Nenhuma linha valida encontrada na planilha.")
+            return
+
+        preview = pd.DataFrame(rows)
+        st.dataframe(preview[["Data", "Mes", "Cidade", "Hotel", "Motorista", "Ajudante", "Valor"]], width="stretch", hide_index=True)
+        if st.button(f"Importar {len(rows)} hospedagem(ns)", type="primary", width="stretch", key="cad_hotel_import_sheet"):
+            imported_rows: list[dict] = []
+            try:
+                imported_rows = _append_records_in_batches("hoteis", rows, batch_size=100)
+            except Exception as exc:
+                if imported_rows:
+                    st.session_state["cad_hotel_last_import_rows"] = imported_rows
+                    st.session_state["cad_hotel_last_import_count"] = len(imported_rows)
+                    st.error(f"O envio parou depois de {len(imported_rows)} hospedagem(ns). Voce pode apagar essa importacao parcial pelo botao acima.")
+                else:
+                    st.error("Nao foi possivel importar a planilha para o Neon.")
+                st.exception(exc)
+                return
+            st.session_state["cad_hotel_last_import_rows"] = imported_rows
+            st.session_state["cad_hotel_last_import_count"] = len(imported_rows)
+            _reset_dataset_editor("cad_hotel_table")
+            st.success(f"{len(imported_rows)} hospedagem(ns) importada(s).")
+            st.rerun()
 
 
 def _clear_pedagio_last_import() -> None:
@@ -3551,7 +3712,7 @@ def _render_pedagio_sheet_import(plate_map: dict[str, str]) -> None:
             return
 
         try:
-            raw_df = _read_uploaded_sheet(uploaded)
+            raw_df = _read_uploaded_sheet(uploaded, PEDAGIO_SHEET_ALIASES)
         except Exception as exc:
             st.error("Nao foi possivel ler a planilha. Envie um arquivo .xlsx ou .csv.")
             st.exception(exc)
@@ -3823,6 +3984,8 @@ def render_cadastro() -> None:
             )
 
         with tabs[4]:
+            _render_hoteis_sheet_import()
+
             with st.form("form_hoteis", clear_on_submit=True):
                 c1, c2, c3 = st.columns(3)
                 with c1:
