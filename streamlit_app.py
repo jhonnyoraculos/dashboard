@@ -25,7 +25,7 @@ MUTED = "#6B7280"
 CARD_BORDER = "#c2d2f3"
 LOGO_PATH = Path(__file__).parent / "static" / "logo-jr.png"
 CURRENT_YEAR = date.today().year
-APP_VERSION = "deploy-cad-postos-combustiveis-v1"
+APP_VERSION = "deploy-compare-mode-v1"
 
 PLOTLY_CONFIG = {
     "responsive": True,
@@ -57,6 +57,42 @@ ROUTES = {
     "pedagio": backend.data_pedagio,
     "vex": backend.data_vex,
     "overview": backend.data_overview,
+}
+
+DASHBOARD_META = {
+    "combustivel": {"label": "Combustível", "color": JR_BLUE, "supports_plate": True},
+    "manutencao": {"label": "Manutenção", "color": JR_RED, "supports_plate": True},
+    "hoteis": {"label": "Hotéis", "color": "#0F766E", "supports_plate": False},
+    "pedagio": {"label": "Pedágio/IPVA", "color": "#D97706", "supports_plate": True},
+    "vex": {"label": "Vex", "color": "#7C3AED", "supports_plate": True},
+}
+
+COMPARE_SERIES = {
+    "combustivel": {
+        "monthly": ("custo_mensal", "Mes", "Custo"),
+        "weekly": ("gasto_semana", "Dia", "Custo"),
+        "plate": ("gasto_por_placa", "PLACA", "Custo"),
+    },
+    "manutencao": {
+        "monthly": ("custo_mensal", "Mes", "Custo"),
+        "weekly": ("custo_semana", "Dia", "Custo"),
+        "plate": ("gasto_por_placa", "PLACA", "Custo"),
+    },
+    "hoteis": {
+        "monthly": ("valor_mensal", "Mes", "Valor"),
+        "weekly": ("valor_semana", "Dia", "Valor"),
+        "plate": None,
+    },
+    "pedagio": {
+        "monthly": ("custo_mensal", "Mes", "Custo"),
+        "weekly": ("custo_semana", "Dia", "Custo"),
+        "plate": ("gasto_por_placa", "PLACA", "Custo"),
+    },
+    "vex": {
+        "monthly": ("mensal_total", "Mes", "Valor"),
+        "weekly": None,
+        "plate": ("gasto_por_placa", "PLACA", "Valor"),
+    },
 }
 
 
@@ -1455,6 +1491,202 @@ def pie_chart(labels: list, values: list) -> go.Figure:
     return apply_theme(fig, height=360, margin={"l": 16, "r": 16, "t": 30, "b": 90})
 
 
+def _series_color(route: str) -> str:
+    return DASHBOARD_META.get(route, {}).get("color", JR_BLUE)
+
+
+def _series_label(route: str) -> str:
+    return DASHBOARD_META.get(route, {}).get("label", route.title())
+
+
+def _ordered_month_labels(series: list[dict], *, include_year: bool, fallback_year) -> list[str]:
+    labels: dict[str, tuple[int, int]] = {}
+    fallback_order = 0
+    for item in series:
+        for raw_label in item.get("raw_labels", []):
+            formatted = format_month_for_chart(raw_label, include_year=include_year, fallback_year=fallback_year)
+            key = parse_month_key(raw_label, fallback_year)
+            if key:
+                order = (key[0] * 100 + key[1], 0)
+            else:
+                fallback_order += 1
+                order = (999999, fallback_order)
+            labels.setdefault(formatted, order)
+    return [label for label, _ in sorted(labels.items(), key=lambda item: item[1])]
+
+
+def _ordered_day_labels(series: list[dict]) -> list[str]:
+    labels: dict[str, tuple[int, int, int]] = {}
+    fallback_order = 0
+    for item in series:
+        for raw_label in item.get("raw_labels", []):
+            text = clean_text(raw_label).strip()
+            parts = text.split("/")
+            try:
+                day = int(parts[0])
+                month = int(parts[1]) if len(parts) > 1 else 0
+                order = (month, day, 0)
+            except (TypeError, ValueError):
+                fallback_order += 1
+                order = (99, 99, fallback_order)
+            labels.setdefault(text, order)
+    return [label for label, _ in sorted(labels.items(), key=lambda item: item[1])]
+
+
+def _series_value_map(
+    labels: list,
+    values: list,
+    *,
+    label_formatter=None,
+) -> dict[str, float]:
+    mapped: dict[str, float] = {}
+    for index, raw_label in enumerate(labels or []):
+        label = label_formatter(raw_label) if label_formatter else clean_text(raw_label).strip()
+        value = values[index] if index < len(values or []) else 0
+        try:
+            number = float(value or 0)
+        except (TypeError, ValueError):
+            number = 0.0
+        mapped[label] = mapped.get(label, 0.0) + number
+    return mapped
+
+
+def multi_line_chart(series: list[dict], *, include_year: bool = True, fallback_year=None) -> go.Figure:
+    clean_series = [item for item in series if item.get("raw_labels")]
+    if not clean_series:
+        return line_chart([], [])
+    if len(clean_series) == 1:
+        item = clean_series[0]
+        labels, values = sorted_series(
+            {"Mes": item.get("raw_labels", []), "Valor": item.get("values", [])},
+            "Mes",
+            "Valor",
+            include_year=include_year,
+            fallback_year=fallback_year,
+        )
+        return line_chart(labels, values)
+
+    ordered_labels = _ordered_month_labels(clean_series, include_year=include_year, fallback_year=fallback_year)
+    fig = go.Figure()
+    all_values = []
+    for item in clean_series:
+        value_map = _series_value_map(
+            item.get("raw_labels", []),
+            item.get("values", []),
+            label_formatter=lambda raw: format_month_for_chart(raw, include_year=include_year, fallback_year=fallback_year),
+        )
+        values = [value_map.get(label, 0.0) for label in ordered_labels]
+        all_values.extend(values)
+        color = item.get("color", JR_BLUE)
+        fig.add_trace(
+            go.Scatter(
+                x=ordered_labels,
+                y=values,
+                name=item.get("label", ""),
+                mode="lines+markers",
+                line={"color": color, "width": 3},
+                marker={"color": color, "size": 7},
+                hovertemplate="<b>%{fullData.name}</b><br>%{x}<br>R$ %{y:,.2f}<extra></extra>",
+            )
+        )
+    max_value = max(all_values) if all_values else 0
+    fig.update_xaxes(tickangle=-30, type="category")
+    fig.update_yaxes(title="R$", range=[0, max_value * 1.12] if max_value else None, automargin=True)
+    fig.update_layout(showlegend=True, legend={"orientation": "h", "x": 0, "y": 1.14})
+    return apply_theme(fig, height=370, margin={"l": 60, "r": 40, "t": 70, "b": 60})
+
+
+def multi_bar_chart(
+    series: list[dict],
+    *,
+    horizontal: bool = False,
+    sort_desc: bool = False,
+    currency: bool = True,
+    height: int | None = None,
+) -> go.Figure:
+    clean_series = [item for item in series if item.get("raw_labels")]
+    if not clean_series:
+        return bar_chart([], [], horizontal=horizontal, currency=currency)
+    if len(clean_series) == 1:
+        item = clean_series[0]
+        return bar_chart(
+            item.get("raw_labels", []),
+            item.get("values", []),
+            horizontal=horizontal,
+            sort_desc=sort_desc,
+            currency=currency,
+            show_text=horizontal,
+            height=height,
+            marker_colors=[item.get("color", JR_BLUE)] * len(item.get("raw_labels", [])),
+        )
+
+    if horizontal:
+        totals: dict[str, float] = {}
+        maps = []
+        for item in clean_series:
+            value_map = _series_value_map(item.get("raw_labels", []), item.get("values", []))
+            maps.append(value_map)
+            for label, value in value_map.items():
+                totals[label] = totals.get(label, 0.0) + value
+        ordered_labels = list(totals.keys())
+        if sort_desc:
+            ordered_labels.sort(key=lambda label: totals.get(label, 0.0), reverse=True)
+        chart_height = height or max(360, 110 + len(ordered_labels) * 34)
+        fig = go.Figure()
+        max_value = 0.0
+        for item, value_map in zip(clean_series, maps):
+            values = [value_map.get(label, 0.0) for label in ordered_labels]
+            max_value = max(max_value, max(values) if values else 0.0)
+            fig.add_trace(
+                go.Bar(
+                    x=values,
+                    y=ordered_labels,
+                    orientation="h",
+                    name=item.get("label", ""),
+                    marker={"color": item.get("color", JR_BLUE)},
+                    hovertemplate="<b>%{fullData.name}</b><br>%{y}<br>R$ %{x:,.2f}<extra></extra>"
+                    if currency
+                    else "<b>%{fullData.name}</b><br>%{y}<br>%{x:,.0f}<extra></extra>",
+                )
+            )
+        fig.update_layout(barmode="group", showlegend=True, legend={"orientation": "h", "x": 0, "y": 1.12})
+        fig.update_xaxes(tickprefix="R$ " if currency else "", range=[0, max_value * 1.14] if max_value else None, rangemode="tozero")
+        fig.update_yaxes(autorange="reversed", automargin=True, tickfont={"size": 11})
+        fig = apply_theme(fig, height=chart_height, margin={"l": 130, "r": 50, "t": 70, "b": 45})
+        fig.update_layout(meta={"jr_horizontal_bar": True, "jr_row_count": len(ordered_labels)})
+        return fig
+
+    ordered_labels = _ordered_day_labels(clean_series)
+    if not ordered_labels:
+        ordered_labels = [label for item in clean_series for label in item.get("raw_labels", [])]
+    fig = go.Figure()
+    max_value = 0.0
+    for item in clean_series:
+        value_map = _series_value_map(item.get("raw_labels", []), item.get("values", []))
+        values = [value_map.get(label, 0.0) for label in ordered_labels]
+        max_value = max(max_value, max(values) if values else 0.0)
+        fig.add_trace(
+            go.Bar(
+                x=ordered_labels,
+                y=values,
+                name=item.get("label", ""),
+                marker={"color": item.get("color", JR_BLUE)},
+                hovertemplate="<b>%{fullData.name}</b><br>%{x}<br>R$ %{y:,.2f}<extra></extra>"
+                if currency
+                else "<b>%{fullData.name}</b><br>%{x}<br>%{y:,.0f}<extra></extra>",
+            )
+        )
+    fig.update_layout(barmode="group", showlegend=True, legend={"orientation": "h", "x": 0, "y": 1.12})
+    fig.update_xaxes(tickangle=-30, automargin=True, type="category")
+    fig.update_yaxes(
+        title="R$" if currency else "",
+        tickprefix="R$ " if currency else "",
+        range=[0, max_value * 1.12] if max_value else None,
+        rangemode="tozero",
+    )
+    return apply_theme(fig, height=height or 360, margin={"l": 60, "r": 35, "t": 70, "b": 60})
+
+
 def report_font(size: int, *, bold: bool = False) -> ImageFont.ImageFont:
     candidates = [
         "arialbd.ttf" if bold else "arial.ttf",
@@ -1999,7 +2231,8 @@ def filter_controls(
 
     with st.container(key=f"{key_prefix}_filterbar"):
         filter_widths = [1.1 if len(label) > 10 else 1.0 for _, label, _ in extra_filters]
-        widths = [0.85, 1.25, *filter_widths, 1.05, 0.8]
+        compare_options = [key for key in DASHBOARD_META if key != route]
+        widths = [0.85, 1.25, *filter_widths, 1.35, 1.05, 0.8]
         filter_cols = st.columns(widths)
         with filter_cols[0]:
             ano = st.selectbox(
@@ -2053,6 +2286,22 @@ def filter_controls(
                     label_visibility="collapsed",
                 )
 
+        compare_key = f"{key_prefix}_compare"
+        compare_state_exists = compare_key in st.session_state
+        compare_current = [item for item in st.session_state.get(compare_key, []) if item in compare_options]
+        if compare_state_exists and st.session_state.get(compare_key) != compare_current:
+            st.session_state[compare_key] = compare_current
+        compare_kwargs = {
+            "key": compare_key,
+            "format_func": lambda value: DASHBOARD_META.get(value, {}).get("label", value),
+            "label_visibility": "collapsed",
+            "placeholder": "Comparar",
+        }
+        if not compare_state_exists:
+            compare_kwargs["default"] = []
+        with filter_cols[-3]:
+            compare_selected = st.multiselect("Comparar", compare_options, **compare_kwargs)
+
         with filter_cols[-2]:
             if st.button("Limpar filtros", key=f"{key_prefix}_clear", width="stretch"):
                 for state_key in list(st.session_state.keys()):
@@ -2065,7 +2314,60 @@ def filter_controls(
     for key, value in list(params.items()):
         if value == "Todos":
             params[key] = None
+    all_data = dict(all_data)
+    all_data["_compare"] = [item for item in compare_selected if item in compare_options]
     return params, all_data
+
+
+def compare_query_params(route: str, params: dict[str, object]) -> dict[str, object]:
+    query: dict[str, object] = {}
+    if params.get("ano") is not None:
+        query["ano"] = params.get("ano")
+    if params.get("mes") is not None:
+        query["mes"] = params.get("mes")
+    if DASHBOARD_META.get(route, {}).get("supports_plate") and params.get("placa"):
+        query["placa"] = params.get("placa")
+    return query
+
+
+def compare_bundle(
+    current_route: str,
+    current_data: dict,
+    params: dict[str, object],
+    selected_routes: list[str],
+) -> list[tuple[str, dict]]:
+    bundle = [(current_route, current_data)]
+    for route in selected_routes:
+        if route == current_route or route not in DASHBOARD_META:
+            continue
+        try:
+            data = route_json(route, compare_query_params(route, params))
+        except Exception:
+            data = {}
+        bundle.append((route, data))
+    return bundle
+
+
+def compare_chart_series(bundle: list[tuple[str, dict]], metric: str) -> list[dict]:
+    series = []
+    for route, data in bundle:
+        config = COMPARE_SERIES.get(route, {}).get(metric)
+        if not config:
+            continue
+        source_key, label_key, value_key = config
+        source = data.get(source_key, {}) if isinstance(data, dict) else {}
+        labels = list(source.get(label_key, []) or [])
+        values = list(source.get(value_key, []) or [])
+        series.append(
+            {
+                "route": route,
+                "label": _series_label(route),
+                "color": _series_color(route),
+                "raw_labels": labels,
+                "values": values,
+            }
+        )
+    return series
 
 
 def render_home() -> None:
@@ -3283,7 +3585,7 @@ def render_cadastro() -> None:
 def render_combustivel() -> None:
     topbar("JR DASHBOARD • Combustível", back=False)
     seed = route_json("combustivel", {"ano": "Todos", "mes": ["Todos"]})
-    params, _ = filter_controls(
+    params, filter_state = filter_controls(
         "combustivel",
         extra_filters=[
             ("placa", "Placa", seed.get("placas", []) or []),
@@ -3307,12 +3609,29 @@ def render_combustivel() -> None:
     mensal_labels, mensal_values = sorted_series(data.get("custo_mensal", {}), "Mes", "Custo", include_year=include_year, fallback_year=fallback_year)
     km_labels, km_values = sorted_series(data.get("km_mensal", {}), "Mes", "Km Rodados", include_year=include_year, fallback_year=fallback_year)
     litros_labels, litros_values = sorted_series(data.get("litros_mensal", {}), "Mes", "Litros", include_year=include_year, fallback_year=fallback_year)
+    compare_selected = filter_state.get("_compare", [])
+    compare_data = compare_bundle("combustivel", data, params, compare_selected)
+    monthly_fig = (
+        multi_line_chart(compare_chart_series(compare_data, "monthly"), include_year=include_year, fallback_year=fallback_year)
+        if compare_selected
+        else line_chart(mensal_labels, mensal_values)
+    )
+    weekly_fig = (
+        multi_bar_chart(compare_chart_series(compare_data, "weekly"))
+        if compare_selected
+        else bar_chart(data.get("gasto_semana", {}).get("Dia", []), data.get("gasto_semana", {}).get("Custo", []))
+    )
+    plate_fig = (
+        multi_bar_chart(compare_chart_series(compare_data, "plate"), horizontal=True, sort_desc=True)
+        if compare_selected
+        else bar_chart(data.get("gasto_por_placa", {}).get("PLACA", []), data.get("gasto_por_placa", {}).get("Custo", []), horizontal=True, sort_desc=True, show_text=True)
+    )
     charts = [
-        ("gasto_mes", "Gasto total por mês", line_chart(mensal_labels, mensal_values)),
-        ("gasto_semana", "Gasto semanal (últimos 7 dias)", bar_chart(data.get("gasto_semana", {}).get("Dia", []), data.get("gasto_semana", {}).get("Custo", []))),
+        ("gasto_mes", "Gasto total por mês", monthly_fig),
+        ("gasto_semana", "Gasto semanal (últimos 7 dias)", weekly_fig),
         ("gasto_posto", "Gasto por posto", pie_chart(data.get("gasto_por_posto", {}).get("POSTOS", []), data.get("gasto_por_posto", {}).get("Custo", []))),
         ("gasto_combustivel", "Gasto por combustível", pie_chart(data.get("gasto_por_combustivel", {}).get("Combustivel", []), data.get("gasto_por_combustivel", {}).get("Custo", []))),
-        ("gasto_placa", "Gasto por placa", bar_chart(data.get("gasto_por_placa", {}).get("PLACA", []), data.get("gasto_por_placa", {}).get("Custo", []), horizontal=True, sort_desc=True, show_text=True)),
+        ("gasto_placa", "Gasto por placa", plate_fig),
         ("km_mes", "KM por mês", bar_chart(km_labels, km_values, currency=False, show_text=True)),
         ("litros_mes", "Litros por mês", bar_chart(litros_labels, litros_values, currency=False, show_text=True)),
     ]
@@ -3323,7 +3642,7 @@ def render_combustivel() -> None:
 def render_manutencao() -> None:
     topbar("JR DASHBOARD • Manutenção", back=False)
     seed = route_json("manutencao", {"ano": "Todos", "mes": ["Todos"]})
-    params, _ = filter_controls(
+    params, filter_state = filter_controls(
         "manutencao",
         extra_filters=[
             ("placa", "Placa", seed.get("placas", []) or []),
@@ -3341,11 +3660,28 @@ def render_manutencao() -> None:
     ]
     include_year = params.get("ano") is None
     mensal_labels, mensal_values = sorted_series(data.get("custo_mensal", {}), "Mes", "Custo", include_year=include_year, fallback_year=params.get("ano"))
+    compare_selected = filter_state.get("_compare", [])
+    compare_data = compare_bundle("manutencao", data, params, compare_selected)
+    monthly_fig = (
+        multi_line_chart(compare_chart_series(compare_data, "monthly"), include_year=include_year, fallback_year=params.get("ano"))
+        if compare_selected
+        else line_chart(mensal_labels, mensal_values)
+    )
+    weekly_fig = (
+        multi_bar_chart(compare_chart_series(compare_data, "weekly"))
+        if compare_selected
+        else bar_chart(data.get("custo_semana", {}).get("Dia", []), data.get("custo_semana", {}).get("Custo", []))
+    )
+    plate_fig = (
+        multi_bar_chart(compare_chart_series(compare_data, "plate"), horizontal=True, sort_desc=True)
+        if compare_selected
+        else bar_chart(data.get("gasto_por_placa", {}).get("PLACA", []), data.get("gasto_por_placa", {}).get("Custo", []), horizontal=True, sort_desc=True, show_text=True)
+    )
     charts = [
-        ("gasto_placa", "Gasto por placa", bar_chart(data.get("gasto_por_placa", {}).get("PLACA", []), data.get("gasto_por_placa", {}).get("Custo", []), horizontal=True, sort_desc=True, show_text=True)),
+        ("gasto_placa", "Gasto por placa", plate_fig),
         ("gasto_oficina", "Gasto por oficina", bar_chart(data.get("gasto_por_oficina", {}).get("OFICINA", []), data.get("gasto_por_oficina", {}).get("Custo", []), horizontal=True, sort_desc=True, show_text=True)),
-        ("gasto_mensal", "Gasto mensal", line_chart(mensal_labels, mensal_values)),
-        ("gasto_semana", "Gasto semanal (últimos 7 dias)", bar_chart(data.get("custo_semana", {}).get("Dia", []), data.get("custo_semana", {}).get("Custo", []))),
+        ("gasto_mensal", "Gasto mensal", monthly_fig),
+        ("gasto_semana", "Gasto semanal (últimos 7 dias)", weekly_fig),
     ]
     render_controlled_dashboard("manu", title="JR Dashboard - Manutenção", kpis=kpis, charts=charts)
     footer("Dados atualizados pelo Neon. © JR")
@@ -3354,7 +3690,7 @@ def render_manutencao() -> None:
 def render_hoteis() -> None:
     topbar("JR DASHBOARD • Reservas de Hotéis", back=False)
     seed = route_json("hoteis", {"ano": "Todos", "mes": ["Todos"]})
-    params, _ = filter_controls(
+    params, filter_state = filter_controls(
         "hoteis",
         extra_filters=[
             ("cidade", "Cidade", seed.get("cidades", []) or []),
@@ -3378,9 +3714,21 @@ def render_hoteis() -> None:
     week_colors = []
     for is_unplanned in week.get("NaoPlanejada", []) or []:
         week_colors.append("#F59E0B" if is_unplanned else JR_BLUE)
+    compare_selected = filter_state.get("_compare", [])
+    compare_data = compare_bundle("hoteis", data, params, compare_selected)
+    monthly_fig = (
+        multi_line_chart(compare_chart_series(compare_data, "monthly"), include_year=include_year, fallback_year=params.get("ano"))
+        if compare_selected
+        else line_chart(mensal_labels, mensal_values)
+    )
+    weekly_fig = (
+        multi_bar_chart(compare_chart_series(compare_data, "weekly"))
+        if compare_selected
+        else bar_chart(week.get("Dia", []), week.get("Valor", []), marker_colors=week_colors or None)
+    )
     charts = [
-        ("valor_mensal", "Valor mensal", line_chart(mensal_labels, mensal_values)),
-        ("valor_semanal", "Valor semanal (últimos 7 dias)", bar_chart(week.get("Dia", []), week.get("Valor", []), marker_colors=week_colors or None)),
+        ("valor_mensal", "Valor mensal", monthly_fig),
+        ("valor_semanal", "Valor semanal (últimos 7 dias)", weekly_fig),
         ("valor_cidade", "Valor por cidade", bar_chart(data.get("valor_por_cidade", {}).get("Cidade", []), data.get("valor_por_cidade", {}).get("Valor", []), horizontal=True, sort_desc=True, show_text=True)),
         ("valor_hotel", "Valor por hotel/pousada", bar_chart(data.get("valor_por_hotel", {}).get("Hotel", []), data.get("valor_por_hotel", {}).get("Valor", []), horizontal=True, sort_desc=True, show_text=True)),
     ]
@@ -3391,7 +3739,7 @@ def render_hoteis() -> None:
 def render_pedagio() -> None:
     topbar("JR DASHBOARD • Pedágio, Seguro e IPVA", back=False)
     seed = route_json("pedagio", {"ano": "Todos", "mes": ["Todos"]})
-    params, _ = filter_controls(
+    params, filter_state = filter_controls(
         "pedagio",
         extra_filters=[
             ("placa", "Placa", seed.get("placas", []) or []),
@@ -3412,11 +3760,28 @@ def render_pedagio() -> None:
     ]
     include_year = params.get("ano") is None
     mensal_labels, mensal_values = sorted_series(data.get("custo_mensal", {}), "Mes", "Custo", include_year=include_year, fallback_year=params.get("ano"))
+    compare_selected = filter_state.get("_compare", [])
+    compare_data = compare_bundle("pedagio", data, params, compare_selected)
+    monthly_fig = (
+        multi_line_chart(compare_chart_series(compare_data, "monthly"), include_year=include_year, fallback_year=params.get("ano"))
+        if compare_selected
+        else line_chart(mensal_labels, mensal_values)
+    )
+    weekly_fig = (
+        multi_bar_chart(compare_chart_series(compare_data, "weekly"))
+        if compare_selected
+        else bar_chart(data.get("custo_semana", {}).get("Dia", []), data.get("custo_semana", {}).get("Custo", []))
+    )
+    plate_fig = (
+        multi_bar_chart(compare_chart_series(compare_data, "plate"), horizontal=True, sort_desc=True)
+        if compare_selected
+        else bar_chart(data.get("gasto_por_placa", {}).get("PLACA", []), data.get("gasto_por_placa", {}).get("Custo", []), horizontal=True, sort_desc=True, show_text=True)
+    )
     charts = [
-        ("gasto_mensal", "Gasto mensal", line_chart(mensal_labels, mensal_values)),
-        ("gasto_semana", "Gasto semanal (últimos 7 dias)", bar_chart(data.get("custo_semana", {}).get("Dia", []), data.get("custo_semana", {}).get("Custo", []))),
+        ("gasto_mensal", "Gasto mensal", monthly_fig),
+        ("gasto_semana", "Gasto semanal (últimos 7 dias)", weekly_fig),
         ("gasto_tipo", "Gasto por tipo", pie_chart(data.get("gasto_por_tipo", {}).get("Tipo", []), data.get("gasto_por_tipo", {}).get("Custo", []))),
-        ("gasto_placa", "Gasto por placa", bar_chart(data.get("gasto_por_placa", {}).get("PLACA", []), data.get("gasto_por_placa", {}).get("Custo", []), horizontal=True, sort_desc=True, show_text=True)),
+        ("gasto_placa", "Gasto por placa", plate_fig),
         ("gasto_segmento", "Gasto por segmento", bar_chart(data.get("gasto_por_categoria", {}).get("Categoria", []), data.get("gasto_por_categoria", {}).get("Custo", []))),
     ]
     render_controlled_dashboard("ped", title="JR Dashboard - Pedágio, Seguro e IPVA", kpis=kpis, charts=charts)
@@ -3426,7 +3791,7 @@ def render_pedagio() -> None:
 def render_vex() -> None:
     topbar("JR DASHBOARD • Vex", back=False)
     seed = route_json("vex", {"ano": "Todos", "mes": ["Todos"]})
-    params, _ = filter_controls(
+    params, filter_state = filter_controls(
         "vex",
         extra_filters=[("placa", "Placa", seed.get("placas", []) or [])],
         key_prefix="vex",
@@ -3445,10 +3810,22 @@ def render_vex() -> None:
     ]
     include_year = params.get("ano") is None
     mensal_labels, mensal_values = sorted_series(data.get("mensal_total", {}), "Mes", "Valor", include_year=include_year, fallback_year=params.get("ano"))
+    compare_selected = filter_state.get("_compare", [])
+    compare_data = compare_bundle("vex", data, params, compare_selected)
+    monthly_fig = (
+        multi_line_chart(compare_chart_series(compare_data, "monthly"), include_year=include_year, fallback_year=params.get("ano"))
+        if compare_selected
+        else line_chart(mensal_labels, mensal_values)
+    )
+    plate_fig = (
+        multi_bar_chart(compare_chart_series(compare_data, "plate"), horizontal=True, sort_desc=True)
+        if compare_selected
+        else bar_chart(data.get("gasto_por_placa", {}).get("PLACA", []), data.get("gasto_por_placa", {}).get("Valor", []), horizontal=True, sort_desc=True, show_text=True)
+    )
     charts = [
-        ("gasto_mensal", "Gasto Vex mensal", line_chart(mensal_labels, mensal_values)),
+        ("gasto_mensal", "Gasto Vex mensal", monthly_fig),
         ("gasto_area", "Gasto Vex por área", bar_chart(data.get("por_area", {}).get("Area", []), data.get("por_area", {}).get("Valor", []))),
-        ("gasto_placa", "Gasto Vex por placa", bar_chart(data.get("gasto_por_placa", {}).get("PLACA", []), data.get("gasto_por_placa", {}).get("Valor", []), horizontal=True, sort_desc=True, show_text=True)),
+        ("gasto_placa", "Gasto Vex por placa", plate_fig),
     ]
     render_controlled_dashboard("vex", title="JR Dashboard - Vex", kpis=kpis, charts=charts)
     footer("Dados Vex consolidados pelo Neon. © JR")
