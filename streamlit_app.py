@@ -26,7 +26,7 @@ MUTED = "#6B7280"
 CARD_BORDER = "#c2d2f3"
 LOGO_PATH = Path(__file__).parent / "static" / "logo-jr.png"
 CURRENT_YEAR = date.today().year
-APP_VERSION = "deploy-compare-limit-v1"
+APP_VERSION = "deploy-compare-chart-size-v1"
 
 PLOTLY_CONFIG = {
     "responsive": True,
@@ -1232,6 +1232,16 @@ def fmt_num(value: object, decimals: int = 0) -> str:
     return formatted
 
 
+def bar_value_text(value: object, *, currency: bool = True) -> str:
+    try:
+        number = float(value or 0)
+    except (TypeError, ValueError):
+        number = 0.0
+    if abs(number) < 0.005:
+        return ""
+    return fmt_brl_compact(number) if currency else fmt_num(number)
+
+
 def h(text: object) -> str:
     escaped = html.escape(clean_text(text), quote=True)
     return escaped.encode("ascii", "xmlcharrefreplace").decode("ascii")
@@ -1451,6 +1461,21 @@ def apply_theme(fig: go.Figure, *, height: int = 360, margin: dict | None = None
     return fig
 
 
+def figure_meta(fig: go.Figure) -> dict:
+    return dict(fig.layout.meta) if isinstance(fig.layout.meta, dict) else {}
+
+
+def update_figure_meta(fig: go.Figure, **values) -> go.Figure:
+    meta = figure_meta(fig)
+    meta.update(values)
+    fig.update_layout(meta=meta)
+    return fig
+
+
+def _compare_chart_full_width(series_count: int) -> bool:
+    return series_count >= 3
+
+
 def parse_month_key(value: object, fallback_year: object | None = None) -> tuple[int, int] | None:
     if value is None:
         return None
@@ -1597,7 +1622,7 @@ def bar_chart(
     values_clean = [item[1] for item in rows]
     text = None
     if show_text:
-        text = [fmt_brl_compact(value) if currency else fmt_num(value) for value in values_clean]
+        text = [bar_value_text(value, currency=currency) for value in values_clean]
 
     if horizontal:
         chart_height = height or max(320, 95 + len(labels_clean) * 30)
@@ -1725,9 +1750,10 @@ def _series_value_map(
 
 def multi_line_chart(series: list[dict], *, include_year: bool = True, fallback_year=None) -> go.Figure:
     clean_series = [item for item in series if item.get("raw_labels")]
+    series_count = len(clean_series)
     if not clean_series:
         return line_chart([], [])
-    if len(clean_series) == 1:
+    if series_count == 1:
         item = clean_series[0]
         labels, values = sorted_series(
             {"Mes": item.get("raw_labels", []), "Valor": item.get("values", [])},
@@ -1765,7 +1791,8 @@ def multi_line_chart(series: list[dict], *, include_year: bool = True, fallback_
     fig.update_xaxes(tickangle=-30, type="category")
     fig.update_yaxes(title="R$", range=[0, max_value * 1.12] if max_value else None, automargin=True)
     fig.update_layout(showlegend=True, legend={"orientation": "h", "x": 0, "y": 1.14})
-    return apply_theme(fig, height=370, margin={"l": 60, "r": 40, "t": 70, "b": 60})
+    fig = apply_theme(fig, height=430 if _compare_chart_full_width(series_count) else 370, margin={"l": 60, "r": 40, "t": 78, "b": 70})
+    return update_figure_meta(fig, jr_compare_series_count=series_count, jr_full_width=_compare_chart_full_width(series_count))
 
 
 def multi_bar_chart(
@@ -1779,9 +1806,10 @@ def multi_bar_chart(
     fallback_year=None,
 ) -> go.Figure:
     clean_series = [item for item in series if item.get("raw_labels")]
+    series_count = len(clean_series)
     if not clean_series:
         return bar_chart([], [], horizontal=horizontal, currency=currency)
-    if len(clean_series) == 1:
+    if series_count == 1:
         item = clean_series[0]
         labels = item.get("raw_labels", [])
         values = item.get("values", [])
@@ -1815,12 +1843,13 @@ def multi_bar_chart(
         ordered_labels = list(totals.keys())
         if sort_desc:
             ordered_labels.sort(key=lambda label: totals.get(label, 0.0), reverse=True)
-        chart_height = height or max(360, 110 + len(ordered_labels) * 34)
+        row_height = 54 if _compare_chart_full_width(series_count) else 34
+        chart_height = height or max(520 if _compare_chart_full_width(series_count) else 360, 130 + len(ordered_labels) * row_height)
         fig = go.Figure()
         max_value = 0.0
         for item, value_map in zip(clean_series, maps):
             values = [value_map.get(label, 0.0) for label in ordered_labels]
-            text = [fmt_brl_compact(value) if currency else fmt_num(value) for value in values]
+            text = [bar_value_text(value, currency=currency) for value in values]
             max_value = max(max_value, max(values) if values else 0.0)
             fig.add_trace(
                 go.Bar(
@@ -1838,12 +1867,23 @@ def multi_bar_chart(
                     else "<b>%{fullData.name}</b><br>%{y}<br>%{x:,.0f}<extra></extra>",
                 )
             )
-        fig.update_layout(barmode="group", showlegend=True, legend={"orientation": "h", "x": 0, "y": 1.12})
+        fig.update_layout(
+            barmode="group",
+            bargap=0.28 if _compare_chart_full_width(series_count) else 0.18,
+            bargroupgap=0.08,
+            showlegend=True,
+            legend={"orientation": "h", "x": 0, "y": 1.14},
+        )
         fig.update_xaxes(tickprefix="R$ " if currency else "", range=[0, max_value * 1.34] if max_value else None, rangemode="tozero")
         fig.update_yaxes(autorange="reversed", automargin=True, tickfont={"size": 11})
-        fig = apply_theme(fig, height=chart_height, margin={"l": 130, "r": 105, "t": 70, "b": 45})
-        fig.update_layout(meta={"jr_horizontal_bar": True, "jr_row_count": len(ordered_labels)})
-        return fig
+        fig = apply_theme(fig, height=chart_height, margin={"l": 140, "r": 120, "t": 86, "b": 50})
+        return update_figure_meta(
+            fig,
+            jr_horizontal_bar=True,
+            jr_row_count=len(ordered_labels),
+            jr_compare_series_count=series_count,
+            jr_full_width=_compare_chart_full_width(series_count),
+        )
 
     label_formatter = None
     if label_mode == "month":
@@ -1858,7 +1898,7 @@ def multi_bar_chart(
     for item in clean_series:
         value_map = _series_value_map(item.get("raw_labels", []), item.get("values", []), label_formatter=label_formatter)
         values = [value_map.get(label, 0.0) for label in ordered_labels]
-        text = [fmt_brl_compact(value) if currency else fmt_num(value) for value in values]
+        text = [bar_value_text(value, currency=currency) for value in values]
         max_value = max(max_value, max(values) if values else 0.0)
         fig.add_trace(
             go.Bar(
@@ -1875,7 +1915,13 @@ def multi_bar_chart(
                 else "<b>%{fullData.name}</b><br>%{x}<br>%{y:,.0f}<extra></extra>",
             )
         )
-    fig.update_layout(barmode="group", showlegend=True, legend={"orientation": "h", "x": 0, "y": 1.12})
+    fig.update_layout(
+        barmode="group",
+        bargap=0.24 if _compare_chart_full_width(series_count) else 0.18,
+        bargroupgap=0.08,
+        showlegend=True,
+        legend={"orientation": "h", "x": 0, "y": 1.14},
+    )
     fig.update_xaxes(tickangle=-30, automargin=True, type="category")
     fig.update_yaxes(
         title="R$" if currency else "",
@@ -1883,7 +1929,9 @@ def multi_bar_chart(
         range=[0, max_value * 1.26] if max_value else None,
         rangemode="tozero",
     )
-    return apply_theme(fig, height=height or 360, margin={"l": 60, "r": 35, "t": 78, "b": 60})
+    chart_height = height or (460 if _compare_chart_full_width(series_count) else 360)
+    fig = apply_theme(fig, height=chart_height, margin={"l": 66, "r": 45, "t": 88, "b": 74})
+    return update_figure_meta(fig, jr_compare_series_count=series_count, jr_full_width=_compare_chart_full_width(series_count))
 
 
 def report_font(size: int, *, bold: bool = False) -> ImageFont.ImageFont:
@@ -1972,7 +2020,7 @@ def draw_centered_wrapped_text(
 
 
 def horizontal_bar_row_count(fig: go.Figure) -> int:
-    meta = fig.layout.meta if isinstance(fig.layout.meta, dict) else {}
+    meta = figure_meta(fig)
     if meta.get("jr_horizontal_bar"):
         try:
             return int(meta.get("jr_row_count") or 0)
@@ -1988,7 +2036,16 @@ def chart_scroll_height(fig: go.Figure) -> int | None:
     row_count = horizontal_bar_row_count(fig)
     if row_count <= 10:
         return None
-    return 420
+    meta = figure_meta(fig)
+    try:
+        series_count = int(meta.get("jr_compare_series_count") or 1)
+    except (TypeError, ValueError):
+        series_count = 1
+    return 560 if series_count >= 3 else 420
+
+
+def chart_prefers_full_width(fig: go.Figure) -> bool:
+    return bool(figure_meta(fig).get("jr_full_width"))
 
 
 def export_ready_figure(fig: go.Figure, *, max_horizontal_rows: int = 10) -> go.Figure:
@@ -2278,11 +2335,23 @@ def chart_card(title: str, fig: go.Figure) -> None:
 
 
 def chart_grid(charts: list[tuple[str, go.Figure]]) -> None:
-    for index in range(0, len(charts), 2):
-        cols = st.columns(2)
-        for col, item in zip(cols, charts[index : index + 2]):
-            with col:
-                chart_card(item[0], item[1])
+    index = 0
+    while index < len(charts):
+        title, fig = charts[index]
+        if chart_prefers_full_width(fig):
+            chart_card(title, fig)
+            index += 1
+            continue
+
+        if index + 1 < len(charts) and not chart_prefers_full_width(charts[index + 1][1]):
+            cols = st.columns(2)
+            for col, item in zip(cols, charts[index : index + 2]):
+                with col:
+                    chart_card(item[0], item[1])
+            index += 2
+        else:
+            chart_card(title, fig)
+            index += 1
 
 
 def kpi_control_label(item: tuple) -> str:
