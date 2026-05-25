@@ -26,7 +26,7 @@ MUTED = "#6B7280"
 CARD_BORDER = "#c2d2f3"
 LOGO_PATH = Path(__file__).parent / "static" / "logo-jr.png"
 CURRENT_YEAR = date.today().year
-APP_VERSION = "deploy-compare-chart-spacing-v1"
+APP_VERSION = "deploy-compare-label-size-v1"
 
 PLOTLY_CONFIG = {
     "responsive": True,
@@ -1896,6 +1896,7 @@ def multi_bar_chart(
         ordered_labels = [label for item in clean_series for label in item.get("raw_labels", [])]
     fig = go.Figure()
     max_value = 0.0
+    text_size = 13 if _compare_chart_full_width(series_count) else 10
     for item in clean_series:
         value_map = _series_value_map(item.get("raw_labels", []), item.get("values", []), label_formatter=label_formatter)
         values = [value_map.get(label, 0.0) for label in ordered_labels]
@@ -1909,7 +1910,7 @@ def multi_bar_chart(
                 marker={"color": item.get("color", JR_BLUE)},
                 text=text,
                 textposition="outside",
-                textfont={"size": 10, "color": item.get("color", JR_BLUE)},
+                textfont={"size": text_size, "color": item.get("color", JR_BLUE)},
                 cliponaxis=False,
                 hovertemplate="<b>%{fullData.name}</b><br>%{x}<br>R$ %{y:,.2f}<extra></extra>"
                 if currency
@@ -1921,17 +1922,17 @@ def multi_bar_chart(
         bargap=0.24 if _compare_chart_full_width(series_count) else 0.18,
         bargroupgap=0.08,
         showlegend=True,
-        legend={"orientation": "h", "x": 0, "y": 1.14},
+        legend={"orientation": "h", "x": 0.02, "y": 1.05, "yanchor": "bottom", "font": {"size": 13 if _compare_chart_full_width(series_count) else 11}},
     )
     fig.update_xaxes(tickangle=-30, automargin=True, type="category")
     fig.update_yaxes(
         title="R$" if currency else "",
         tickprefix="R$ " if currency else "",
-        range=[0, max_value * 1.26] if max_value else None,
+        range=[0, max_value * (1.38 if _compare_chart_full_width(series_count) else 1.26)] if max_value else None,
         rangemode="tozero",
     )
     chart_height = height or (460 if _compare_chart_full_width(series_count) else 360)
-    fig = apply_theme(fig, height=chart_height, margin={"l": 66, "r": 45, "t": 88, "b": 74})
+    fig = apply_theme(fig, height=chart_height, margin={"l": 66, "r": 52, "t": 54 if _compare_chart_full_width(series_count) else 88, "b": 74})
     return update_figure_meta(fig, jr_compare_series_count=series_count, jr_full_width=_compare_chart_full_width(series_count))
 
 
