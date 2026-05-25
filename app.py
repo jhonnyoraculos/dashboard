@@ -208,6 +208,16 @@ def _quote_identifier(value: str) -> str:
     return '"' + value.replace('"', '""') + '"'
 
 
+def _bind_columns(columns: list[str], row: dict, prefix: str) -> tuple[dict[str, str], dict[str, object]]:
+    refs: dict[str, str] = {}
+    params: dict[str, object] = {}
+    for index, column in enumerate(columns):
+        bind_name = f"{prefix}_{index}"
+        refs[column] = f":{bind_name}"
+        params[bind_name] = row.get(column)
+    return refs, params
+
+
 def _metadata_value(value) -> str:
     return json.dumps(value, ensure_ascii=False, default=str)
 
@@ -351,7 +361,8 @@ def save_dashboard_record(dataset: str, row: dict, *, replace_keys: list[str] | 
 
     table = _quote_identifier(DB_TABLES[dataset])
     column_sql = ", ".join(_quote_identifier(column) for column in columns)
-    value_sql = ", ".join(f":{column}" for column in columns)
+    value_refs, value_params = _bind_columns(columns, prepared, "value")
+    value_sql = ", ".join(value_refs[column] for column in columns)
     version = datetime.now(timezone.utc).isoformat()
 
     plate_registry_changed = dataset == "placas"
@@ -361,12 +372,13 @@ def save_dashboard_record(dataset: str, row: dict, *, replace_keys: list[str] | 
         if replace_keys:
             keys = [key for key in replace_keys if key in prepared and prepared.get(key) is not None]
             if keys:
-                where_sql = " AND ".join(f"{_quote_identifier(key)} = :replace_{key}" for key in keys)
+                replace_refs, replace_params = _bind_columns(keys, prepared, "replace")
+                where_sql = " AND ".join(f"{_quote_identifier(key)} = {replace_refs[key]}" for key in keys)
                 conn.execute(
                     text(f"DELETE FROM {table} WHERE {where_sql}"),
-                    {f"replace_{key}": prepared[key] for key in keys},
+                    replace_params,
                 )
-        conn.execute(text(f"INSERT INTO {table} ({column_sql}) VALUES ({value_sql})"), {column: prepared[column] for column in columns})
+        conn.execute(text(f"INSERT INTO {table} ({column_sql}) VALUES ({value_sql})"), value_params)
         if dataset in {"combustivel", "manutencao", "pedagio"} and prepared.get("PLACA") and prepared.get("Categoria"):
             plate_registry_changed = True
             _ensure_dataset_table(conn, "placas")
@@ -426,7 +438,6 @@ def replace_dashboard_records(dataset: str, rows: list[dict]) -> str:
 
     table = _quote_identifier(DB_TABLES[dataset])
     column_sql = ", ".join(_quote_identifier(column) for column in columns)
-    value_sql = ", ".join(f":{column}" for column in columns)
     version = datetime.now(timezone.utc).isoformat()
     text_registry_changed: set[str] = set()
 
@@ -434,7 +445,9 @@ def replace_dashboard_records(dataset: str, rows: list[dict]) -> str:
         _ensure_dataset_table(conn, dataset)
         conn.execute(text(f"DELETE FROM {table}"))
         for prepared in prepared_rows:
-            conn.execute(text(f"INSERT INTO {table} ({column_sql}) VALUES ({value_sql})"), {column: prepared.get(column) for column in columns})
+            value_refs, value_params = _bind_columns(columns, prepared, "value")
+            value_sql = ", ".join(value_refs[column] for column in columns)
+            conn.execute(text(f"INSERT INTO {table} ({column_sql}) VALUES ({value_sql})"), value_params)
 
             if dataset in {"combustivel", "manutencao", "pedagio"} and prepared.get("PLACA") and prepared.get("Categoria"):
                 _ensure_dataset_table(conn, "placas")
@@ -499,14 +512,15 @@ def append_dashboard_records(dataset: str, rows: list[dict], *, update_plate_reg
 
     table = _quote_identifier(DB_TABLES[dataset])
     column_sql = ", ".join(_quote_identifier(column) for column in columns)
-    value_sql = ", ".join(f":{column}" for column in columns)
     version = datetime.now(timezone.utc).isoformat()
     text_registry_changed: set[str] = set()
 
     with _db_engine().begin() as conn:
         _ensure_dataset_table(conn, dataset)
         for prepared in prepared_rows:
-            conn.execute(text(f"INSERT INTO {table} ({column_sql}) VALUES ({value_sql})"), {column: prepared.get(column) for column in columns})
+            value_refs, value_params = _bind_columns(columns, prepared, "value")
+            value_sql = ", ".join(value_refs[column] for column in columns)
+            conn.execute(text(f"INSERT INTO {table} ({column_sql}) VALUES ({value_sql})"), value_params)
 
             if update_plate_registry and dataset in {"combustivel", "manutencao", "pedagio"} and prepared.get("PLACA") and prepared.get("Categoria"):
                 _ensure_dataset_table(conn, "placas")
@@ -570,12 +584,13 @@ def delete_matching_dashboard_records(dataset: str, rows: list[dict]) -> int:
         raise ValueError("Nenhum dado valido para apagar.")
 
     table = _quote_identifier(DB_TABLES[dataset])
-    where_sql = " AND ".join(f"{_quote_identifier(column)} IS NOT DISTINCT FROM :{column}" for column in columns)
     version = datetime.now(timezone.utc).isoformat()
     deleted = 0
 
     with _db_engine().begin() as conn:
         for prepared in prepared_rows:
+            match_refs, match_params = _bind_columns(columns, prepared, "match")
+            where_sql = " AND ".join(f"{_quote_identifier(column)} IS NOT DISTINCT FROM {match_refs[column]}" for column in columns)
             result = conn.execute(
                 text(
                     f"""
@@ -587,7 +602,7 @@ def delete_matching_dashboard_records(dataset: str, rows: list[dict]) -> int:
                     )
                     """
                 ),
-                {column: prepared.get(column) for column in columns},
+                match_params,
             )
             deleted += max(result.rowcount or 0, 0)
 
