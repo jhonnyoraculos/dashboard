@@ -26,7 +26,7 @@ MUTED = "#6B7280"
 CARD_BORDER = "#c2d2f3"
 LOGO_PATH = Path(__file__).parent / "static" / "logo-jr.png"
 CURRENT_YEAR = date.today().year
-APP_VERSION = "deploy-hoteis-import-v1"
+APP_VERSION = "deploy-compare-limit-v1"
 
 PLOTLY_CONFIG = {
     "responsive": True,
@@ -68,6 +68,7 @@ DASHBOARD_META = {
     "pedagio": {"label": "Pedágio/IPVA", "color": "#D97706", "supports_plate": True},
     "vex": {"label": "Vex", "color": "#7C3AED", "supports_plate": True},
 }
+COMPARE_ALLOWED_ROUTES = {"combustivel", "manutencao", "pedagio"}
 
 COMPARE_SERIES = {
     "combustivel": {
@@ -2436,7 +2437,7 @@ def filter_controls(
 
     with st.container(key=f"{key_prefix}_filterbar"):
         filter_widths = [1.1 if len(label) > 10 else 1.0 for _, label, _ in extra_filters]
-        compare_options = [key for key in DASHBOARD_META if key != route]
+        compare_options = [key for key in DASHBOARD_META if key in COMPARE_ALLOWED_ROUTES and key != route]
         widths = [0.85, 1.25, *filter_widths, 1.35, 1.05, 0.8]
         filter_cols = st.columns(widths)
         with filter_cols[0]:
@@ -2543,7 +2544,7 @@ def compare_bundle(
 ) -> list[tuple[str, dict]]:
     bundle = [(current_route, current_data)]
     for route in selected_routes:
-        if route == current_route or route not in DASHBOARD_META:
+        if route == current_route or route not in COMPARE_ALLOWED_ROUTES or route not in DASHBOARD_META:
             continue
         try:
             data = route_json(route, compare_query_params(route, params))
