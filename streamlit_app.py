@@ -26,7 +26,7 @@ MUTED = "#6B7280"
 CARD_BORDER = "#c2d2f3"
 LOGO_PATH = Path(__file__).parent / "static" / "logo-jr.png"
 CURRENT_YEAR = date.today().year
-APP_VERSION = "deploy-compare-chart-size-v1"
+APP_VERSION = "deploy-compare-chart-spacing-v1"
 
 PLOTLY_CONFIG = {
     "responsive": True,
@@ -1844,9 +1844,10 @@ def multi_bar_chart(
         if sort_desc:
             ordered_labels.sort(key=lambda label: totals.get(label, 0.0), reverse=True)
         row_height = 54 if _compare_chart_full_width(series_count) else 34
-        chart_height = height or max(520 if _compare_chart_full_width(series_count) else 360, 130 + len(ordered_labels) * row_height)
+        chart_height = height or max(500 if _compare_chart_full_width(series_count) else 360, 92 + len(ordered_labels) * row_height)
         fig = go.Figure()
         max_value = 0.0
+        text_size = 13 if _compare_chart_full_width(series_count) else 10
         for item, value_map in zip(clean_series, maps):
             values = [value_map.get(label, 0.0) for label in ordered_labels]
             text = [bar_value_text(value, currency=currency) for value in values]
@@ -1860,7 +1861,7 @@ def multi_bar_chart(
                     marker={"color": item.get("color", JR_BLUE)},
                     text=text,
                     textposition="outside",
-                    textfont={"size": 10, "color": item.get("color", JR_BLUE)},
+                    textfont={"size": text_size, "color": item.get("color", JR_BLUE)},
                     cliponaxis=False,
                     hovertemplate="<b>%{fullData.name}</b><br>%{y}<br>R$ %{x:,.2f}<extra></extra>"
                     if currency
@@ -1872,11 +1873,11 @@ def multi_bar_chart(
             bargap=0.28 if _compare_chart_full_width(series_count) else 0.18,
             bargroupgap=0.08,
             showlegend=True,
-            legend={"orientation": "h", "x": 0, "y": 1.14},
+            legend={"orientation": "h", "x": 0.02, "y": 1.03, "yanchor": "bottom", "font": {"size": 13}},
         )
         fig.update_xaxes(tickprefix="R$ " if currency else "", range=[0, max_value * 1.34] if max_value else None, rangemode="tozero")
         fig.update_yaxes(autorange="reversed", automargin=True, tickfont={"size": 11})
-        fig = apply_theme(fig, height=chart_height, margin={"l": 140, "r": 120, "t": 86, "b": 50})
+        fig = apply_theme(fig, height=chart_height, margin={"l": 140, "r": 120, "t": 34, "b": 50})
         return update_figure_meta(
             fig,
             jr_horizontal_bar=True,
