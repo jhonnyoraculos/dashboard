@@ -26,7 +26,7 @@ MUTED = "#6B7280"
 CARD_BORDER = "#c2d2f3"
 LOGO_PATH = Path(__file__).parent / "static" / "logo-jr.png"
 CURRENT_YEAR = date.today().year
-APP_VERSION = "deploy-compare-bar-labels-v1"
+APP_VERSION = "deploy-html-entities-acentos-v1"
 
 PLOTLY_CONFIG = {
     "responsive": True,
@@ -1154,7 +1154,8 @@ def fmt_num(value: object, decimals: int = 0) -> str:
 
 
 def h(text: object) -> str:
-    return html.escape(clean_text(text))
+    escaped = html.escape(clean_text(text), quote=True)
+    return escaped.encode("ascii", "xmlcharrefreplace").decode("ascii")
 
 
 def clean_text(text: object) -> str:
