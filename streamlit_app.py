@@ -28,7 +28,7 @@ MUTED = "#6B7280"
 CARD_BORDER = "#c2d2f3"
 LOGO_PATH = Path(__file__).parent / "static" / "logo-jr.png"
 CURRENT_YEAR = date.today().year
-APP_VERSION = "deploy-dominancia-peso-pizza-v1"
+APP_VERSION = "deploy-dominancia-peso-fallback-v1"
 BR_TZ = ZoneInfo("America/Sao_Paulo")
 
 PLOTLY_CONFIG = {
@@ -2072,7 +2072,9 @@ def peso_pie_chart(labels: list, values: list, city_counts: list | None = None) 
     values_clean = [float(value or 0) for value in values or []]
     counts = list(city_counts or [])
     customdata = [
-        f"{fmt_peso(value)} em {int(counts[index]) if index < len(counts) else 0} cidade(s)"
+        f"{fmt_peso(value)} em {int(counts[index])} cidade(s)"
+        if index < len(counts) and int(counts[index] or 0) > 0
+        else fmt_peso(value)
         for index, value in enumerate(values_clean)
     ]
     fig = go.Figure(
@@ -3448,11 +3450,19 @@ def render_frota() -> None:
         st.html(ranking_difference_html(versus_rows) + ranking_versus_html(versus_rows))
 
     dominancia = data.get("dominancia_peso", {}) or {}
-    if dominancia.get("labels") and dominancia.get("values"):
-        chart_card(
-            "Dominância por placa nas cidades (peso)",
-            peso_pie_chart(dominancia.get("labels", []), dominancia.get("values", []), dominancia.get("city_counts", [])),
-        )
+    pie_labels = list(dominancia.get("labels") or [])
+    pie_values = list(dominancia.get("values") or [])
+    pie_counts = list(dominancia.get("city_counts") or [])
+    pie_title = "Dominância por placa nas cidades (peso)"
+    if not pie_labels or not pie_values:
+        peso_rows = [row for row in ranking if float(row.get("peso_total") or 0) > 0]
+        peso_rows = sorted(peso_rows, key=lambda row: float(row.get("peso_total") or 0), reverse=True)[:12]
+        pie_labels = [str(row.get("placa") or "Sem placa") for row in peso_rows]
+        pie_values = [float(row.get("peso_total") or 0) for row in peso_rows]
+        pie_counts = [0 for _ in peso_rows]
+        pie_title = "Dominância por placa (peso total)"
+    if pie_labels and pie_values:
+        chart_card(pie_title, peso_pie_chart(pie_labels, pie_values, pie_counts))
 
     st.markdown(
         """
