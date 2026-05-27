@@ -5,10 +5,12 @@ import hashlib
 import html
 import os
 import re
+import subprocess
 import unicodedata
 from io import BytesIO
-from datetime import date
+from datetime import date, datetime
 from pathlib import Path
+from zoneinfo import ZoneInfo
 
 os.environ.setdefault("JR_SKIP_WARM_CACHE", "1")
 
@@ -26,7 +28,8 @@ MUTED = "#6B7280"
 CARD_BORDER = "#c2d2f3"
 LOGO_PATH = Path(__file__).parent / "static" / "logo-jr.png"
 CURRENT_YEAR = date.today().year
-APP_VERSION = "deploy-peso-ranking-v1"
+APP_VERSION = "deploy-money-update-stamp-v1"
+BR_TZ = ZoneInfo("America/Sao_Paulo")
 
 PLOTLY_CONFIG = {
     "responsive": True,
@@ -492,10 +495,32 @@ def inject_css() -> None:
           box-shadow: 0 10px 24px rgba(190,30,45,0.25);
         }}
 
-        .home-admin-link {{
+        .home-header-actions {{
           position: absolute;
           top: 24px;
           right: 24px;
+          display: flex;
+          flex-direction: column;
+          align-items: flex-end;
+          gap: 8px;
+          z-index: 2;
+        }}
+
+        .home-last-update {{
+          margin: 0;
+          padding: 4px 9px;
+          border-radius: 999px;
+          background: rgba(255,255,255,.70);
+          border: 1px solid rgba(28,45,107,.10);
+          color: rgba(28,45,107,.62);
+          font-size: 10.5px;
+          line-height: 1.25;
+          font-weight: 700;
+          white-space: nowrap;
+          backdrop-filter: blur(10px);
+        }}
+
+        .home-admin-link {{
           min-height: 38px;
           display: inline-flex;
           align-items: center;
@@ -510,7 +535,6 @@ def inject_css() -> None:
           text-decoration: none !important;
           box-shadow: 0 10px 24px rgba(16,24,40,.10);
           backdrop-filter: blur(10px);
-          z-index: 2;
         }}
 
         .st-key-cadastro_shell {{
@@ -1313,11 +1337,12 @@ def inject_css() -> None:
             flex-direction: column;
           }}
 
-          .home-admin-link {{
+          .home-header-actions {{
             position: relative;
             top: auto;
             right: auto;
             align-self: flex-start;
+            align-items: flex-start;
           }}
 
           .home-header h1 {{
@@ -1458,11 +1483,15 @@ def navigate(page: str) -> None:
     st.rerun()
 
 
-def fmt_brl(value: object) -> str:
+def fmt_brl(value: object, *, compact_threshold: float = 1000.0) -> str:
     try:
         number = float(value or 0)
     except (TypeError, ValueError):
         number = 0.0
+    if abs(number) >= compact_threshold:
+        integer = int(number) if number >= 0 else -int(abs(number))
+        formatted = f"{integer:,}".replace(",", ".")
+        return f"R$ {formatted}"
     formatted = f"{number:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
     return f"R$ {formatted}"
 
@@ -1477,15 +1506,7 @@ def fmt_brl_compact(value: object) -> str:
 
 
 def fmt_brl_big(value: object, *, threshold: float = 1000.0) -> str:
-    try:
-        number = float(value or 0)
-    except (TypeError, ValueError):
-        number = 0.0
-    if abs(number) >= threshold:
-        integer = int(number) if number >= 0 else -int(abs(number))
-        formatted = f"{integer:,}".replace(",", ".")
-        return f"R$ {formatted}"
-    return fmt_brl(number)
+    return fmt_brl(value, compact_threshold=threshold)
 
 
 def fmt_num(value: object, decimals: int = 0) -> str:
@@ -1501,6 +1522,30 @@ def fmt_num(value: object, decimals: int = 0) -> str:
 
 def fmt_peso(value: object) -> str:
     return fmt_num(value, 2)
+
+
+@st.cache_data(ttl=600, show_spinner=False)
+def last_update_label(version: str) -> str:
+    root = Path(__file__).resolve().parent
+    dt: datetime | None = None
+    try:
+        output = subprocess.check_output(
+            ["git", "-C", str(root), "log", "-1", "--format=%cI"],
+            text=True,
+            stderr=subprocess.DEVNULL,
+            timeout=2,
+        ).strip()
+        if output:
+            dt = datetime.fromisoformat(output.replace("Z", "+00:00"))
+    except Exception:
+        dt = None
+    if dt is None:
+        mtimes = [Path(__file__).stat().st_mtime]
+        backend_path = root / "app.py"
+        if backend_path.exists():
+            mtimes.append(backend_path.stat().st_mtime)
+        dt = datetime.fromtimestamp(max(mtimes), tz=BR_TZ)
+    return dt.astimezone(BR_TZ).strftime("%d/%m/%Y %H:%M")
 
 
 def bar_value_text(value: object, *, currency: bool = True) -> str:
@@ -3335,11 +3380,15 @@ def render_frota() -> None:
 
 def render_home() -> None:
     logo = logo_data_uri()
+    last_update = h(last_update_label(APP_VERSION))
     st.markdown('<main class="home-wrapper">', unsafe_allow_html=True)
     st.markdown(
         f"""
         <header class="home-header">
-          <a class="home-admin-link" href="?page=cadastro" target="_self">Adicionar dados</a>
+          <div class="home-header-actions">
+            <p class="home-last-update">&Uacute;ltima atualiza&ccedil;&atilde;o: {last_update}</p>
+            <a class="home-admin-link" href="?page=cadastro" target="_self">Adicionar dados</a>
+          </div>
           <div class="home-brand">
             <img src="{logo}" alt="JR" class="home-logo">
             <div>
