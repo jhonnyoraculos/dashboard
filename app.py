@@ -1935,7 +1935,7 @@ def _ranking_weight_dominance_by_city(df: pd.DataFrame) -> dict:
 
     by_plate = dominant.groupby("PLACA", as_index=False).agg(Peso=("Peso", "sum"), Cidades=("Cidade", "count"))
     by_plate = by_plate.sort_values(["Peso", "Cidades", "PLACA"], ascending=[False, False, True])
-    cities = dominant.sort_values(["Peso", "Cidade"], ascending=[False, True]).head(30)
+    cities = dominant.sort_values(["Peso", "Cidade"], ascending=[False, True])
     return {
         "labels": [str(item) for item in by_plate["PLACA"].tolist()],
         "values": [round(float(item), 3) for item in by_plate["Peso"].tolist()],

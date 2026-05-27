@@ -28,7 +28,7 @@ MUTED = "#6B7280"
 CARD_BORDER = "#c2d2f3"
 LOGO_PATH = Path(__file__).parent / "static" / "logo-jr.png"
 CURRENT_YEAR = date.today().year
-APP_VERSION = "deploy-dominancia-peso-fallback-v1"
+APP_VERSION = "deploy-dominancia-cidades-click-v1"
 BR_TZ = ZoneInfo("America/Sao_Paulo")
 
 PLOTLY_CONFIG = {
@@ -1289,6 +1289,63 @@ def inject_css() -> None:
           font-weight: 700;
         }}
 
+        .dominance-panel {{
+          margin-top: 14px;
+          padding: 16px;
+          border: 1px solid rgba(194,210,243,.80);
+          border-radius: 14px;
+          background:
+            linear-gradient(150deg, rgba(255,255,255,.88), rgba(255,255,255,.62)),
+            rgba(255,255,255,.70);
+          box-shadow: inset 0 1px 0 rgba(255,255,255,.84);
+        }}
+
+        .dominance-title {{
+          margin: 0 0 6px;
+          color: var(--jr-blue);
+          font-size: 15px;
+          font-weight: 900;
+        }}
+
+        .dominance-note {{
+          margin: 0 0 14px;
+          color: var(--muted);
+          font-size: 13px;
+          font-weight: 700;
+        }}
+
+        .dominance-cities {{
+          display: grid;
+          gap: 8px;
+          max-height: 360px;
+          overflow-y: auto;
+          padding-right: 4px;
+        }}
+
+        .dominance-city-row {{
+          display: grid;
+          grid-template-columns: minmax(110px, 1fr) repeat(3, minmax(84px, auto));
+          gap: 10px;
+          align-items: center;
+          padding: 10px 12px;
+          border: 1px solid rgba(194,210,243,.62);
+          border-radius: 10px;
+          background: rgba(255,255,255,.64);
+        }}
+
+        .dominance-city-name {{
+          color: var(--jr-blue);
+          font-weight: 900;
+        }}
+
+        .dominance-city-metric {{
+          color: var(--jr-red);
+          font-size: 12px;
+          font-weight: 900;
+          text-align: right;
+          white-space: nowrap;
+        }}
+
         @media (max-width: 780px) {{
           .block-container {{
             padding: 0 10px 30px;
@@ -1443,6 +1500,15 @@ def inject_css() -> None:
 
           .st-key-frota_ranking_table [data-testid="stExpander"] summary p {{
             font-size: 12px;
+          }}
+
+          .dominance-city-row {{
+            grid-template-columns: 1fr;
+            gap: 4px;
+          }}
+
+          .dominance-city-metric {{
+            text-align: left;
           }}
         }}
 
@@ -3417,6 +3483,54 @@ def ranking_versus_html(rows: list[dict]) -> str:
     return f'<h2 class="ranking-versus-title">Versus entre placas</h2><section class="ranking-versus-grid">{"".join(cards)}</section>'
 
 
+def selected_plotly_label(event, labels: list[str]) -> str | None:
+    try:
+        points = event.selection.points
+    except AttributeError:
+        points = (event or {}).get("selection", {}).get("points", []) if isinstance(event, dict) else []
+    if not points:
+        return None
+    point = points[0]
+    label = point.get("label") or point.get("x")
+    if label:
+        return str(label)
+    point_index = point.get("point_index", point.get("pointIndex"))
+    try:
+        return labels[int(point_index)]
+    except (TypeError, ValueError, IndexError):
+        return None
+
+
+def dominance_cities_html(placa: str, cidades: list[dict]) -> str:
+    city_rows = [item for item in cidades if str(item.get("placa") or "") == placa]
+    city_rows = sorted(city_rows, key=lambda item: float(item.get("peso") or 0), reverse=True)
+    if not city_rows:
+        return (
+            '<div class="dominance-panel">'
+            f'<p class="dominance-title">{h(placa)}</p>'
+            '<p class="dominance-note">Essa placa aparece no peso total, mas ainda nao ha cidades dominadas por ela nos dados filtrados.</p>'
+            '</div>'
+        )
+
+    rows_html = []
+    for item in city_rows:
+        rows_html.append(
+            '<div class="dominance-city-row">'
+            f'<span class="dominance-city-name">{h(item.get("cidade") or "Sem cidade")}</span>'
+            f'<span class="dominance-city-metric">{h(fmt_peso(item.get("peso")))}</span>'
+            f'<span class="dominance-city-metric">{h(fmt_num(item.get("participacao"), 2))}%</span>'
+            f'<span class="dominance-city-metric">total {h(fmt_peso(item.get("peso_cidade")))}</span>'
+            '</div>'
+        )
+    return (
+        '<div class="dominance-panel">'
+        f'<p class="dominance-title">Cidades dominadas por {h(placa)}</p>'
+        f'<p class="dominance-note">{len(city_rows)} cidade(s), ordenadas pelo maior peso dominante.</p>'
+        f'<div class="dominance-cities">{"".join(rows_html)}</div>'
+        '</div>'
+    )
+
+
 def render_frota() -> None:
     topbar("JR DASHBOARD • Ranking de caminhões", back=False)
     seed = route_json("frota", {"ano": "Todos", "mes": ["Todos"], "ordenar_por": "combustivel"})
@@ -3462,7 +3576,24 @@ def render_frota() -> None:
         pie_counts = [0 for _ in peso_rows]
         pie_title = "Dominância por placa (peso total)"
     if pie_labels and pie_values:
-        chart_card(pie_title, peso_pie_chart(pie_labels, pie_values, pie_counts))
+        with st.container(border=True):
+            st.html(f'<div class="chart-title">{h(pie_title)}</div>')
+            dominance_event = st.plotly_chart(
+                peso_pie_chart(pie_labels, pie_values, pie_counts),
+                width="stretch",
+                config=PLOTLY_CONFIG,
+                key="frota_dominancia_peso_chart",
+                on_select="rerun",
+                selection_mode="points",
+            )
+            clicked_plate = selected_plotly_label(dominance_event, pie_labels)
+            if clicked_plate:
+                st.session_state["frota_dominancia_peso_selected"] = clicked_plate
+            selected_plate = st.session_state.get("frota_dominancia_peso_selected")
+            if selected_plate not in pie_labels:
+                selected_plate = pie_labels[0]
+                st.session_state["frota_dominancia_peso_selected"] = selected_plate
+            st.html(dominance_cities_html(selected_plate, dominancia.get("cidades", []) or []))
 
     st.markdown(
         """
