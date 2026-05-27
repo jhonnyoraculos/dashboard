@@ -26,7 +26,7 @@ MUTED = "#6B7280"
 CARD_BORDER = "#c2d2f3"
 LOGO_PATH = Path(__file__).parent / "static" / "logo-jr.png"
 CURRENT_YEAR = date.today().year
-APP_VERSION = "deploy-frota-ranking-home-first-v1"
+APP_VERSION = "deploy-peso-ranking-v1"
 
 PLOTLY_CONFIG = {
     "responsive": True,
@@ -105,6 +105,7 @@ RANK_ORDER_OPTIONS = {
     "total": "Gasto total",
     "manutencao": "Manutenção",
     "pedagio": "Pedágio/IPVA",
+    "peso": "Peso",
 }
 
 
@@ -986,7 +987,7 @@ def inject_css() -> None:
 
         .ranking-header {{
           display: grid;
-          grid-template-columns: .45fr .9fr repeat(4, 1.05fr) .75fr .8fr;
+          grid-template-columns: .45fr .9fr repeat(4, 1.05fr) .85fr .75fr .8fr;
           gap: 12px;
           align-items: center;
           padding: 12px 16px;
@@ -1496,6 +1497,10 @@ def fmt_num(value: object, decimals: int = 0) -> str:
     if decimals == 0:
         return formatted.split(",")[0]
     return formatted
+
+
+def fmt_peso(value: object) -> str:
+    return fmt_num(value, 2)
 
 
 def bar_value_text(value: object, *, currency: bool = True) -> str:
@@ -3167,6 +3172,7 @@ def ranking_summary_html(row: dict) -> str:
         ("Combustível", fmt_brl_big(row.get("combustivel"))),
         ("Manutenção", fmt_brl_big(row.get("manutencao"))),
         ("Pedágio/IPVA", fmt_brl_big(row.get("pedagio"))),
+        ("Peso", fmt_peso(row.get("peso_total"))),
     ]
     return "".join(
         f'<div class="ranking-summary-item"><p class="ranking-summary-label">{h(label)}</p><p class="ranking-summary-value">{h(value)}</p></div>'
@@ -3180,6 +3186,8 @@ def ranking_detail_html(row: dict) -> str:
         ("Combustível", fmt_brl_big(row.get("combustivel"))),
         ("Manutenção", fmt_brl_big(row.get("manutencao"))),
         ("Pedágio/IPVA", fmt_brl_big(row.get("pedagio"))),
+        ("Peso", fmt_peso(row.get("peso_total"))),
+        ("Valor entregas", fmt_brl_big(row.get("valor_peso"))),
         ("KM total", fmt_num(row.get("km_total"))),
         ("Litros", fmt_num(row.get("litros_total"))),
         ("Custo total por KM", fmt_brl(row.get("custo_por_km"))),
@@ -3208,6 +3216,7 @@ def ranking_row_label(row: dict) -> str:
         f"Combustivel {money(row.get('combustivel'))} | "
         f"Manutencao {money(row.get('manutencao'))} | "
         f"Pedagio/IPVA {money(row.get('pedagio'))} | "
+        f"Peso {fmt_peso(row.get('peso_total'))} | "
         f"KM {fmt_num(row.get('km_total'))} | "
         f"Litros {fmt_num(row.get('litros_total'))}"
     )
@@ -3228,6 +3237,7 @@ def ranking_difference_html(rows: list[dict]) -> str:
         ("Combustível", "combustivel", fmt_brl_big),
         ("Manutenção", "manutencao", fmt_brl_big),
         ("Pedágio/IPVA", "pedagio", fmt_brl_big),
+        ("Peso", "peso_total", fmt_peso),
         ("KM total", "km_total", fmt_num),
         ("Litros", "litros_total", fmt_num),
         ("Custo/KM", "custo_por_km", fmt_brl),
@@ -3258,6 +3268,8 @@ def ranking_versus_html(rows: list[dict]) -> str:
         ("Combustível", "combustivel", fmt_brl_big),
         ("Manutenção", "manutencao", fmt_brl_big),
         ("Pedágio/IPVA", "pedagio", fmt_brl_big),
+        ("Peso", "peso_total", fmt_peso),
+        ("Valor entregas", "valor_peso", fmt_brl_big),
         ("KM total", "km_total", fmt_num),
         ("Litros", "litros_total", fmt_num),
         ("Custo/KM", "custo_por_km", fmt_brl),
@@ -3289,6 +3301,7 @@ def render_frota() -> None:
             ("Combustível", fmt_brl_big(totais.get("combustivel")), JR_BLUE),
             ("Manutenção", fmt_brl_big(totais.get("manutencao")), JR_RED),
             ("Pedágio/IPVA", fmt_brl_big(totais.get("pedagio")), "#D97706"),
+            ("Peso total", fmt_peso(totais.get("peso_total")), JR_BLUE),
             ("Ordenado por", order_label, JR_BLUE),
         ]
     )
@@ -3308,7 +3321,7 @@ def render_frota() -> None:
     st.markdown(
         """
         <div class="ranking-header">
-          <span>#</span><span>Placa</span><span>Total</span><span>Combustivel</span><span>Manutencao</span><span>Pedagio/IPVA</span><span>KM</span><span>Litros</span>
+          <span>#</span><span>Placa</span><span>Total</span><span>Combustivel</span><span>Manutencao</span><span>Pedagio/IPVA</span><span>Peso</span><span>KM</span><span>Litros</span>
         </div>
         """,
         unsafe_allow_html=True,
@@ -4014,6 +4027,13 @@ HOTEIS_SHEET_ALIASES = {
     "HOTEL": ["HOTELPOUSADA", "HOTEL", "POUSADA"],
 }
 
+PESO_SHEET_ALIASES = {
+    "DATA": ["DATA", "DT"],
+    "CIDADE": ["CIDADE"],
+    "PESO": ["PESO"],
+    "PLACA": ["PLACA", "PLACAS"],
+}
+
 
 def _read_uploaded_sheet(uploaded_file, aliases: dict[str, list[str]]) -> pd.DataFrame:
     name = clean_text(getattr(uploaded_file, "name", "")).lower()
@@ -4125,7 +4145,10 @@ def _pedagio_rows_from_sheet(df: pd.DataFrame, plate_map: dict[str, str]) -> tup
 def _sheet_text(row: pd.Series, column: str | None, *, upper: bool = False) -> str:
     if not column:
         return ""
-    text = clean_text(row.get(column)).strip()
+    value = row.get(column)
+    if pd.isna(value):
+        return ""
+    text = clean_text(value).strip()
     return text.upper() if upper else text
 
 
@@ -4187,6 +4210,60 @@ def _hoteis_rows_from_sheet(df: pd.DataFrame) -> tuple[list[dict], list[str]]:
                 "Hotel": hotel,
                 "Tipo": tipo,
                 "Categoria": "Transporte",
+            }
+        )
+    return rows, errors
+
+
+def _peso_rows_from_sheet(df: pd.DataFrame, plate_map: dict[str, str]) -> tuple[list[dict], list[str]]:
+    header_map = {_normalize_sheet_header(column): column for column in df.columns}
+    aliases = {
+        "DATA": ["DATA", "DT"],
+        "CIDADE": ["CIDADE"],
+        "PESO": ["PESO"],
+        "VALOR": ["VALOR", "CUSTO"],
+        "PLACA": ["PLACA", "PLACAS"],
+    }
+    resolved = {field: next((header_map[key] for key in keys if key in header_map), None) for field, keys in aliases.items()}
+    labels = {"DATA": "DATA", "PESO": "PESO", "PLACA": "PLACA"}
+    missing = [labels[field] for field in labels if resolved.get(field) is None]
+    if missing:
+        return [], [f"Colunas faltando: {', '.join(missing)}."]
+
+    rows: list[dict] = []
+    errors: list[str] = []
+    for idx, row in df.iterrows():
+        data_info = _parse_sheet_date(row.get(resolved["DATA"]))
+        cidade = _sheet_text(row, resolved.get("CIDADE"), upper=True)
+        peso = _parse_brl_number(row.get(resolved["PESO"]))
+        valor = _parse_brl_number(row.get(resolved.get("VALOR"))) if resolved.get("VALOR") else 0.0
+        placa_raw = _sheet_text(row, resolved.get("PLACA"), upper=True)
+        placa_normalizada = backend._normalize_plate_value(placa_raw)
+        placa = "" if pd.isna(placa_normalizada) else str(placa_normalizada)
+
+        if not any([data_info, cidade, peso is not None, valor not in (None, 0.0), placa_raw]):
+            continue
+        missing_row = []
+        if data_info is None:
+            missing_row.append("DATA")
+        if peso is None:
+            missing_row.append("PESO")
+        if not placa:
+            missing_row.append("PLACA")
+        if missing_row:
+            errors.append(f"Linha {idx + 2}: preencher {', '.join(missing_row)}.")
+            continue
+
+        data, mes = data_info
+        rows.append(
+            {
+                "Data": data,
+                "Mes": mes,
+                "Cidade": cidade,
+                "Peso": peso,
+                "Valor": valor if valor is not None else 0.0,
+                "PLACA": placa,
+                "Categoria": plate_map.get(placa, "Transporte"),
             }
         )
     return rows, errors
@@ -4272,6 +4349,89 @@ def _render_hoteis_sheet_import() -> None:
             st.session_state["cad_hotel_last_import_count"] = len(imported_rows)
             _reset_dataset_editor("cad_hotel_table")
             st.success(f"{len(imported_rows)} hospedagem(ns) importada(s).")
+            st.rerun()
+
+
+def _clear_peso_last_import() -> None:
+    st.session_state.pop("cad_peso_last_import_rows", None)
+    st.session_state.pop("cad_peso_last_import_count", None)
+
+
+def _undo_peso_last_import() -> None:
+    rows = st.session_state.get("cad_peso_last_import_rows") or []
+    if not rows:
+        st.warning("Nao ha importacao recente para apagar.")
+        return
+    try:
+        deleted = backend.delete_matching_dashboard_records("peso", rows)
+    except Exception as exc:
+        st.error("Nao foi possivel apagar a ultima importacao.")
+        st.exception(exc)
+        return
+    _clear_peso_last_import()
+    _reset_dataset_editor("cad_peso_table")
+    clear_cached_reads()
+    st.success(f"{deleted} entrega(s) apagada(s).")
+    st.rerun()
+
+
+def _render_peso_sheet_import(plate_map: dict[str, str]) -> None:
+    last_rows = st.session_state.get("cad_peso_last_import_rows") or []
+    if last_rows:
+        last_count = st.session_state.get("cad_peso_last_import_count", len(last_rows))
+        st.warning(f"Ultima importacao por planilha: {last_count} entrega(s).")
+        undo_col, clear_col = st.columns([1, 1])
+        with undo_col:
+            if st.button("Apagar ultima importacao", type="primary", width="stretch", key="cad_peso_undo_import"):
+                _undo_peso_last_import()
+        with clear_col:
+            if st.button("Manter importacao", width="stretch", key="cad_peso_keep_import"):
+                _clear_peso_last_import()
+                st.rerun()
+
+    with st.expander("Adicionar peso por planilha", expanded=False):
+        uploaded = st.file_uploader("Enviar planilha", type=["xlsx", "csv"], key="cad_peso_upload")
+        if uploaded is None:
+            return
+
+        try:
+            raw_df = _read_uploaded_sheet(uploaded, PESO_SHEET_ALIASES)
+        except Exception as exc:
+            st.error("Nao foi possivel ler a planilha. Envie um arquivo .xlsx ou .csv.")
+            st.exception(exc)
+            return
+
+        rows, errors = _peso_rows_from_sheet(raw_df, plate_map)
+        if errors:
+            st.warning("Revise a planilha antes de importar.")
+            for error in errors[:8]:
+                st.write(error)
+            if len(errors) > 8:
+                st.write(f"...mais {len(errors) - 8} erro(s).")
+            return
+        if not rows:
+            st.warning("Nenhuma linha valida encontrada na planilha.")
+            return
+
+        preview = pd.DataFrame(rows)
+        st.dataframe(preview[["Data", "Mes", "Cidade", "PLACA", "Peso", "Valor", "Categoria"]], width="stretch", hide_index=True)
+        if st.button(f"Importar {len(rows)} entrega(s)", type="primary", width="stretch", key="cad_peso_import_sheet"):
+            imported_rows: list[dict] = []
+            try:
+                imported_rows = _append_records_in_batches("peso", rows, batch_size=100)
+            except Exception as exc:
+                if imported_rows:
+                    st.session_state["cad_peso_last_import_rows"] = imported_rows
+                    st.session_state["cad_peso_last_import_count"] = len(imported_rows)
+                    st.error(f"O envio parou depois de {len(imported_rows)} entrega(s). Voce pode apagar essa importacao parcial pelo botao acima.")
+                else:
+                    st.error("Nao foi possivel importar a planilha para o Neon.")
+                st.exception(exc)
+                return
+            st.session_state["cad_peso_last_import_rows"] = imported_rows
+            st.session_state["cad_peso_last_import_count"] = len(imported_rows)
+            _reset_dataset_editor("cad_peso_table")
+            st.success(f"{len(imported_rows)} entrega(s) importada(s).")
             st.rerun()
 
 
@@ -4382,7 +4542,7 @@ def _render_pedagio_sheet_import(plate_map: dict[str, str]) -> None:
 def render_cadastro() -> None:
     topbar("JR DASHBOARD • Adicionar dados", back=True)
     with st.container(key="cadastro_shell"):
-        tabs = st.tabs(["Placas", "Combustível", "KM mensal", "Manutenção", "Hotéis", "Pedágio/IPVA"])
+        tabs = st.tabs(["Placas", "Combustível", "KM mensal", "Manutenção", "Hotéis", "Peso", "Pedágio/IPVA"])
 
         with tabs[0]:
             with st.form("form_placas", clear_on_submit=True):
@@ -4668,6 +4828,54 @@ def render_cadastro() -> None:
             )
 
         with tabs[5]:
+            _render_peso_sheet_import(plate_map)
+
+            with st.form("form_peso", clear_on_submit=True):
+                c1, c2, c3 = st.columns(3)
+                with c1:
+                    data = st.date_input("Data", value=date.today(), key="cad_peso_data")
+                    placa, categoria = _plate_fields("cad_peso", plate_map)
+                with c2:
+                    cidade = st.text_input("Cidade", key="cad_peso_cidade")
+                with c3:
+                    peso = st.number_input("Peso", min_value=0.0, step=1.0, format="%.3f", key="cad_peso_peso")
+                    valor = st.number_input("Valor", min_value=0.0, step=10.0, format="%.2f", key="cad_peso_valor")
+                    submitted = st.form_submit_button("Salvar peso", type="primary", width="stretch")
+                if submitted:
+                    _save_entry(
+                        "peso",
+                        {
+                            "Data": data,
+                            "Mes": _entry_month(data),
+                            "Cidade": cidade,
+                            "Peso": peso,
+                            "Valor": valor,
+                            "PLACA": placa,
+                            "Categoria": categoria,
+                        },
+                        required=["Data", "PLACA", "Cidade", "Peso"],
+                        success="Lancamento de peso salvo.",
+                    )
+
+            _render_dataset_editor(
+                "peso",
+                backend.load_peso,
+                ["Data", "Mes", "Cidade", "PLACA", "Categoria", "Peso", "Valor"],
+                ["Data", "PLACA", "Cidade"],
+                "cad_peso_table",
+                {
+                    "Data": _date_col(),
+                    "Mes": st.column_config.TextColumn("Mes"),
+                    "Cidade": st.column_config.TextColumn("Cidade"),
+                    "PLACA": st.column_config.TextColumn("Placa"),
+                    "Categoria": st.column_config.SelectboxColumn("Categoria", options=["Transporte", "Vex"], required=True),
+                    "Peso": _number_col("Peso"),
+                    "Valor": _money_col("Valor"),
+                },
+                ["Mes", "Cidade", "PLACA", "Categoria"],
+            )
+
+        with tabs[6]:
             _render_pedagio_sheet_import(plate_map)
 
             with st.form("form_pedagio", clear_on_submit=True):

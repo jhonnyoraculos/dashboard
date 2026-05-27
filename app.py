@@ -43,6 +43,7 @@ DB_TABLES = {
     "manutencao": "dashboard_manutencao",
     "hoteis": "dashboard_hoteis",
     "pedagio": "dashboard_pedagio",
+    "peso": "dashboard_peso",
     "placas": "dashboard_placas",
 }
 DB_METADATA_TABLE = "dashboard_metadata"
@@ -54,6 +55,7 @@ _PEDAGIO_CACHE = {"mtime": None, "df": None, "lock": threading.Lock()}
 _COMBUSTIVEL_CACHE = {"mtime": None, "df": None, "lock": threading.Lock()}
 _MANUTENCAO_CACHE = {"mtime": None, "df": None, "lock": threading.Lock()}
 _HOTEIS_CACHE = {"mtime": None, "df": None, "lock": threading.Lock()}
+_PESO_CACHE = {"mtime": None, "df": None, "lock": threading.Lock()}
 _OVERVIEW_CACHE = {"mtimes": None, "dados": None}
 _PLATE_REGISTRY_CACHE = {"mtime": None, "df": None, "lock": threading.Lock()}
 _PLACAS_CACHE = {"mtime": None, "df": None, "lock": threading.Lock()}
@@ -66,6 +68,7 @@ _CACHE_MAP = {
     "manutencao": _MANUTENCAO_CACHE,
     "hoteis": _HOTEIS_CACHE,
     "pedagio": _PEDAGIO_CACHE,
+    "peso": _PESO_CACHE,
 }
 
 _COMBUSTIVEL_COLUMNS = [
@@ -96,6 +99,7 @@ _HOTEIS_COLUMNS = [
     "Categoria",
 ]
 _PEDAGIO_COLUMNS = ["PLACA", "Tipo", "Custo", "Mes", "Data", "Categoria"]
+_PESO_COLUMNS = ["Data", "Mes", "Cidade", "Peso", "Valor", "PLACA", "Categoria"]
 _PLACAS_COLUMNS = ["PLACA", "Categoria"]
 _DATASET_COLUMNS = {
     "combustivel": _COMBUSTIVEL_COLUMNS,
@@ -105,6 +109,7 @@ _DATASET_COLUMNS = {
     "manutencao": _MANUTENCAO_COLUMNS,
     "hoteis": _HOTEIS_COLUMNS,
     "pedagio": _PEDAGIO_COLUMNS,
+    "peso": _PESO_COLUMNS,
     "placas": _PLACAS_COLUMNS,
 }
 _COLUMN_SQL_TYPES = {
@@ -125,6 +130,7 @@ _COLUMN_SQL_TYPES = {
     "Hotel": "TEXT",
     "Tipo": "TEXT",
     "OFICINA": "TEXT",
+    "Peso": "DOUBLE PRECISION",
 }
 
 
@@ -311,7 +317,7 @@ def _clear_dataset_cache(dataset: str) -> None:
     if dataset == "combustivel_km":
         targets = ["combustivel"]
     elif dataset == "placas":
-        targets = ["combustivel", "manutencao", "pedagio"]
+        targets = ["combustivel", "manutencao", "pedagio", "peso"]
     elif dataset in {"combustiveis", "postos"}:
         targets = ["combustivel"]
     else:
@@ -437,7 +443,7 @@ def save_dashboard_record(dataset: str, row: dict, *, replace_keys: list[str] | 
                     replace_params,
                 )
         conn.execute(text(f"INSERT INTO {table} ({column_sql}) VALUES ({value_sql})"), value_params)
-        if dataset in {"combustivel", "manutencao", "pedagio"} and prepared.get("PLACA") and prepared.get("Categoria"):
+        if dataset in {"combustivel", "manutencao", "pedagio", "peso"} and prepared.get("PLACA") and prepared.get("Categoria"):
             plate_registry_changed = True
             _ensure_dataset_table(conn, "placas")
             placas_table = _quote_identifier(DB_TABLES["placas"])
@@ -507,7 +513,7 @@ def replace_dashboard_records(dataset: str, rows: list[dict]) -> str:
             value_sql = ", ".join(value_refs[column] for column in columns)
             conn.execute(text(f"INSERT INTO {table} ({column_sql}) VALUES ({value_sql})"), value_params)
 
-            if dataset in {"combustivel", "manutencao", "pedagio"} and prepared.get("PLACA") and prepared.get("Categoria"):
+            if dataset in {"combustivel", "manutencao", "pedagio", "peso"} and prepared.get("PLACA") and prepared.get("Categoria"):
                 _ensure_dataset_table(conn, "placas")
                 placas_table = _quote_identifier(DB_TABLES["placas"])
                 conn.execute(text(f"DELETE FROM {placas_table} WHERE \"PLACA\" = :placa"), {"placa": prepared["PLACA"]})
@@ -540,12 +546,12 @@ def replace_dashboard_records(dataset: str, rows: list[dict]) -> str:
                     )
                     _write_metadata(conn, f"{registry_dataset}.version", version)
 
-        if dataset in {"combustivel", "manutencao", "pedagio"}:
+        if dataset in {"combustivel", "manutencao", "pedagio", "peso"}:
             _write_metadata(conn, "placas.version", version)
         _write_metadata(conn, f"{dataset}.version", version)
         _write_metadata(conn, "import.version", version)
 
-    if dataset in {"combustivel", "manutencao", "pedagio"}:
+    if dataset in {"combustivel", "manutencao", "pedagio", "peso"}:
         _clear_dataset_cache("placas")
     _clear_dataset_cache(dataset)
     for registry_dataset in text_registry_changed:
@@ -580,7 +586,7 @@ def append_dashboard_records(dataset: str, rows: list[dict], *, update_plate_reg
             value_sql = ", ".join(value_refs[column] for column in columns)
             conn.execute(text(f"INSERT INTO {table} ({column_sql}) VALUES ({value_sql})"), value_params)
 
-            if update_plate_registry and dataset in {"combustivel", "manutencao", "pedagio"} and prepared.get("PLACA") and prepared.get("Categoria"):
+            if update_plate_registry and dataset in {"combustivel", "manutencao", "pedagio", "peso"} and prepared.get("PLACA") and prepared.get("Categoria"):
                 _ensure_dataset_table(conn, "placas")
                 placas_table = _quote_identifier(DB_TABLES["placas"])
                 conn.execute(text(f"DELETE FROM {placas_table} WHERE \"PLACA\" = :placa"), {"placa": prepared["PLACA"]})
@@ -613,12 +619,12 @@ def append_dashboard_records(dataset: str, rows: list[dict], *, update_plate_reg
                     )
                     _write_metadata(conn, f"{registry_dataset}.version", version)
 
-        if update_plate_registry and dataset in {"combustivel", "manutencao", "pedagio"}:
+        if update_plate_registry and dataset in {"combustivel", "manutencao", "pedagio", "peso"}:
             _write_metadata(conn, "placas.version", version)
         _write_metadata(conn, f"{dataset}.version", version)
         _write_metadata(conn, "import.version", version)
 
-    if update_plate_registry and dataset in {"combustivel", "manutencao", "pedagio"}:
+    if update_plate_registry and dataset in {"combustivel", "manutencao", "pedagio", "peso"}:
         _clear_dataset_cache("placas")
     _clear_dataset_cache(dataset)
     for registry_dataset in text_registry_changed:
@@ -664,12 +670,12 @@ def delete_matching_dashboard_records(dataset: str, rows: list[dict]) -> int:
             )
             deleted += max(result.rowcount or 0, 0)
 
-        if dataset in {"combustivel", "manutencao", "pedagio"}:
+        if dataset in {"combustivel", "manutencao", "pedagio", "peso"}:
             _write_metadata(conn, "placas.version", version)
         _write_metadata(conn, f"{dataset}.version", version)
         _write_metadata(conn, "import.version", version)
 
-    if dataset in {"combustivel", "manutencao", "pedagio"}:
+    if dataset in {"combustivel", "manutencao", "pedagio", "peso"}:
         _clear_dataset_cache("placas")
     _clear_dataset_cache(dataset)
     return deleted
@@ -690,7 +696,7 @@ def rename_plate(old_plate, new_plate, categoria: str) -> str:
 
     with _db_engine().begin() as conn:
         _ensure_dataset_table(conn, "placas")
-        for dataset in ("combustivel", "combustivel_km", "manutencao", "pedagio"):
+        for dataset in ("combustivel", "combustivel_km", "manutencao", "pedagio", "peso"):
             table = _quote_identifier(DB_TABLES[dataset])
             conn.execute(
                 text(f"UPDATE {table} SET \"PLACA\" = :new_plate WHERE \"PLACA\" = :old_plate"),
@@ -870,7 +876,7 @@ def _apply_plate_categories(df: pd.DataFrame) -> pd.DataFrame:
 
 def _derived_plate_registry() -> pd.DataFrame:
     frames = []
-    for loader in (load_combustivel, load_manutencao, load_pedagio):
+    for loader in (load_combustivel, load_manutencao, load_pedagio, load_peso):
         try:
             df = loader()
         except Exception:
@@ -1508,6 +1514,28 @@ def load_pedagio() -> pd.DataFrame:
         return df.copy(deep=False)
 
 
+def load_peso() -> pd.DataFrame:
+    cache = _PESO_CACHE
+    with cache["lock"]:
+        version = _db_version("peso")
+        cached = cache.get("df")
+        if cached is not None and cache.get("mtime") == version:
+            return cached.copy(deep=False)
+
+        df = _read_database_table("peso", _PESO_COLUMNS, date_columns=["Data"])
+        df = _finalize_common(
+            df,
+            date_columns=["Data"],
+            numeric_columns=["Peso", "Valor"],
+            text_columns=["Cidade"],
+            plate_columns=["PLACA"],
+        )
+        df = _apply_plate_categories(df)
+        cache["mtime"] = version
+        cache["df"] = df.copy()
+        return df.copy(deep=False)
+
+
 def agg_pedagio(df: pd.DataFrame) -> dict:
     registros = df.shape[0]
     custo_total = float(pd.to_numeric(df.get("Custo"), errors="coerce").sum()) if "Custo" in df else 0.0
@@ -1901,18 +1929,19 @@ def data_frota(params: dict | None = None) -> dict:
     df_manu = _ranking_filter_valid_plates(_apply_plate_categories(load_manutencao()))
     df_ped = _ranking_filter_valid_plates(_apply_plate_categories(load_pedagio()))
     df_km = _ranking_filter_valid_plates(_apply_plate_categories(load_combustivel_km()))
+    df_peso = _ranking_filter_valid_plates(_apply_plate_categories(load_peso()))
 
-    source_frames = [df_comb, df_manu, df_ped]
+    source_frames = [df_comb, df_manu, df_ped, df_peso]
     categoria_frames = [_ranking_filter_category(df, categoria) for df in source_frames]
-    df_comb_base, df_manu_base, df_ped_base = categoria_frames
+    df_comb_base, df_manu_base, df_ped_base, df_peso_base = categoria_frames
     df_km_base = _ranking_filter_category(df_km, categoria)
 
     anos_disponiveis: set[int] = set()
-    for df_src in (df_comb_base, df_manu_base, df_ped_base, df_km_base):
+    for df_src in (df_comb_base, df_manu_base, df_ped_base, df_km_base, df_peso_base):
         anos_disponiveis.update(_unique_years(df_src))
         anos_disponiveis.update(df_src.attrs.get("anos_sheets", []))
 
-    month_frames = [df_comb_base, df_manu_base, df_ped_base, df_km_base]
+    month_frames = [df_comb_base, df_manu_base, df_ped_base, df_km_base, df_peso_base]
     if ano is not None:
         month_frames = [_filter_by_period(df, ano=ano) for df in month_frames]
     month_source = [df[["Mes"]] for df in month_frames if not df.empty and "Mes" in df.columns]
@@ -1929,23 +1958,27 @@ def data_frota(params: dict | None = None) -> dict:
     df_manu = _apply_period(df_manu_base)
     df_ped = _apply_period(df_ped_base)
     df_km = _apply_period(df_km_base)
+    df_peso = _apply_period(df_peso_base)
 
-    plate_source = [df[["PLACA"]] for df in (df_comb, df_manu, df_ped, df_km) if not df.empty and "PLACA" in df.columns]
+    plate_source = [df[["PLACA"]] for df in (df_comb, df_manu, df_ped, df_km, df_peso) if not df.empty and "PLACA" in df.columns]
     placas_disponiveis = _unique_sorted(pd.concat(plate_source, ignore_index=True), "PLACA") if plate_source else []
 
     df_comb = _ranking_filter_plates(df_comb, placas)
     df_manu = _ranking_filter_plates(df_manu, placas)
     df_ped = _ranking_filter_plates(df_ped, placas)
     df_km = _ranking_filter_plates(df_km, placas)
+    df_peso = _ranking_filter_plates(df_peso, placas)
 
     categorias = set()
     for df_src in source_frames:
         categorias.update(_unique_sorted(df_src, "Categoria"))
 
-    category_map = _ranking_category_map(df_comb_base, df_manu_base, df_ped_base)
+    category_map = _ranking_category_map(df_comb_base, df_manu_base, df_ped_base, df_peso_base)
     total_comb = _ranking_sum_by_plate(df_comb, "Custo")
     total_manu = _ranking_sum_by_plate(df_manu, "Custo")
     total_ped = _ranking_sum_by_plate(df_ped, "Custo")
+    peso_map = _ranking_sum_by_plate(df_peso, "Peso")
+    valor_peso_map = _ranking_sum_by_plate(df_peso, "Valor")
     litros_map = _ranking_sum_by_plate(df_comb, "Litros")
     km_fuel_map = _ranking_sum_by_plate(df_comb, "Km Rodados")
     km_override_map = _ranking_sum_by_plate(df_km, "Km Rodados")
@@ -1953,12 +1986,14 @@ def data_frota(params: dict | None = None) -> dict:
     servicos_map = _ranking_count_by_plate(df_manu)
     pedagio_count_map = _ranking_count_by_plate(df_ped)
 
-    placa_set = set(total_comb) | set(total_manu) | set(total_ped) | set(litros_map) | set(km_fuel_map) | set(km_override_map)
+    placa_set = set(total_comb) | set(total_manu) | set(total_ped) | set(litros_map) | set(km_fuel_map) | set(km_override_map) | set(peso_map)
     ranking = []
     for placa in sorted(placa_set):
         combustivel_total = total_comb.get(placa, 0.0)
         manutencao_total = total_manu.get(placa, 0.0)
         pedagio_total = total_ped.get(placa, 0.0)
+        peso_total = peso_map.get(placa, 0.0)
+        valor_peso_total = valor_peso_map.get(placa, 0.0)
         total = combustivel_total + manutencao_total + pedagio_total
         km_total = km_override_map.get(placa, km_fuel_map.get(placa, 0.0))
         litros_total = litros_map.get(placa, 0.0)
@@ -1971,6 +2006,8 @@ def data_frota(params: dict | None = None) -> dict:
                 "combustivel": round(combustivel_total, 2),
                 "manutencao": round(manutencao_total, 2),
                 "pedagio": round(pedagio_total, 2),
+                "peso_total": round(peso_total, 3),
+                "valor_peso": round(valor_peso_total, 2),
                 "km_total": round(km_total, 2),
                 "litros_total": round(litros_total, 2),
                 "custo_por_km": round((total / km_total) if km_total else 0.0, 4),
@@ -1989,6 +2026,7 @@ def data_frota(params: dict | None = None) -> dict:
         "combustivel": "combustivel",
         "manutencao": "manutencao",
         "pedagio": "pedagio",
+        "peso": "peso_total",
     }.get(ordenar_por, "combustivel")
     ranking.sort(key=lambda row: (row.get(sort_key, 0.0), row.get("total", 0.0), row.get("placa", "")), reverse=True)
     for index, row in enumerate(ranking, start=1):
@@ -2007,6 +2045,8 @@ def data_frota(params: dict | None = None) -> dict:
             "combustivel": round(sum(row["combustivel"] for row in ranking), 2),
             "manutencao": round(sum(row["manutencao"] for row in ranking), 2),
             "pedagio": round(sum(row["pedagio"] for row in ranking), 2),
+            "peso_total": round(sum(row["peso_total"] for row in ranking), 3),
+            "valor_peso": round(sum(row["valor_peso"] for row in ranking), 2),
             "km_total": round(sum(row["km_total"] for row in ranking), 2),
             "litros_total": round(sum(row["litros_total"] for row in ranking), 2),
             "lancamentos": sum(row["lancamentos"] for row in ranking),
@@ -2020,6 +2060,7 @@ def _warm_data_caches(*, blocking: bool = False) -> None:
         (load_manutencao, "manutencao"),
         (load_hoteis, "hoteis"),
         (load_pedagio, "pedagio/seguro/IPVA"),
+        (load_peso, "peso"),
     )
 
     def _run() -> None:
