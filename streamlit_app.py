@@ -26,7 +26,7 @@ MUTED = "#6B7280"
 CARD_BORDER = "#c2d2f3"
 LOGO_PATH = Path(__file__).parent / "static" / "logo-jr.png"
 CURRENT_YEAR = date.today().year
-APP_VERSION = "deploy-frota-ranking-row-values-v1"
+APP_VERSION = "deploy-frota-ranking-row-km-litros-v1"
 
 PLOTLY_CONFIG = {
     "responsive": True,
@@ -3204,7 +3204,9 @@ def ranking_row_label(row: dict) -> str:
         f"{row.get('categoria') or 'Sem categoria'} | Total {fmt_brl_big(row.get('total'))} | "
         f"Combustivel {fmt_brl_big(row.get('combustivel'))} | "
         f"Manutencao {fmt_brl_big(row.get('manutencao'))} | "
-        f"Pedagio/IPVA {fmt_brl_big(row.get('pedagio'))}"
+        f"Pedagio/IPVA {fmt_brl_big(row.get('pedagio'))} | "
+        f"KM {fmt_num(row.get('km_total'))} | "
+        f"Litros {fmt_num(row.get('litros_total'))}"
     )
 
 
