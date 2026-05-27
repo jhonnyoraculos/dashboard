@@ -28,7 +28,7 @@ MUTED = "#6B7280"
 CARD_BORDER = "#c2d2f3"
 LOGO_PATH = Path(__file__).parent / "static" / "logo-jr.png"
 CURRENT_YEAR = date.today().year
-APP_VERSION = "deploy-weight-units-v1"
+APP_VERSION = "deploy-weight-ton-rounded-v1"
 BR_TZ = ZoneInfo("America/Sao_Paulo")
 
 PLOTLY_CONFIG = {
@@ -1526,7 +1526,8 @@ def fmt_peso(value: object) -> str:
     except (TypeError, ValueError):
         number = 0.0
     if abs(number) >= 1000:
-        return f"{fmt_num(number / 1000, 2)} ton"
+        tons = int(number / 1000) if number >= 0 else -int(abs(number) / 1000)
+        return f"{fmt_num(tons)} ton"
     return f"{fmt_num(number, 2)} kg"
 
 
