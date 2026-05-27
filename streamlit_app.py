@@ -26,7 +26,7 @@ MUTED = "#6B7280"
 CARD_BORDER = "#c2d2f3"
 LOGO_PATH = Path(__file__).parent / "static" / "logo-jr.png"
 CURRENT_YEAR = date.today().year
-APP_VERSION = "deploy-frota-ranking-difference-v1"
+APP_VERSION = "deploy-frota-ranking-row-values-v1"
 
 PLOTLY_CONFIG = {
     "responsive": True,
@@ -3199,7 +3199,13 @@ def ranking_detail_html(row: dict) -> str:
 
 
 def ranking_row_label(row: dict) -> str:
-    return f"{int(row.get('rank') or 0):02d} · {row.get('placa') or 'Sem placa'} · Total {fmt_brl_big(row.get('total'))}"
+    return (
+        f"{int(row.get('rank') or 0):02d} | {row.get('placa') or 'Sem placa'} | "
+        f"{row.get('categoria') or 'Sem categoria'} | Total {fmt_brl_big(row.get('total'))} | "
+        f"Combustivel {fmt_brl_big(row.get('combustivel'))} | "
+        f"Manutencao {fmt_brl_big(row.get('manutencao'))} | "
+        f"Pedagio/IPVA {fmt_brl_big(row.get('pedagio'))}"
+    )
 
 
 def _ranking_float(row: dict, key: str) -> float:
