@@ -1810,6 +1810,167 @@ def data_vex(params: dict | None = None) -> dict:
     }
 
 
+def _ranking_filter_category(df: pd.DataFrame, categoria: str | None) -> pd.DataFrame:
+    if not categoria or categoria == "Todos":
+        return df
+    if df.empty or "Categoria" not in df.columns:
+        return df.iloc[0:0].copy()
+    mask = _normalize_categoria(df["Categoria"]) == str(categoria).strip().lower()
+    return df.loc[mask].copy()
+
+
+def _ranking_sum_by_plate(df: pd.DataFrame, value_col: str) -> dict[str, float]:
+    if df.empty or "PLACA" not in df.columns or value_col not in df.columns:
+        return {}
+    data = df.dropna(subset=["PLACA"]).copy()
+    data[value_col] = pd.to_numeric(data[value_col], errors="coerce").fillna(0)
+    grouped = data.groupby("PLACA")[value_col].sum()
+    return {str(placa): float(valor or 0) for placa, valor in grouped.items()}
+
+
+def _ranking_count_by_plate(df: pd.DataFrame) -> dict[str, int]:
+    if df.empty or "PLACA" not in df.columns:
+        return {}
+    grouped = df.dropna(subset=["PLACA"]).groupby("PLACA").size()
+    return {str(placa): int(valor or 0) for placa, valor in grouped.items()}
+
+
+def _ranking_category_map(*frames: pd.DataFrame) -> dict[str, str]:
+    mapping: dict[str, str] = {}
+    for df in frames:
+        if df.empty or "PLACA" not in df.columns or "Categoria" not in df.columns:
+            continue
+        for placa, categoria in df[["PLACA", "Categoria"]].dropna().itertuples(index=False):
+            placa_key = str(placa).strip()
+            if placa_key:
+                mapping[placa_key] = str(categoria).strip() or "Transporte"
+    try:
+        registry = load_placas()
+    except Exception:
+        registry = _empty(_PLACAS_COLUMNS)
+    if not registry.empty and "PLACA" in registry.columns and "Categoria" in registry.columns:
+        for placa, categoria in registry[["PLACA", "Categoria"]].dropna().itertuples(index=False):
+            placa_key = str(placa).strip()
+            if placa_key:
+                mapping[placa_key] = str(categoria).strip() or "Transporte"
+    return mapping
+
+
+def data_frota(params: dict | None = None) -> dict:
+    params = params or {}
+    ano = _parse_int(_param(params, "ano"))
+    meses = _parse_mes_list(params.get("mes"))
+    categoria = _param(params, "categoria")
+    ordenar_por = str(_param(params, "ordenar_por") or "combustivel").strip().lower()
+
+    df_comb = _apply_plate_categories(load_combustivel())
+    df_manu = _apply_plate_categories(load_manutencao())
+    df_ped = _apply_plate_categories(load_pedagio())
+    df_km = _apply_plate_categories(load_combustivel_km())
+
+    source_frames = [df_comb, df_manu, df_ped]
+    categoria_frames = [_ranking_filter_category(df, categoria) for df in source_frames]
+    df_comb_base, df_manu_base, df_ped_base = categoria_frames
+    df_km_base = _ranking_filter_category(df_km, categoria)
+
+    anos_disponiveis: set[int] = set()
+    for df_src in (df_comb_base, df_manu_base, df_ped_base, df_km_base):
+        anos_disponiveis.update(_unique_years(df_src))
+        anos_disponiveis.update(df_src.attrs.get("anos_sheets", []))
+
+    month_frames = [df_comb_base, df_manu_base, df_ped_base, df_km_base]
+    if ano is not None:
+        month_frames = [_filter_by_period(df, ano=ano) for df in month_frames]
+    month_source = [df[["Mes"]] for df in month_frames if not df.empty and "Mes" in df.columns]
+    meses_disponiveis = _unique_sorted(pd.concat(month_source, ignore_index=True), "Mes") if month_source else []
+
+    def _apply_period(df: pd.DataFrame) -> pd.DataFrame:
+        if ano is not None:
+            df = _filter_by_period(df, ano=ano)
+        if meses and "Mes" in df.columns:
+            df = df[df["Mes"].isin(meses)]
+        return df.copy()
+
+    df_comb = _apply_period(df_comb_base)
+    df_manu = _apply_period(df_manu_base)
+    df_ped = _apply_period(df_ped_base)
+    df_km = _apply_period(df_km_base)
+
+    categorias = set()
+    for df_src in source_frames:
+        categorias.update(_unique_sorted(df_src, "Categoria"))
+
+    category_map = _ranking_category_map(df_comb_base, df_manu_base, df_ped_base)
+    total_comb = _ranking_sum_by_plate(df_comb, "Custo")
+    total_manu = _ranking_sum_by_plate(df_manu, "Custo")
+    total_ped = _ranking_sum_by_plate(df_ped, "Custo")
+    litros_map = _ranking_sum_by_plate(df_comb, "Litros")
+    km_fuel_map = _ranking_sum_by_plate(df_comb, "Km Rodados")
+    km_override_map = _ranking_sum_by_plate(df_km, "Km Rodados")
+    abastecimentos_map = _ranking_count_by_plate(df_comb)
+    servicos_map = _ranking_count_by_plate(df_manu)
+    pedagio_count_map = _ranking_count_by_plate(df_ped)
+
+    placa_set = set(total_comb) | set(total_manu) | set(total_ped) | set(litros_map) | set(km_fuel_map) | set(km_override_map)
+    ranking = []
+    for placa in sorted(placa_set):
+        combustivel_total = total_comb.get(placa, 0.0)
+        manutencao_total = total_manu.get(placa, 0.0)
+        pedagio_total = total_ped.get(placa, 0.0)
+        total = combustivel_total + manutencao_total + pedagio_total
+        km_total = km_override_map.get(placa, km_fuel_map.get(placa, 0.0))
+        litros_total = litros_map.get(placa, 0.0)
+        lancamentos = abastecimentos_map.get(placa, 0) + servicos_map.get(placa, 0) + pedagio_count_map.get(placa, 0)
+        ranking.append(
+            {
+                "placa": placa,
+                "categoria": category_map.get(placa, "Transporte"),
+                "total": round(total, 2),
+                "combustivel": round(combustivel_total, 2),
+                "manutencao": round(manutencao_total, 2),
+                "pedagio": round(pedagio_total, 2),
+                "km_total": round(km_total, 2),
+                "litros_total": round(litros_total, 2),
+                "custo_por_km": round((total / km_total) if km_total else 0.0, 4),
+                "combustivel_por_km": round((combustivel_total / km_total) if km_total else 0.0, 4),
+                "km_por_litro": round((km_total / litros_total) if litros_total else 0.0, 3),
+                "custo_por_litro": round((combustivel_total / litros_total) if litros_total else 0.0, 4),
+                "abastecimentos": abastecimentos_map.get(placa, 0),
+                "servicos": servicos_map.get(placa, 0),
+                "despesas_pedagio": pedagio_count_map.get(placa, 0),
+                "lancamentos": lancamentos,
+            }
+        )
+
+    sort_key = {
+        "total": "total",
+        "combustivel": "combustivel",
+        "manutencao": "manutencao",
+        "pedagio": "pedagio",
+    }.get(ordenar_por, "combustivel")
+    ranking.sort(key=lambda row: (row.get(sort_key, 0.0), row.get("total", 0.0), row.get("placa", "")), reverse=True)
+    for index, row in enumerate(ranking, start=1):
+        row["rank"] = index
+
+    return {
+        "anos": sorted(anos_disponiveis),
+        "meses": meses_disponiveis,
+        "categorias": sorted(categorias),
+        "ordenar_por": sort_key,
+        "ranking": ranking,
+        "totais": {
+            "placas": len(ranking),
+            "total": round(sum(row["total"] for row in ranking), 2),
+            "combustivel": round(sum(row["combustivel"] for row in ranking), 2),
+            "manutencao": round(sum(row["manutencao"] for row in ranking), 2),
+            "pedagio": round(sum(row["pedagio"] for row in ranking), 2),
+            "km_total": round(sum(row["km_total"] for row in ranking), 2),
+            "litros_total": round(sum(row["litros_total"] for row in ranking), 2),
+            "lancamentos": sum(row["lancamentos"] for row in ranking),
+        },
+    }
+
+
 def _warm_data_caches(*, blocking: bool = False) -> None:
     loaders = (
         (load_combustivel, "combustivel"),

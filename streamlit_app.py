@@ -26,7 +26,7 @@ MUTED = "#6B7280"
 CARD_BORDER = "#c2d2f3"
 LOGO_PATH = Path(__file__).parent / "static" / "logo-jr.png"
 CURRENT_YEAR = date.today().year
-APP_VERSION = "deploy-compare-label-size-v1"
+APP_VERSION = "deploy-frota-ranking-v1"
 
 PLOTLY_CONFIG = {
     "responsive": True,
@@ -58,6 +58,7 @@ ROUTES = {
     "hoteis": backend.data_hoteis,
     "pedagio": backend.data_pedagio,
     "vex": backend.data_vex,
+    "frota": backend.data_frota,
     "overview": backend.data_overview,
 }
 
@@ -67,6 +68,7 @@ DASHBOARD_META = {
     "hoteis": {"label": "Hotéis", "color": "#0F766E", "supports_plate": False},
     "pedagio": {"label": "Pedágio/IPVA", "color": "#D97706", "supports_plate": True},
     "vex": {"label": "Vex", "color": "#7C3AED", "supports_plate": True},
+    "frota": {"label": "Ranking da frota", "color": JR_BLUE, "supports_plate": True},
 }
 COMPARE_ALLOWED_ROUTES = {"combustivel", "manutencao", "pedagio"}
 
@@ -96,6 +98,13 @@ COMPARE_SERIES = {
         "weekly": None,
         "plate": ("gasto_por_placa", "PLACA", "Valor"),
     },
+}
+
+RANK_ORDER_OPTIONS = {
+    "combustivel": "Combustível",
+    "total": "Gasto total",
+    "manutencao": "Manutenção",
+    "pedagio": "Pedágio/IPVA",
 }
 
 
@@ -283,7 +292,8 @@ def inject_css() -> None:
         .st-key-manu_filterbar,
         .st-key-hotel_filterbar,
         .st-key-ped_filterbar,
-        .st-key-vex_filterbar {{
+        .st-key-vex_filterbar,
+        .st-key-rank_filterbar {{
           background: var(--jr-blue);
           margin: 0 0 58px;
           width: auto;
@@ -304,7 +314,8 @@ def inject_css() -> None:
         .st-key-manu_filterbar > div,
         .st-key-hotel_filterbar > div,
         .st-key-ped_filterbar > div,
-        .st-key-vex_filterbar > div {{
+        .st-key-vex_filterbar > div,
+        .st-key-rank_filterbar > div {{
           position: relative;
           z-index: 1;
         }}
@@ -313,7 +324,8 @@ def inject_css() -> None:
         .st-key-manu_filterbar label,
         .st-key-hotel_filterbar label,
         .st-key-ped_filterbar label,
-        .st-key-vex_filterbar label {{
+        .st-key-vex_filterbar label,
+        .st-key-rank_filterbar label {{
           display: none !important;
         }}
 
@@ -321,7 +333,8 @@ def inject_css() -> None:
         .st-key-manu_filterbar div[data-baseweb="select"] > div,
         .st-key-hotel_filterbar div[data-baseweb="select"] > div,
         .st-key-ped_filterbar div[data-baseweb="select"] > div,
-        .st-key-vex_filterbar div[data-baseweb="select"] > div {{
+        .st-key-vex_filterbar div[data-baseweb="select"] > div,
+        .st-key-rank_filterbar div[data-baseweb="select"] > div {{
           min-height: 38px;
           border-radius: 8px;
           border: 1px solid rgba(255,255,255,.25);
@@ -333,7 +346,8 @@ def inject_css() -> None:
         .st-key-manu_filterbar [data-testid="stHorizontalBlock"],
         .st-key-hotel_filterbar [data-testid="stHorizontalBlock"],
         .st-key-ped_filterbar [data-testid="stHorizontalBlock"],
-        .st-key-vex_filterbar [data-testid="stHorizontalBlock"] {{
+        .st-key-vex_filterbar [data-testid="stHorizontalBlock"],
+        .st-key-rank_filterbar [data-testid="stHorizontalBlock"] {{
           gap: 12px;
           align-items: stretch;
           flex-wrap: wrap !important;
@@ -343,7 +357,8 @@ def inject_css() -> None:
         .st-key-manu_filterbar [data-testid="column"],
         .st-key-hotel_filterbar [data-testid="column"],
         .st-key-ped_filterbar [data-testid="column"],
-        .st-key-vex_filterbar [data-testid="column"] {{
+        .st-key-vex_filterbar [data-testid="column"],
+        .st-key-rank_filterbar [data-testid="column"] {{
           flex: 1 1 150px !important;
           min-width: 145px !important;
           max-width: none !important;
@@ -969,6 +984,92 @@ def inject_css() -> None:
           color: var(--jr-blue);
         }}
 
+        .ranking-header {{
+          display: grid;
+          grid-template-columns: .55fr 1.1fr 1fr repeat(4, 1.05fr);
+          gap: 12px;
+          align-items: center;
+          padding: 12px 16px;
+          margin: 8px 0 10px;
+          border: 1px solid rgba(194,210,243,.88);
+          border-radius: 12px;
+          background: rgba(255,255,255,.74);
+          color: var(--muted);
+          font-size: 11px;
+          font-weight: 900;
+          letter-spacing: .06em;
+          text-transform: uppercase;
+          box-shadow: 0 10px 24px rgba(16,24,40,.08);
+        }}
+
+        .st-key-frota_ranking_table [data-testid="stExpander"] {{
+          border: 1px solid rgba(194,210,243,.95);
+          border-radius: 12px;
+          background: rgba(255,255,255,.84);
+          box-shadow: 0 10px 24px rgba(16,24,40,.08);
+          overflow: hidden;
+        }}
+
+        .st-key-frota_ranking_table [data-testid="stExpander"] details {{
+          border: 0 !important;
+          background: transparent !important;
+        }}
+
+        .st-key-frota_ranking_table [data-testid="stExpander"] summary {{
+          min-height: 54px;
+          padding: 0 16px !important;
+          border-bottom: 1px solid rgba(194,210,243,.58);
+        }}
+
+        .st-key-frota_ranking_table [data-testid="stExpander"] summary p {{
+          color: var(--jr-blue);
+          font-weight: 850;
+          font-size: 14px;
+          line-height: 1.35;
+        }}
+
+        .ranking-detail-grid {{
+          display: grid;
+          grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+          gap: 12px;
+          padding: 4px 0 8px;
+        }}
+
+        .ranking-detail-card {{
+          min-height: 74px;
+          padding: 12px;
+          border: 1px solid rgba(194,210,243,.82);
+          border-radius: 10px;
+          background: linear-gradient(145deg, #fff, #f9fbff);
+        }}
+
+        .ranking-detail-label {{
+          margin: 0 0 6px;
+          color: var(--muted);
+          font-size: 10px;
+          font-weight: 900;
+          letter-spacing: .06em;
+          text-transform: uppercase;
+        }}
+
+        .ranking-detail-value {{
+          margin: 0;
+          color: var(--jr-red);
+          font-size: 19px;
+          line-height: 1.15;
+          font-weight: 900;
+        }}
+
+        .ranking-empty {{
+          margin: 18px 0;
+          padding: 18px;
+          border: 1px solid rgba(194,210,243,.9);
+          border-radius: 12px;
+          background: rgba(255,255,255,.72);
+          color: var(--muted);
+          font-weight: 700;
+        }}
+
         @media (max-width: 780px) {{
           .block-container {{
             padding: 0 10px 30px;
@@ -985,7 +1086,8 @@ def inject_css() -> None:
           .st-key-manu_filterbar,
           .st-key-hotel_filterbar,
           .st-key-ped_filterbar,
-          .st-key-vex_filterbar {{
+          .st-key-vex_filterbar,
+          .st-key-rank_filterbar {{
             margin: 0 -10px 18px;
             width: auto;
             padding: 8px 10px 10px;
@@ -997,7 +1099,8 @@ def inject_css() -> None:
           .st-key-manu_filterbar [data-testid="stHorizontalBlock"],
           .st-key-hotel_filterbar [data-testid="stHorizontalBlock"],
           .st-key-ped_filterbar [data-testid="stHorizontalBlock"],
-          .st-key-vex_filterbar [data-testid="stHorizontalBlock"] {{
+          .st-key-vex_filterbar [data-testid="stHorizontalBlock"],
+          .st-key-rank_filterbar [data-testid="stHorizontalBlock"] {{
             flex-wrap: nowrap !important;
             align-items: stretch;
             gap: 8px;
@@ -1013,7 +1116,8 @@ def inject_css() -> None:
           .st-key-manu_filterbar [data-testid="column"],
           .st-key-hotel_filterbar [data-testid="column"],
           .st-key-ped_filterbar [data-testid="column"],
-          .st-key-vex_filterbar [data-testid="column"] {{
+          .st-key-vex_filterbar [data-testid="column"],
+          .st-key-rank_filterbar [data-testid="column"] {{
             flex: 0 0 clamp(132px, 43vw, 190px) !important;
             min-width: clamp(132px, 43vw, 190px) !important;
             max-width: clamp(132px, 43vw, 190px) !important;
@@ -1024,7 +1128,8 @@ def inject_css() -> None:
           .st-key-manu_filterbar div[data-baseweb="select"] > div,
           .st-key-hotel_filterbar div[data-baseweb="select"] > div,
           .st-key-ped_filterbar div[data-baseweb="select"] > div,
-          .st-key-vex_filterbar div[data-baseweb="select"] > div {{
+          .st-key-vex_filterbar div[data-baseweb="select"] > div,
+          .st-key-rank_filterbar div[data-baseweb="select"] > div {{
             min-height: 36px;
           }}
 
@@ -1032,7 +1137,8 @@ def inject_css() -> None:
           .st-key-manu_filterbar span[data-baseweb="tag"],
           .st-key-hotel_filterbar span[data-baseweb="tag"],
           .st-key-ped_filterbar span[data-baseweb="tag"],
-          .st-key-vex_filterbar span[data-baseweb="tag"] {{
+          .st-key-vex_filterbar span[data-baseweb="tag"],
+          .st-key-rank_filterbar span[data-baseweb="tag"] {{
             max-width: 74px;
             min-height: 22px;
           }}
@@ -1041,7 +1147,8 @@ def inject_css() -> None:
           .st-key-manu_filterbar span[data-baseweb="tag"] span,
           .st-key-hotel_filterbar span[data-baseweb="tag"] span,
           .st-key-ped_filterbar span[data-baseweb="tag"] span,
-          .st-key-vex_filterbar span[data-baseweb="tag"] span {{
+          .st-key-vex_filterbar span[data-baseweb="tag"] span,
+          .st-key-rank_filterbar span[data-baseweb="tag"] span {{
             overflow: hidden;
             text-overflow: ellipsis;
             white-space: nowrap;
@@ -1109,6 +1216,14 @@ def inject_css() -> None:
             min-height: 40px;
             padding: 7px 10px;
           }}
+
+          .ranking-header {{
+            display: none;
+          }}
+
+          .st-key-frota_ranking_table [data-testid="stExpander"] summary p {{
+            font-size: 12px;
+          }}
         }}
 
         @media (max-width: 560px) {{
@@ -1116,7 +1231,8 @@ def inject_css() -> None:
           .st-key-manu_filterbar [data-testid="column"],
           .st-key-hotel_filterbar [data-testid="column"],
           .st-key-ped_filterbar [data-testid="column"],
-          .st-key-vex_filterbar [data-testid="column"] {{
+          .st-key-vex_filterbar [data-testid="column"],
+          .st-key-rank_filterbar [data-testid="column"] {{
             flex-basis: 150px !important;
             min-width: 150px !important;
             max-width: 150px !important;
@@ -1127,7 +1243,8 @@ def inject_css() -> None:
           .st-key-manu_filterbar .stButton > button,
           .st-key-hotel_filterbar .stButton > button,
           .st-key-ped_filterbar .stButton > button,
-          .st-key-vex_filterbar .stButton > button {{
+          .st-key-vex_filterbar .stButton > button,
+          .st-key-rank_filterbar .stButton > button {{
             min-height: 36px;
             padding-left: 8px;
             padding-right: 8px;
@@ -2771,6 +2888,167 @@ def compare_kpi_cards(bundle: list[tuple[str, dict]]) -> list[tuple]:
     return cards
 
 
+def frota_filter_controls(seed: dict) -> dict[str, object]:
+    years = seed.get("anos", []) or []
+    year_options = ["Todos", *years]
+    year_default = selected_or_default(years, st.session_state.get("rank_ano"), default_current_year=True)
+    year_index = year_options.index(year_default) if year_default in year_options else 0
+
+    with st.container(key="rank_filterbar"):
+        cols = st.columns([0.8, 1.25, 1.05, 1.1, 1.0, 0.75])
+        with cols[0]:
+            ano = st.selectbox(
+                "Ano",
+                year_options,
+                index=year_index,
+                key="rank_ano",
+                format_func=select_all_label("Ano"),
+                label_visibility="collapsed",
+            )
+
+        month_seed = seed if ano == "Todos" else route_json("frota", {"ano": ano, "mes": ["Todos"]})
+        meses = unique_filter_options(month_seed.get("meses", []) or [])
+        mes_options = ["Todos", *meses]
+        mes_key = "rank_mes"
+        mes_previous_key = f"{mes_key}__previous"
+        mes_state_exists = mes_key in st.session_state
+        current_meses = st.session_state.get(mes_key, ["Todos"])
+        current_meses = [item for item in current_meses if item in mes_options] or ["Todos"]
+        if mes_state_exists and st.session_state.get(mes_key) != current_meses:
+            st.session_state[mes_key] = current_meses
+            st.session_state[mes_previous_key] = current_meses
+        if mes_previous_key not in st.session_state:
+            st.session_state[mes_previous_key] = current_meses
+        with cols[1]:
+            mes_kwargs = {
+                "key": mes_key,
+                "on_change": sync_multiselect_selection,
+                "args": (mes_key,),
+                "format_func": month_filter_label,
+                "label_visibility": "collapsed",
+            }
+            if not mes_state_exists:
+                mes_kwargs["default"] = current_meses
+            meses_selected = st.multiselect("Mês", mes_options, **mes_kwargs)
+            meses_selected = normalize_multiselect(meses_selected, st.session_state.get(mes_previous_key, ["Todos"]))
+
+        category_options = ["Todos", *unique_filter_options(seed.get("categorias", []) or [])]
+        categoria_current = st.session_state.get("rank_categoria", "Todos")
+        if categoria_current not in category_options:
+            categoria_current = "Todos"
+        with cols[2]:
+            categoria = st.selectbox(
+                "Categoria",
+                category_options,
+                index=category_options.index(categoria_current),
+                key="rank_categoria",
+                format_func=select_all_label("Categoria"),
+                label_visibility="collapsed",
+            )
+
+        order_options = list(RANK_ORDER_OPTIONS)
+        order_current = st.session_state.get("rank_ordenar_por", "combustivel")
+        if order_current not in order_options:
+            order_current = "combustivel"
+        with cols[3]:
+            ordenar_por = st.selectbox(
+                "Ordenar por",
+                order_options,
+                index=order_options.index(order_current),
+                key="rank_ordenar_por",
+                format_func=lambda value: f"Ordenar: {RANK_ORDER_OPTIONS.get(value, value)}",
+                label_visibility="collapsed",
+            )
+
+        with cols[4]:
+            if st.button("Limpar filtros", key="rank_clear", width="stretch"):
+                for state_key in list(st.session_state.keys()):
+                    if state_key.startswith("rank_"):
+                        del st.session_state[state_key]
+                st.rerun()
+        with cols[5]:
+            st.markdown('<a class="filter-back" href="?page=home" target="_self">&larr; Voltar</a>', unsafe_allow_html=True)
+
+    return {
+        "ano": None if ano == "Todos" else ano,
+        "mes": query_mes(meses_selected),
+        "categoria": None if categoria == "Todos" else categoria,
+        "ordenar_por": ordenar_por,
+    }
+
+
+def ranking_detail_html(row: dict) -> str:
+    items = [
+        ("Gasto total", fmt_brl(row.get("total"))),
+        ("Combustível", fmt_brl(row.get("combustivel"))),
+        ("Manutenção", fmt_brl(row.get("manutencao"))),
+        ("Pedágio/IPVA", fmt_brl(row.get("pedagio"))),
+        ("KM total", fmt_num(row.get("km_total"))),
+        ("Litros", fmt_num(row.get("litros_total"))),
+        ("Custo total por KM", fmt_brl(row.get("custo_por_km"))),
+        ("Combustível por KM", fmt_brl(row.get("combustivel_por_km"))),
+        ("Média KM/L", f"{fmt_num(row.get('km_por_litro'), 2)} km/L"),
+        ("Custo por litro", fmt_brl(row.get("custo_por_litro"))),
+        ("Abastecimentos", fmt_num(row.get("abastecimentos"))),
+        ("Serviços", fmt_num(row.get("servicos"))),
+        ("Pedágio/IPVA", fmt_num(row.get("despesas_pedagio"))),
+        ("Lançamentos", fmt_num(row.get("lancamentos"))),
+    ]
+    cards = "".join(
+        f'<div class="ranking-detail-card"><p class="ranking-detail-label">{h(label)}</p><p class="ranking-detail-value">{h(value)}</p></div>'
+        for label, value in items
+    )
+    return f'<div class="ranking-detail-grid">{cards}</div>'
+
+
+def ranking_row_label(row: dict) -> str:
+    return (
+        f"{int(row.get('rank') or 0):02d}  |  {row.get('placa') or 'Sem placa'}  |  "
+        f"Total {fmt_brl(row.get('total'))}  |  Combustível {fmt_brl(row.get('combustivel'))}  |  "
+        f"Manutenção {fmt_brl(row.get('manutencao'))}  |  Pedágio/IPVA {fmt_brl(row.get('pedagio'))}"
+    )
+
+
+def render_frota() -> None:
+    topbar("JR DASHBOARD • Ranking de caminhões", back=False)
+    seed = route_json("frota", {"ano": "Todos", "mes": ["Todos"], "ordenar_por": "combustivel"})
+    params = frota_filter_controls(seed)
+    data = route_json("frota", params)
+    totais = data.get("totais", {}) or {}
+    order_label = RANK_ORDER_OPTIONS.get(str(data.get("ordenar_por") or params.get("ordenar_por")), "Combustível")
+
+    render_kpis(
+        [
+            ("Placas no ranking", fmt_num(totais.get("placas")), JR_BLUE),
+            ("Gasto total", fmt_brl(totais.get("total")), JR_RED),
+            ("Combustível", fmt_brl(totais.get("combustivel")), JR_BLUE),
+            ("Manutenção", fmt_brl(totais.get("manutencao")), JR_RED),
+            ("Pedágio/IPVA", fmt_brl(totais.get("pedagio")), "#D97706"),
+            ("Ordenado por", order_label, JR_BLUE),
+        ]
+    )
+
+    ranking = data.get("ranking", []) or []
+    if not ranking:
+        st.markdown('<div class="ranking-empty">Nenhum caminhão encontrado para os filtros selecionados.</div>', unsafe_allow_html=True)
+        footer("Ranking calculado com dados de combustível, manutenção e pedágio/IPVA do Neon. © JR")
+        return
+
+    st.markdown(
+        """
+        <div class="ranking-header">
+          <span>#</span><span>Placa</span><span>Categoria</span><span>Total</span><span>Combustível</span><span>Manutenção</span><span>Pedágio/IPVA</span>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+    with st.container(key="frota_ranking_table"):
+        for row in ranking:
+            with st.expander(ranking_row_label(row), expanded=False):
+                st.html(ranking_detail_html(row))
+    footer("Ranking calculado com dados de combustível, manutenção e pedágio/IPVA do Neon. © JR")
+
+
 def render_home() -> None:
     logo = logo_data_uri()
     st.markdown('<main class="home-wrapper">', unsafe_allow_html=True)
@@ -2920,6 +3198,12 @@ def render_home() -> None:
             <p class="home-card-text">Visão consolidada dos custos Vex, com filtros por ano e mês.</p>
             <ul class="home-list"><li>Totais Vex por área</li><li>Evolução mensal dos gastos</li><li>Resumo centralizado da categoria</li></ul>
             <a class="home-link" href="?page=vex" target="_self">Abrir dashboard &rarr;</a>
+          </article>
+          <article class="home-card">
+            <div><span class="home-chip">Ranking</span><h2>Ranking de gastos por caminhão</h2></div>
+            <p class="home-card-text">Veja todos os caminhões em formato de tabela, do maior para o menor gasto, com detalhamento por placa.</p>
+            <ul class="home-list"><li>Ordenação por combustível, manutenção, pedágio/IPVA ou total</li><li>Métricas individuais dentro da própria linha</li><li>Filtros por ano, mês e categoria</li></ul>
+            <a class="home-link" href="?page=frota" target="_self">Abrir dashboard &rarr;</a>
           </article>
         </section>
         </main>
@@ -4462,6 +4746,8 @@ def main() -> None:
             render_pedagio()
         elif page == "vex":
             render_vex()
+        elif page in {"frota", "ranking"}:
+            render_frota()
         elif page in {"cadastro", "dados"}:
             render_cadastro()
         else:
