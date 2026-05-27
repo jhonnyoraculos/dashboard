@@ -28,7 +28,7 @@ MUTED = "#6B7280"
 CARD_BORDER = "#c2d2f3"
 LOGO_PATH = Path(__file__).parent / "static" / "logo-jr.png"
 CURRENT_YEAR = date.today().year
-APP_VERSION = "deploy-apple-home-design-v1"
+APP_VERSION = "deploy-dominancia-peso-pizza-v1"
 BR_TZ = ZoneInfo("America/Sao_Paulo")
 
 PLOTLY_CONFIG = {
@@ -2068,6 +2068,29 @@ def pie_chart(labels: list, values: list) -> go.Figure:
     return apply_theme(fig, height=360, margin={"l": 16, "r": 16, "t": 30, "b": 90})
 
 
+def peso_pie_chart(labels: list, values: list, city_counts: list | None = None) -> go.Figure:
+    values_clean = [float(value or 0) for value in values or []]
+    counts = list(city_counts or [])
+    customdata = [
+        f"{fmt_peso(value)} em {int(counts[index]) if index < len(counts) else 0} cidade(s)"
+        for index, value in enumerate(values_clean)
+    ]
+    fig = go.Figure(
+        go.Pie(
+            labels=labels or [],
+            values=values_clean,
+            customdata=customdata,
+            hole=0.45,
+            textinfo="percent",
+            textposition="inside",
+            hovertemplate="<b>%{label}</b><br>%{customdata}<extra></extra>",
+            marker={"colors": [JR_BLUE, JR_RED, "#D97706", "#64748B", "#3158B7", "#E66C7A", "#8892A6"]},
+        )
+    )
+    fig.update_layout(showlegend=True, legend={"orientation": "h", "x": 0.5, "xanchor": "center", "y": -0.2})
+    return apply_theme(fig, height=380, margin={"l": 16, "r": 16, "t": 30, "b": 92})
+
+
 def _series_color(route: str) -> str:
     return DASHBOARD_META.get(route, {}).get("color", JR_BLUE)
 
@@ -3423,6 +3446,13 @@ def render_frota() -> None:
         selected_set = set(selected_plates)
         versus_rows = [row for row in ranking if row.get("placa") in selected_set]
         st.html(ranking_difference_html(versus_rows) + ranking_versus_html(versus_rows))
+
+    dominancia = data.get("dominancia_peso", {}) or {}
+    if dominancia.get("labels") and dominancia.get("values"):
+        chart_card(
+            "Dominância por placa nas cidades (peso)",
+            peso_pie_chart(dominancia.get("labels", []), dominancia.get("values", []), dominancia.get("city_counts", [])),
+        )
 
     st.markdown(
         """

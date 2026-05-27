@@ -1905,6 +1905,54 @@ def _ranking_count_by_plate(df: pd.DataFrame) -> dict[str, int]:
     return {str(placa): int(valor or 0) for placa, valor in grouped.items()}
 
 
+def _ranking_weight_dominance_by_city(df: pd.DataFrame) -> dict:
+    if df.empty or not {"Cidade", "PLACA", "Peso"}.issubset(df.columns):
+        return {"labels": [], "values": [], "city_counts": [], "cidades": []}
+
+    work = df[["Cidade", "PLACA", "Peso"]].copy()
+    work["Cidade"] = work["Cidade"].astype("string").str.strip().str.upper()
+    work["PLACA"] = work["PLACA"].astype("string").str.strip()
+    work["Peso"] = pd.to_numeric(work["Peso"], errors="coerce").fillna(0.0)
+    work = work[
+        (work["Cidade"].notna())
+        & (work["Cidade"] != "")
+        & (work["PLACA"].notna())
+        & (work["PLACA"] != "")
+        & (work["Peso"] > 0)
+    ]
+    if work.empty:
+        return {"labels": [], "values": [], "city_counts": [], "cidades": []}
+
+    grouped = work.groupby(["Cidade", "PLACA"], as_index=False)["Peso"].sum()
+    city_totals = grouped.groupby("Cidade", as_index=False)["Peso"].sum().rename(columns={"Peso": "PesoCidade"})
+    grouped = grouped.merge(city_totals, on="Cidade", how="left")
+    grouped = grouped.sort_values(["Cidade", "Peso", "PLACA"], ascending=[True, False, True])
+    dominant = grouped.drop_duplicates("Cidade", keep="first").copy()
+    dominant["Participacao"] = dominant.apply(
+        lambda row: float(row["Peso"] / row["PesoCidade"] * 100) if row["PesoCidade"] else 0.0,
+        axis=1,
+    )
+
+    by_plate = dominant.groupby("PLACA", as_index=False).agg(Peso=("Peso", "sum"), Cidades=("Cidade", "count"))
+    by_plate = by_plate.sort_values(["Peso", "Cidades", "PLACA"], ascending=[False, False, True])
+    cities = dominant.sort_values(["Peso", "Cidade"], ascending=[False, True]).head(30)
+    return {
+        "labels": [str(item) for item in by_plate["PLACA"].tolist()],
+        "values": [round(float(item), 3) for item in by_plate["Peso"].tolist()],
+        "city_counts": [int(item) for item in by_plate["Cidades"].tolist()],
+        "cidades": [
+            {
+                "cidade": str(row["Cidade"]),
+                "placa": str(row["PLACA"]),
+                "peso": round(float(row["Peso"]), 3),
+                "peso_cidade": round(float(row["PesoCidade"]), 3),
+                "participacao": round(float(row["Participacao"]), 2),
+            }
+            for _, row in cities.iterrows()
+        ],
+    }
+
+
 def _ranking_category_map(*frames: pd.DataFrame) -> dict[str, str]:
     mapping: dict[str, str] = {}
     for df in frames:
@@ -1977,6 +2025,7 @@ def data_frota(params: dict | None = None) -> dict:
     df_ped = _ranking_filter_plates(df_ped, placas)
     df_km = _ranking_filter_plates(df_km, placas)
     df_peso = _ranking_filter_plates(df_peso, placas)
+    dominancia_peso = _ranking_weight_dominance_by_city(df_peso)
 
     categorias = set()
     for df_src in source_frames:
@@ -2048,6 +2097,7 @@ def data_frota(params: dict | None = None) -> dict:
         "placas": placas_disponiveis,
         "ordenar_por": sort_key,
         "ranking": ranking,
+        "dominancia_peso": dominancia_peso,
         "totais": {
             "placas": len(ranking),
             "total": round(sum(row["total"] for row in ranking), 2),
