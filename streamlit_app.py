@@ -28,7 +28,7 @@ MUTED = "#6B7280"
 CARD_BORDER = "#c2d2f3"
 LOGO_PATH = Path(__file__).parent / "static" / "logo-jr.png"
 CURRENT_YEAR = date.today().year
-APP_VERSION = "deploy-weight-ton-rounded-v1"
+APP_VERSION = "deploy-hide-lancamentos-v1"
 BR_TZ = ZoneInfo("America/Sao_Paulo")
 
 PLOTLY_CONFIG = {
@@ -3074,7 +3074,6 @@ def compare_kpi_cards(bundle: list[tuple[str, dict]]) -> list[tuple]:
                 ("ipva", "Gasto IPVA", fmt_brl(data.get("gasto_ipva"))),
                 ("seguro", "Gasto seguro", fmt_brl(data.get("gasto_seguro"))),
                 ("media_valores", "Média de valores", fmt_brl(data.get("media_valores", data.get("ticket_medio")))),
-                ("lancamentos", "Lançamentos", fmt_num(data.get("total_lancamentos"))),
             ]
         elif route == "vex":
             route_cards = [
@@ -3249,7 +3248,6 @@ def ranking_detail_html(row: dict) -> str:
         ("Abastecimentos", fmt_num(row.get("abastecimentos"))),
         ("Serviços", fmt_num(row.get("servicos"))),
         ("Pedágio/IPVA", fmt_num(row.get("despesas_pedagio"))),
-        ("Lançamentos", fmt_num(row.get("lancamentos"))),
     ]
     cards = "".join(
         f'<div class="ranking-detail-card"><p class="ranking-detail-label">{h(label)}</p><p class="ranking-detail-value">{h(value)}</p></div>'
@@ -3326,7 +3324,6 @@ def ranking_versus_html(rows: list[dict]) -> str:
         ("Litros", "litros_total", fmt_num),
         ("Custo/KM", "custo_por_km", fmt_brl),
         ("KM/L", "km_por_litro", lambda value: f"{fmt_num(value, 2)} km/L"),
-        ("Lançamentos", "lancamentos", fmt_num),
     ]
     cards = []
     for row in rows:
@@ -5178,7 +5175,6 @@ def render_pedagio() -> None:
         ("gasto_ipva", "Gasto IPVA", fmt_brl(data.get("gasto_ipva"))),
         ("gasto_seguro", "Gasto seguro", fmt_brl(data.get("gasto_seguro"))),
         ("media_valores", "Média de valores", fmt_brl(data.get("media_valores", data.get("ticket_medio")))),
-        ("lancamentos", "Lançamentos", fmt_num(data.get("total_lancamentos"))),
     ]
     include_year = params.get("ano") is None
     mensal_labels, mensal_values = sorted_series(data.get("custo_mensal", {}), "Mes", "Custo", include_year=include_year, fallback_year=params.get("ano"))
