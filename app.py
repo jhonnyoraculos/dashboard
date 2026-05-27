@@ -1819,6 +1819,39 @@ def _ranking_filter_category(df: pd.DataFrame, categoria: str | None) -> pd.Data
     return df.loc[mask].copy()
 
 
+def _ranking_valid_plate(value) -> bool:
+    if pd.isna(value):
+        return False
+    text = str(value).strip().upper()
+    return text != "SEM PLACA" and _is_plate_identifier(text)
+
+
+def _ranking_filter_valid_plates(df: pd.DataFrame) -> pd.DataFrame:
+    if df.empty or "PLACA" not in df.columns:
+        return df.iloc[0:0].copy()
+    return df[df["PLACA"].apply(_ranking_valid_plate)].copy()
+
+
+def _ranking_parse_plate_list(raw) -> list[str]:
+    plates: list[str] = []
+    for value in _as_list(raw):
+        if value in (None, "", "Todos"):
+            continue
+        for part in str(value).split(","):
+            plate = _normalize_plate_value(part.strip())
+            if _ranking_valid_plate(plate):
+                plates.append(str(plate))
+    return sorted(set(plates))
+
+
+def _ranking_filter_plates(df: pd.DataFrame, placas: list[str]) -> pd.DataFrame:
+    if not placas:
+        return df
+    if df.empty or "PLACA" not in df.columns:
+        return df.iloc[0:0].copy()
+    return df[df["PLACA"].isin(placas)].copy()
+
+
 def _ranking_sum_by_plate(df: pd.DataFrame, value_col: str) -> dict[str, float]:
     if df.empty or "PLACA" not in df.columns or value_col not in df.columns:
         return {}
@@ -1861,12 +1894,13 @@ def data_frota(params: dict | None = None) -> dict:
     ano = _parse_int(_param(params, "ano"))
     meses = _parse_mes_list(params.get("mes"))
     categoria = _param(params, "categoria")
+    placas = _ranking_parse_plate_list(params.get("placa"))
     ordenar_por = str(_param(params, "ordenar_por") or "combustivel").strip().lower()
 
-    df_comb = _apply_plate_categories(load_combustivel())
-    df_manu = _apply_plate_categories(load_manutencao())
-    df_ped = _apply_plate_categories(load_pedagio())
-    df_km = _apply_plate_categories(load_combustivel_km())
+    df_comb = _ranking_filter_valid_plates(_apply_plate_categories(load_combustivel()))
+    df_manu = _ranking_filter_valid_plates(_apply_plate_categories(load_manutencao()))
+    df_ped = _ranking_filter_valid_plates(_apply_plate_categories(load_pedagio()))
+    df_km = _ranking_filter_valid_plates(_apply_plate_categories(load_combustivel_km()))
 
     source_frames = [df_comb, df_manu, df_ped]
     categoria_frames = [_ranking_filter_category(df, categoria) for df in source_frames]
@@ -1895,6 +1929,14 @@ def data_frota(params: dict | None = None) -> dict:
     df_manu = _apply_period(df_manu_base)
     df_ped = _apply_period(df_ped_base)
     df_km = _apply_period(df_km_base)
+
+    plate_source = [df[["PLACA"]] for df in (df_comb, df_manu, df_ped, df_km) if not df.empty and "PLACA" in df.columns]
+    placas_disponiveis = _unique_sorted(pd.concat(plate_source, ignore_index=True), "PLACA") if plate_source else []
+
+    df_comb = _ranking_filter_plates(df_comb, placas)
+    df_manu = _ranking_filter_plates(df_manu, placas)
+    df_ped = _ranking_filter_plates(df_ped, placas)
+    df_km = _ranking_filter_plates(df_km, placas)
 
     categorias = set()
     for df_src in source_frames:
@@ -1956,6 +1998,7 @@ def data_frota(params: dict | None = None) -> dict:
         "anos": sorted(anos_disponiveis),
         "meses": meses_disponiveis,
         "categorias": sorted(categorias),
+        "placas": placas_disponiveis,
         "ordenar_por": sort_key,
         "ranking": ranking,
         "totais": {

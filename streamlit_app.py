@@ -26,7 +26,7 @@ MUTED = "#6B7280"
 CARD_BORDER = "#c2d2f3"
 LOGO_PATH = Path(__file__).parent / "static" / "logo-jr.png"
 CURRENT_YEAR = date.today().year
-APP_VERSION = "deploy-frota-ranking-v1"
+APP_VERSION = "deploy-frota-ranking-versus-v1"
 
 PLOTLY_CONFIG = {
     "responsive": True,
@@ -1016,15 +1016,15 @@ def inject_css() -> None:
         }}
 
         .st-key-frota_ranking_table [data-testid="stExpander"] summary {{
-          min-height: 54px;
-          padding: 0 16px !important;
+          min-height: 60px;
+          padding: 0 18px !important;
           border-bottom: 1px solid rgba(194,210,243,.58);
         }}
 
         .st-key-frota_ranking_table [data-testid="stExpander"] summary p {{
           color: var(--jr-blue);
-          font-weight: 850;
-          font-size: 14px;
+          font-weight: 900;
+          font-size: 16px;
           line-height: 1.35;
         }}
 
@@ -1057,6 +1057,89 @@ def inject_css() -> None:
           color: var(--jr-red);
           font-size: 19px;
           line-height: 1.15;
+          font-weight: 900;
+        }}
+
+        .ranking-row-summary,
+        .ranking-versus-grid {{
+          display: grid;
+          grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+          gap: 12px;
+          margin: 4px 0 14px;
+        }}
+
+        .ranking-row-summary {{
+          grid-template-columns: repeat(auto-fit, minmax(130px, 1fr));
+        }}
+
+        .ranking-summary-item,
+        .ranking-versus-card {{
+          border: 1px solid rgba(194,210,243,.9);
+          border-radius: 12px;
+          background: #fff;
+          box-shadow: 0 8px 18px rgba(16,24,40,.08);
+          overflow: hidden;
+        }}
+
+        .ranking-summary-item {{
+          padding: 12px;
+        }}
+
+        .ranking-summary-label {{
+          margin: 0 0 5px;
+          color: var(--muted);
+          font-size: 10px;
+          font-weight: 900;
+          text-transform: uppercase;
+          letter-spacing: .06em;
+        }}
+
+        .ranking-summary-value {{
+          margin: 0;
+          color: var(--jr-blue);
+          font-size: 17px;
+          font-weight: 900;
+          line-height: 1.15;
+        }}
+
+        .ranking-versus-title {{
+          margin: 18px 0 10px;
+          color: var(--jr-blue);
+          font-size: 18px;
+          font-weight: 900;
+        }}
+
+        .ranking-versus-card {{
+          padding: 16px;
+          border-top: 4px solid var(--jr-blue);
+        }}
+
+        .ranking-versus-card h3 {{
+          margin: 0 0 12px;
+          color: var(--jr-blue);
+          font-size: 18px;
+          font-weight: 900;
+        }}
+
+        .ranking-versus-metric {{
+          display: flex;
+          justify-content: space-between;
+          gap: 12px;
+          padding: 8px 0;
+          border-top: 1px solid rgba(229,231,235,.95);
+          color: var(--jr-blue);
+          font-size: 13px;
+          font-weight: 800;
+        }}
+
+        .ranking-versus-metric span:first-child {{
+          color: var(--muted);
+          font-weight: 800;
+        }}
+
+        .ranking-versus-metric span:last-child {{
+          color: var(--jr-red);
+          text-align: right;
           font-weight: 900;
         }}
 
@@ -2895,7 +2978,7 @@ def frota_filter_controls(seed: dict) -> dict[str, object]:
     year_index = year_options.index(year_default) if year_default in year_options else 0
 
     with st.container(key="rank_filterbar"):
-        cols = st.columns([0.8, 1.25, 1.05, 1.1, 1.0, 0.75])
+        cols = st.columns([0.75, 1.1, 1.0, 1.45, 1.05, 1.0, 0.72])
         with cols[0]:
             ano = st.selectbox(
                 "Ano",
@@ -2946,11 +3029,43 @@ def frota_filter_controls(seed: dict) -> dict[str, object]:
                 label_visibility="collapsed",
             )
 
+        plate_seed = route_json(
+            "frota",
+            {
+                "ano": None if ano == "Todos" else ano,
+                "mes": query_mes(meses_selected),
+                "categoria": None if categoria == "Todos" else categoria,
+                "ordenar_por": "combustivel",
+            },
+        )
+        plate_options = ["Todos", *unique_filter_options(plate_seed.get("placas", []) or [])]
+        plate_key = "rank_placa"
+        plate_previous_key = f"{plate_key}__previous"
+        plate_state_exists = plate_key in st.session_state
+        current_plates = st.session_state.get(plate_key, ["Todos"])
+        current_plates = [item for item in current_plates if item in plate_options] or ["Todos"]
+        if plate_state_exists and st.session_state.get(plate_key) != current_plates:
+            st.session_state[plate_key] = current_plates
+            st.session_state[plate_previous_key] = current_plates
+        if plate_previous_key not in st.session_state:
+            st.session_state[plate_previous_key] = current_plates
+        with cols[3]:
+            plate_kwargs = {
+                "key": plate_key,
+                "on_change": sync_multiselect_selection,
+                "args": (plate_key,),
+                "label_visibility": "collapsed",
+            }
+            if not plate_state_exists:
+                plate_kwargs["default"] = current_plates
+            placas_selected = st.multiselect("Placa", plate_options, **plate_kwargs)
+            placas_selected = normalize_multiselect(placas_selected, st.session_state.get(plate_previous_key, ["Todos"]))
+
         order_options = list(RANK_ORDER_OPTIONS)
         order_current = st.session_state.get("rank_ordenar_por", "combustivel")
         if order_current not in order_options:
             order_current = "combustivel"
-        with cols[3]:
+        with cols[4]:
             ordenar_por = st.selectbox(
                 "Ordenar por",
                 order_options,
@@ -2960,21 +3075,37 @@ def frota_filter_controls(seed: dict) -> dict[str, object]:
                 label_visibility="collapsed",
             )
 
-        with cols[4]:
+        with cols[5]:
             if st.button("Limpar filtros", key="rank_clear", width="stretch"):
                 for state_key in list(st.session_state.keys()):
                     if state_key.startswith("rank_"):
                         del st.session_state[state_key]
                 st.rerun()
-        with cols[5]:
+        with cols[6]:
             st.markdown('<a class="filter-back" href="?page=home" target="_self">&larr; Voltar</a>', unsafe_allow_html=True)
 
     return {
         "ano": None if ano == "Todos" else ano,
         "mes": query_mes(meses_selected),
         "categoria": None if categoria == "Todos" else categoria,
+        "placa": ["Todos"] if placas_selected == ["Todos"] else [str(item) for item in placas_selected],
         "ordenar_por": ordenar_por,
     }
+
+
+def ranking_summary_html(row: dict) -> str:
+    items = [
+        ("Posição", f"#{int(row.get('rank') or 0):02d}"),
+        ("Placa", row.get("placa") or "Sem placa"),
+        ("Total", fmt_brl(row.get("total"))),
+        ("Combustível", fmt_brl(row.get("combustivel"))),
+        ("Manutenção", fmt_brl(row.get("manutencao"))),
+        ("Pedágio/IPVA", fmt_brl(row.get("pedagio"))),
+    ]
+    return "".join(
+        f'<div class="ranking-summary-item"><p class="ranking-summary-label">{h(label)}</p><p class="ranking-summary-value">{h(value)}</p></div>'
+        for label, value in items
+    )
 
 
 def ranking_detail_html(row: dict) -> str:
@@ -2998,15 +3129,33 @@ def ranking_detail_html(row: dict) -> str:
         f'<div class="ranking-detail-card"><p class="ranking-detail-label">{h(label)}</p><p class="ranking-detail-value">{h(value)}</p></div>'
         for label, value in items
     )
-    return f'<div class="ranking-detail-grid">{cards}</div>'
+    return f'<div class="ranking-row-summary">{ranking_summary_html(row)}</div><div class="ranking-detail-grid">{cards}</div>'
 
 
 def ranking_row_label(row: dict) -> str:
-    return (
-        f"{int(row.get('rank') or 0):02d}  |  {row.get('placa') or 'Sem placa'}  |  "
-        f"Total {fmt_brl(row.get('total'))}  |  Combustível {fmt_brl(row.get('combustivel'))}  |  "
-        f"Manutenção {fmt_brl(row.get('manutencao'))}  |  Pedágio/IPVA {fmt_brl(row.get('pedagio'))}"
-    )
+    return f"{int(row.get('rank') or 0):02d} · {row.get('placa') or 'Sem placa'} · Total {fmt_brl(row.get('total'))}"
+
+
+def ranking_versus_html(rows: list[dict]) -> str:
+    metrics = [
+        ("Total", "total", fmt_brl),
+        ("Combustível", "combustivel", fmt_brl),
+        ("Manutenção", "manutencao", fmt_brl),
+        ("Pedágio/IPVA", "pedagio", fmt_brl),
+        ("KM total", "km_total", fmt_num),
+        ("Litros", "litros_total", fmt_num),
+        ("Custo/KM", "custo_por_km", fmt_brl),
+        ("KM/L", "km_por_litro", lambda value: f"{fmt_num(value, 2)} km/L"),
+        ("Lançamentos", "lancamentos", fmt_num),
+    ]
+    cards = []
+    for row in rows:
+        body = "".join(
+            f'<div class="ranking-versus-metric"><span>{h(label)}</span><span>{h(formatter(row.get(key)))}</span></div>'
+            for label, key, formatter in metrics
+        )
+        cards.append(f'<article class="ranking-versus-card"><h3>{h(row.get("placa") or "Sem placa")}</h3>{body}</article>')
+    return f'<h2 class="ranking-versus-title">Versus entre placas</h2><section class="ranking-versus-grid">{"".join(cards)}</section>'
 
 
 def render_frota() -> None:
@@ -3033,6 +3182,11 @@ def render_frota() -> None:
         st.markdown('<div class="ranking-empty">Nenhum caminhão encontrado para os filtros selecionados.</div>', unsafe_allow_html=True)
         footer("Ranking calculado com dados de combustível, manutenção e pedágio/IPVA do Neon. © JR")
         return
+
+    selected_plates = [str(item) for item in (params.get("placa") or []) if item not in (None, "", "Todos")]
+    if len(selected_plates) >= 2:
+        selected_set = set(selected_plates)
+        st.html(ranking_versus_html([row for row in ranking if row.get("placa") in selected_set]))
 
     st.markdown(
         """
