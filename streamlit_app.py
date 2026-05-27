@@ -28,7 +28,7 @@ MUTED = "#6B7280"
 CARD_BORDER = "#c2d2f3"
 LOGO_PATH = Path(__file__).parent / "static" / "logo-jr.png"
 CURRENT_YEAR = date.today().year
-APP_VERSION = "deploy-dominancia-cidades-click-v1"
+APP_VERSION = "deploy-dominancia-cidades-nomes-v1"
 BR_TZ = ZoneInfo("America/Sao_Paulo")
 
 PLOTLY_CONFIG = {
@@ -2134,15 +2134,21 @@ def pie_chart(labels: list, values: list) -> go.Figure:
     return apply_theme(fig, height=360, margin={"l": 16, "r": 16, "t": 30, "b": 90})
 
 
-def peso_pie_chart(labels: list, values: list, city_counts: list | None = None) -> go.Figure:
+def peso_pie_chart(labels: list, values: list, city_counts: list | None = None, city_summaries: dict | None = None) -> go.Figure:
     values_clean = [float(value or 0) for value in values or []]
     counts = list(city_counts or [])
-    customdata = [
-        f"{fmt_peso(value)} em {int(counts[index])} cidade(s)"
-        if index < len(counts) and int(counts[index] or 0) > 0
-        else fmt_peso(value)
-        for index, value in enumerate(values_clean)
-    ]
+    summaries = city_summaries or {}
+    labels_clean = [str(label) for label in labels or []]
+    customdata = []
+    for index, value in enumerate(values_clean):
+        label = labels_clean[index] if index < len(labels_clean) else ""
+        count = int(counts[index] or 0) if index < len(counts) else 0
+        if count > 0 and summaries.get(label):
+            customdata.append(f"{fmt_peso(value)} em {count} cidade(s)<br>Cidades: {h(summaries[label])}")
+        elif count > 0:
+            customdata.append(f"{fmt_peso(value)} em {count} cidade(s)")
+        else:
+            customdata.append(fmt_peso(value))
     fig = go.Figure(
         go.Pie(
             labels=labels or [],
@@ -3531,6 +3537,22 @@ def dominance_cities_html(placa: str, cidades: list[dict]) -> str:
     )
 
 
+def dominance_city_summaries(cidades: list[dict], *, limit: int = 10) -> dict[str, str]:
+    grouped: dict[str, list[dict]] = {}
+    for item in cidades:
+        placa = str(item.get("placa") or "")
+        if placa:
+            grouped.setdefault(placa, []).append(item)
+    summaries = {}
+    for placa, rows in grouped.items():
+        ordered = sorted(rows, key=lambda item: float(item.get("peso") or 0), reverse=True)
+        names = [str(item.get("cidade") or "Sem cidade") for item in ordered[:limit]]
+        remaining = max(len(ordered) - len(names), 0)
+        suffix = f" +{remaining}" if remaining else ""
+        summaries[placa] = ", ".join(names) + suffix
+    return summaries
+
+
 def render_frota() -> None:
     topbar("JR DASHBOARD • Ranking de caminhões", back=False)
     seed = route_json("frota", {"ano": "Todos", "mes": ["Todos"], "ordenar_por": "combustivel"})
@@ -3576,10 +3598,17 @@ def render_frota() -> None:
         pie_counts = [0 for _ in peso_rows]
         pie_title = "Dominância por placa (peso total)"
     if pie_labels and pie_values:
+        cidades_dominadas = dominancia.get("cidades", []) or []
+        city_summaries = dominance_city_summaries(cidades_dominadas)
         with st.container(border=True):
             st.html(f'<div class="chart-title">{h(pie_title)}</div>')
+            current_plate = st.session_state.get("frota_dominancia_peso_selected")
+            if current_plate not in pie_labels:
+                current_plate = pie_labels[0]
+                st.session_state["frota_dominancia_peso_selected"] = current_plate
+            st.markdown(dominance_cities_html(current_plate, cidades_dominadas), unsafe_allow_html=True)
             dominance_event = st.plotly_chart(
-                peso_pie_chart(pie_labels, pie_values, pie_counts),
+                peso_pie_chart(pie_labels, pie_values, pie_counts, city_summaries),
                 width="stretch",
                 config=PLOTLY_CONFIG,
                 key="frota_dominancia_peso_chart",
@@ -3587,13 +3616,9 @@ def render_frota() -> None:
                 selection_mode="points",
             )
             clicked_plate = selected_plotly_label(dominance_event, pie_labels)
-            if clicked_plate:
+            if clicked_plate and clicked_plate != current_plate:
                 st.session_state["frota_dominancia_peso_selected"] = clicked_plate
-            selected_plate = st.session_state.get("frota_dominancia_peso_selected")
-            if selected_plate not in pie_labels:
-                selected_plate = pie_labels[0]
-                st.session_state["frota_dominancia_peso_selected"] = selected_plate
-            st.html(dominance_cities_html(selected_plate, dominancia.get("cidades", []) or []))
+                st.rerun()
 
     st.markdown(
         """
