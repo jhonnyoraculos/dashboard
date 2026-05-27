@@ -28,7 +28,7 @@ MUTED = "#6B7280"
 CARD_BORDER = "#c2d2f3"
 LOGO_PATH = Path(__file__).parent / "static" / "logo-jr.png"
 CURRENT_YEAR = date.today().year
-APP_VERSION = "deploy-home-peso-card-v1"
+APP_VERSION = "deploy-apple-home-design-v1"
 BR_TZ = ZoneInfo("America/Sao_Paulo")
 
 PLOTLY_CONFIG = {
@@ -396,12 +396,17 @@ def inject_css() -> None:
         .home-header {{
           max-width: 1100px;
           margin: 0 auto 48px;
-          background: rgba(255,255,255,0.76);
-          border: 1px solid rgba(255,255,255,0.74);
-          border-radius: var(--radius);
+          background:
+            linear-gradient(145deg, rgba(255,255,255,.78), rgba(255,255,255,.52)),
+            rgba(255,255,255,.58);
+          border: 1px solid rgba(255,255,255,.78);
+          border-radius: 18px;
           padding: 40px;
-          box-shadow: 0 6px 18px rgba(0,0,0,0.08);
-          backdrop-filter: blur(14px);
+          box-shadow:
+            0 22px 54px rgba(16,24,40,.10),
+            inset 0 1px 0 rgba(255,255,255,.78);
+          backdrop-filter: blur(22px) saturate(145%);
+          -webkit-backdrop-filter: blur(22px) saturate(145%);
           display: flex;
           flex-direction: column;
           gap: 28px;
@@ -626,14 +631,20 @@ def inject_css() -> None:
 
         .home-total-card,
         .kpi {{
-          background: linear-gradient(145deg, rgba(255,255,255,0.94), rgba(255,255,255,0.86));
-          border: 1.5px solid var(--card-border);
-          border-radius: var(--radius);
+          background:
+            linear-gradient(150deg, rgba(255,255,255,.92), rgba(255,255,255,.66)),
+            rgba(255,255,255,.70);
+          border: 1px solid rgba(194,210,243,.72);
+          border-radius: 16px;
           padding: 18px 24px;
           display: flex;
           flex-direction: column;
           gap: 4px;
-          box-shadow: 0 12px 28px rgba(16,24,40,0.12);
+          box-shadow:
+            0 18px 44px rgba(16,24,40,.10),
+            inset 0 1px 0 rgba(255,255,255,.82);
+          backdrop-filter: blur(18px) saturate(140%);
+          -webkit-backdrop-filter: blur(18px) saturate(140%);
         }}
 
         .home-total-card {{
@@ -758,25 +769,53 @@ def inject_css() -> None:
         }}
 
         .home-card {{
-          background: rgba(255,255,255,0.72);
-          border: 1px solid rgba(255,255,255,0.7);
-          border-radius: var(--radius);
+          background:
+            linear-gradient(145deg, rgba(255,255,255,.76), rgba(255,255,255,.48)),
+            rgba(255,255,255,.58);
+          border: 1px solid rgba(255,255,255,.82);
+          border-radius: 18px;
           padding: 32px;
-          box-shadow: 0 6px 18px rgba(0,0,0,0.08);
-          backdrop-filter: blur(12px);
+          box-shadow:
+            0 22px 48px rgba(16,24,40,.10),
+            inset 0 1px 0 rgba(255,255,255,.86);
+          backdrop-filter: blur(22px) saturate(145%);
+          -webkit-backdrop-filter: blur(22px) saturate(145%);
           display: flex;
           flex-direction: column;
           gap: 20px;
           position: relative;
           overflow: hidden;
           min-height: 330px;
+          color: inherit !important;
+          text-decoration: none !important;
+          cursor: pointer;
+          transition:
+            transform .18s ease,
+            box-shadow .18s ease,
+            border-color .18s ease,
+            background .18s ease;
+        }}
+
+        .home-card:hover {{
+          transform: translateY(-4px);
+          border-color: rgba(194,210,243,.96);
+          box-shadow:
+            0 28px 64px rgba(16,24,40,.14),
+            inset 0 1px 0 rgba(255,255,255,.90);
+        }}
+
+        .home-card:focus-visible {{
+          outline: 3px solid rgba(190,30,45,.26);
+          outline-offset: 3px;
         }}
 
         .home-card::after {{
           content: "";
           position: absolute;
           inset: 0;
-          background: linear-gradient(140deg, rgba(28,45,107,0.05), transparent 65%);
+          background:
+            radial-gradient(circle at 88% 8%, rgba(255,255,255,.72), transparent 18%),
+            linear-gradient(140deg, rgba(28,45,107,0.06), transparent 65%);
           pointer-events: none;
         }}
 
@@ -789,6 +828,7 @@ def inject_css() -> None:
           display: inline-flex;
           align-self: flex-start;
           background: rgba(28,45,107,0.08);
+          border: 1px solid rgba(255,255,255,.72);
           color: var(--jr-blue);
           padding: 6px 14px;
           border-radius: 999px;
@@ -825,17 +865,28 @@ def inject_css() -> None:
           font-weight: 800;
           color: var(--jr-blue) !important;
           text-decoration: none !important;
+          transition: transform .18s ease, color .18s ease;
+        }}
+
+        .home-card:hover .home-link {{
+          transform: translateX(3px);
+          color: var(--jr-red) !important;
         }}
 
         .home-footer {{
           max-width: 1100px;
           margin: 48px auto 0;
-          background: rgba(255,255,255,0.72);
-          border: 1px solid rgba(255,255,255,0.7);
-          border-radius: var(--radius);
+          background:
+            linear-gradient(145deg, rgba(255,255,255,.76), rgba(255,255,255,.48)),
+            rgba(255,255,255,.58);
+          border: 1px solid rgba(255,255,255,.82);
+          border-radius: 18px;
           padding: 36px;
-          box-shadow: 0 6px 18px rgba(0,0,0,0.08);
-          backdrop-filter: blur(12px);
+          box-shadow:
+            0 22px 48px rgba(16,24,40,.10),
+            inset 0 1px 0 rgba(255,255,255,.86);
+          backdrop-filter: blur(22px) saturate(145%);
+          -webkit-backdrop-filter: blur(22px) saturate(145%);
         }}
 
         .home-footer h3 {{
@@ -845,10 +896,16 @@ def inject_css() -> None:
         }}
 
         div[data-testid="stVerticalBlockBorderWrapper"] {{
-          background: linear-gradient(145deg, rgba(255,255,255,0.94), rgba(255,255,255,0.86));
-          border: 1.5px solid var(--card-border);
-          border-radius: var(--radius);
-          box-shadow: 0 12px 28px rgba(16,24,40,0.12);
+          background:
+            linear-gradient(150deg, rgba(255,255,255,.92), rgba(255,255,255,.68)),
+            rgba(255,255,255,.70);
+          border: 1px solid rgba(194,210,243,.76);
+          border-radius: 16px;
+          box-shadow:
+            0 18px 44px rgba(16,24,40,.10),
+            inset 0 1px 0 rgba(255,255,255,.84);
+          backdrop-filter: blur(18px) saturate(140%);
+          -webkit-backdrop-filter: blur(18px) saturate(140%);
         }}
 
         .chart-title {{
@@ -3507,42 +3564,42 @@ def render_home() -> None:
     st.markdown(
         """
         <section id="dashboards" class="home-grid">
-          <article class="home-card">
+          <a class="home-card" href="?page=frota" target="_self" aria-label="Abrir dashboard Ranking">
             <div><span class="home-chip">Ranking</span><h2>Ranking de gastos por caminhão</h2></div>
             <p class="home-card-text">Veja todos os caminhões em formato de tabela, do maior para o menor gasto, com detalhamento por placa.</p>
             <ul class="home-list"><li>Ordenação por combustível, manutenção, pedágio/IPVA ou total</li><li>Métricas individuais dentro da própria linha</li><li>Filtros por ano, mês e categoria</li></ul>
-            <a class="home-link" href="?page=frota" target="_self">Abrir dashboard &rarr;</a>
-          </article>
-          <article class="home-card">
+            <span class="home-link">Abrir dashboard &rarr;</span>
+          </a>
+          <a class="home-card" href="?page=combustivel" target="_self" aria-label="Abrir dashboard CombustÃ­vel">
             <div><span class="home-chip">Combustível</span><h2>Consumo, custo e eficiência da frota</h2></div>
             <p class="home-card-text">Filtros por mês, placa, posto e tipo de combustível com KPIs e gráficos de desempenho.</p>
             <ul class="home-list"><li>KPIs automáticos de custo, km e litros</li><li>Comparativo por posto e tipo de combustível</li><li>Histórico mensal de consumo e gastos</li></ul>
-            <a class="home-link" href="?page=combustivel" target="_self">Abrir dashboard &rarr;</a>
-          </article>
-          <article class="home-card">
+            <span class="home-link">Abrir dashboard &rarr;</span>
+          </a>
+          <a class="home-card" href="?page=manutencao" target="_self" aria-label="Abrir dashboard ManutenÃ§Ã£o">
             <div><span class="home-chip">Manutenção</span><h2>Gestão de oficinas e serviços</h2></div>
             <p class="home-card-text">Acompanhe gastos por placa, oficina e mês, com ticket médio atualizado.</p>
             <ul class="home-list"><li>Resumo financeiro com ticket médio</li><li>Distribuição por placa e oficina</li><li>Curva mensal de investimentos</li></ul>
-            <a class="home-link" href="?page=manutencao" target="_self">Abrir dashboard &rarr;</a>
-          </article>
-          <article class="home-card">
+            <span class="home-link">Abrir dashboard &rarr;</span>
+          </a>
+          <a class="home-card" href="?page=hoteis" target="_self" aria-label="Abrir dashboard HotÃ©is">
             <div><span class="home-chip">Hotéis</span><h2>Reservas e hospedagens da equipe</h2></div>
             <p class="home-card-text">Filtros por mês, cidade e hotel para entender os investimentos em hospedagem.</p>
             <ul class="home-list"><li>KPIs automáticos de valor total, reservas e médias</li><li>Ranking por cidade e hotel/pousada</li><li>Histórico mensal dos gastos com hospedagem</li></ul>
-            <a class="home-link" href="?page=hoteis" target="_self">Abrir dashboard &rarr;</a>
-          </article>
-          <article class="home-card">
+            <span class="home-link">Abrir dashboard &rarr;</span>
+          </a>
+          <a class="home-card" href="?page=pedagio" target="_self" aria-label="Abrir dashboard PedÃ¡gio, Seguro e IPVA">
             <div><span class="home-chip">Pedágio &amp; Seguros</span><h2>Pedágio, IPVA e seguros da frota</h2></div>
             <p class="home-card-text">Acompanhe quanto cada placa consome com pedágio, seguros e tributos, com KPIs dinâmicos.</p>
             <ul class="home-list"><li>Resumo mensal consolidado por tipo de despesa</li><li>Comparativo por placa e categoria</li><li>Filtros rápidos por mês, placa e tipo</li></ul>
-            <a class="home-link" href="?page=pedagio" target="_self">Abrir dashboard &rarr;</a>
-          </article>
-          <article class="home-card">
+            <span class="home-link">Abrir dashboard &rarr;</span>
+          </a>
+          <a class="home-card" href="?page=vex" target="_self" aria-label="Abrir dashboard Vex">
             <div><span class="home-chip">Vex</span><h2>Gastos exclusivos da categoria Vex</h2></div>
             <p class="home-card-text">Visão consolidada dos custos Vex, com filtros por ano e mês.</p>
             <ul class="home-list"><li>Totais Vex por área</li><li>Evolução mensal dos gastos</li><li>Resumo centralizado da categoria</li></ul>
-            <a class="home-link" href="?page=vex" target="_self">Abrir dashboard &rarr;</a>
-          </article>
+            <span class="home-link">Abrir dashboard &rarr;</span>
+          </a>
         </section>
         </main>
         """,
