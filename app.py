@@ -238,7 +238,10 @@ def _read_database_table(dataset: str, columns: list[str], *, date_columns: list
     try:
         from sqlalchemy import text
 
-        df = pd.read_sql_query(text(f'SELECT * FROM "{table}"'), _db_engine())
+        engine = _db_engine()
+        with engine.begin() as conn:
+            _ensure_dataset_table(conn, dataset)
+        df = pd.read_sql_query(text(f'SELECT * FROM "{table}"'), engine)
     except Exception as exc:
         raise RuntimeError(f'Nao foi possivel ler a tabela "{table}" no Neon.') from exc
 
