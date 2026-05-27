@@ -28,7 +28,7 @@ MUTED = "#6B7280"
 CARD_BORDER = "#c2d2f3"
 LOGO_PATH = Path(__file__).parent / "static" / "logo-jr.png"
 CURRENT_YEAR = date.today().year
-APP_VERSION = "deploy-dominancia-cidades-nomes-v1"
+APP_VERSION = "deploy-dominancia-tabela-cidades-v1"
 BR_TZ = ZoneInfo("America/Sao_Paulo")
 
 PLOTLY_CONFIG = {
@@ -1324,7 +1324,7 @@ def inject_css() -> None:
 
         .dominance-city-row {{
           display: grid;
-          grid-template-columns: minmax(110px, 1fr) repeat(3, minmax(84px, auto));
+          grid-template-columns: minmax(130px, 1.25fr) minmax(82px, .75fr) repeat(3, minmax(84px, auto));
           gap: 10px;
           align-items: center;
           padding: 10px 12px;
@@ -1333,9 +1333,21 @@ def inject_css() -> None:
           background: rgba(255,255,255,.64);
         }}
 
+        .dominance-city-row--head {{
+          background: rgba(28,45,107,.06);
+          border-color: rgba(194,210,243,.84);
+        }}
+
         .dominance-city-name {{
           color: var(--jr-blue);
           font-weight: 900;
+        }}
+
+        .dominance-city-plate {{
+          color: var(--jr-blue);
+          font-size: 12px;
+          font-weight: 900;
+          white-space: nowrap;
         }}
 
         .dominance-city-metric {{
@@ -3537,6 +3549,44 @@ def dominance_cities_html(placa: str, cidades: list[dict]) -> str:
     )
 
 
+def dominance_city_ranking_html(cidades: list[dict]) -> str:
+    city_rows = sorted(cidades or [], key=lambda item: float(item.get("peso") or 0), reverse=True)
+    if not city_rows:
+        return (
+            '<div class="dominance-panel">'
+            '<p class="dominance-title">Ranking de peso por cidade e placa</p>'
+            '<p class="dominance-note">Ainda nao ha cidades com peso para os filtros selecionados.</p>'
+            '</div>'
+        )
+
+    rows_html = [
+        '<div class="dominance-city-row dominance-city-row--head">'
+        '<span class="dominance-city-name">Cidade</span>'
+        '<span class="dominance-city-plate">Placa</span>'
+        '<span class="dominance-city-metric">Peso</span>'
+        '<span class="dominance-city-metric">Dominio</span>'
+        '<span class="dominance-city-metric">Total cidade</span>'
+        '</div>'
+    ]
+    for index, item in enumerate(city_rows, start=1):
+        rows_html.append(
+            '<div class="dominance-city-row">'
+            f'<span class="dominance-city-name">{index:02d} - {h(item.get("cidade") or "Sem cidade")}</span>'
+            f'<span class="dominance-city-plate">{h(item.get("placa") or "Sem placa")}</span>'
+            f'<span class="dominance-city-metric">{h(fmt_peso(item.get("peso")))}</span>'
+            f'<span class="dominance-city-metric">{h(fmt_num(item.get("participacao"), 2))}%</span>'
+            f'<span class="dominance-city-metric">{h(fmt_peso(item.get("peso_cidade")))}</span>'
+            '</div>'
+        )
+    return (
+        '<div class="dominance-panel">'
+        '<p class="dominance-title">Ranking de peso por cidade e placa</p>'
+        '<p class="dominance-note">Cada cidade aparece com a placa que mais domina por peso nos filtros selecionados.</p>'
+        f'<div class="dominance-cities">{"".join(rows_html)}</div>'
+        '</div>'
+    )
+
+
 def dominance_city_summaries(cidades: list[dict], *, limit: int = 10) -> dict[str, str]:
     grouped: dict[str, list[dict]] = {}
     for item in cidades:
@@ -3586,39 +3636,11 @@ def render_frota() -> None:
         st.html(ranking_difference_html(versus_rows) + ranking_versus_html(versus_rows))
 
     dominancia = data.get("dominancia_peso", {}) or {}
-    pie_labels = list(dominancia.get("labels") or [])
-    pie_values = list(dominancia.get("values") or [])
-    pie_counts = list(dominancia.get("city_counts") or [])
-    pie_title = "Dominância por placa nas cidades (peso)"
-    if not pie_labels or not pie_values:
-        peso_rows = [row for row in ranking if float(row.get("peso_total") or 0) > 0]
-        peso_rows = sorted(peso_rows, key=lambda row: float(row.get("peso_total") or 0), reverse=True)[:12]
-        pie_labels = [str(row.get("placa") or "Sem placa") for row in peso_rows]
-        pie_values = [float(row.get("peso_total") or 0) for row in peso_rows]
-        pie_counts = [0 for _ in peso_rows]
-        pie_title = "Dominância por placa (peso total)"
-    if pie_labels and pie_values:
-        cidades_dominadas = dominancia.get("cidades", []) or []
-        city_summaries = dominance_city_summaries(cidades_dominadas)
+    cidades_dominadas = dominancia.get("cidades", []) or []
+    if cidades_dominadas:
         with st.container(border=True):
-            st.html(f'<div class="chart-title">{h(pie_title)}</div>')
-            current_plate = st.session_state.get("frota_dominancia_peso_selected")
-            if current_plate not in pie_labels:
-                current_plate = pie_labels[0]
-                st.session_state["frota_dominancia_peso_selected"] = current_plate
-            st.markdown(dominance_cities_html(current_plate, cidades_dominadas), unsafe_allow_html=True)
-            dominance_event = st.plotly_chart(
-                peso_pie_chart(pie_labels, pie_values, pie_counts, city_summaries),
-                width="stretch",
-                config=PLOTLY_CONFIG,
-                key="frota_dominancia_peso_chart",
-                on_select="rerun",
-                selection_mode="points",
-            )
-            clicked_plate = selected_plotly_label(dominance_event, pie_labels)
-            if clicked_plate and clicked_plate != current_plate:
-                st.session_state["frota_dominancia_peso_selected"] = clicked_plate
-                st.rerun()
+            st.html('<div class="chart-title">Ranking de peso por cidade e placa</div>')
+            st.markdown(dominance_city_ranking_html(cidades_dominadas), unsafe_allow_html=True)
 
     st.markdown(
         """
