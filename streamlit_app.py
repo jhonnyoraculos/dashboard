@@ -28,7 +28,7 @@ MUTED = "#6B7280"
 CARD_BORDER = "#c2d2f3"
 LOGO_PATH = Path(__file__).parent / "static" / "logo-jr.png"
 CURRENT_YEAR = date.today().year
-APP_VERSION = "deploy-hide-lancamentos-v1"
+APP_VERSION = "deploy-home-peso-card-v1"
 BR_TZ = ZoneInfo("America/Sao_Paulo")
 
 PLOTLY_CONFIG = {
@@ -3444,6 +3444,7 @@ def render_home() -> None:
     suffix = filter_text or "Cálculo baseado nos dados mais recentes do banco."
     home_total_cards = [
         ("Gasto consolidado", fmt_brl(overview.get("total_geral")), suffix),
+        ("Peso total", fmt_peso(overview.get("peso_total")), "Somatório dos pesos lançados nas entregas."),
         ("Gasto transporte", fmt_brl(overview.get("total_transporte")), 'Somatório das despesas marcadas como "Transporte".'),
         ("Gasto Vex", fmt_brl(overview.get("total_vex")), 'Somatório das despesas marcadas como "Vex".'),
     ]

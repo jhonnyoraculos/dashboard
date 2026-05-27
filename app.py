@@ -1539,6 +1539,12 @@ def load_peso() -> pd.DataFrame:
         return df.copy(deep=False)
 
 
+def agg_peso(df: pd.DataFrame) -> dict:
+    peso_total = float(pd.to_numeric(df.get("Peso"), errors="coerce").sum()) if "Peso" in df else 0.0
+    valor_total = float(pd.to_numeric(df.get("Valor"), errors="coerce").sum()) if "Valor" in df else 0.0
+    return {"peso_total": round(peso_total, 3), "valor_total": round(valor_total, 2)}
+
+
 def agg_pedagio(df: pd.DataFrame) -> dict:
     registros = df.shape[0]
     custo_total = float(pd.to_numeric(df.get("Custo"), errors="coerce").sum()) if "Custo" in df else 0.0
@@ -2143,13 +2149,15 @@ def compute_overview_totals(*, ano: int | None = None, mes: int | None = None, m
         meses_lista.append(mes)
 
     areas = {
-        "combustivel": (load_combustivel, agg_combustivel, "custo_total", "Custo"),
-        "manutencao": (load_manutencao, agg_manutencao, "custo_total", "Custo"),
-        "hoteis": (load_hoteis, agg_hoteis, "valor_total", "Valor"),
-        "pedagio": (load_pedagio, agg_pedagio, "custo_total", "Custo"),
+        "combustivel": (load_combustivel, agg_combustivel, "custo_total", "Custo", True),
+        "manutencao": (load_manutencao, agg_manutencao, "custo_total", "Custo", True),
+        "hoteis": (load_hoteis, agg_hoteis, "valor_total", "Valor", True),
+        "pedagio": (load_pedagio, agg_pedagio, "custo_total", "Custo", True),
+        "peso": (load_peso, agg_peso, "peso_total", "Peso", False),
     }
 
-    chave_cache = tuple(_CACHE_MAP[nome]["mtime"] for nome in ("combustivel", "manutencao", "hoteis", "pedagio"))
+    overview_cache_datasets = ("combustivel", "manutencao", "hoteis", "pedagio", "peso")
+    chave_cache = tuple(_CACHE_MAP[nome]["mtime"] for nome in overview_cache_datasets)
     use_cache = ano is None and mes is None and not meses_lista
     if use_cache and _OVERVIEW_CACHE["mtimes"] == chave_cache and _OVERVIEW_CACHE["dados"] is not None:
         return _OVERVIEW_CACHE["dados"]
@@ -2164,16 +2172,18 @@ def compute_overview_totals(*, ano: int | None = None, mes: int | None = None, m
     with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as pool:
         future_map = {
             pool.submit(_safe_total, loader, aggregator, chave, valor_col, ano=ano, mes=mes, meses=meses_lista): nome
-            for nome, (loader, aggregator, chave, valor_col) in areas.items()
+            for nome, (loader, aggregator, chave, valor_col, _is_money) in areas.items()
         }
         for future in concurrent.futures.as_completed(future_map):
             nome = future_map[future]
+            is_money_area = areas[nome][4]
             resultado = future.result()
             detalhes[nome] = resultado
-            if resultado["valor"] is not None:
+            if is_money_area and resultado["valor"] is not None:
                 total_geral += resultado["valor"]
-            for categoria, valor in (resultado.get("categorias") or {}).items():
-                segmento_totais[categoria] += valor
+            if is_money_area:
+                for categoria, valor in (resultado.get("categorias") or {}).items():
+                    segmento_totais[categoria] += valor
             for periodo in resultado.get("periodos") or []:
                 if periodo:
                     periodos_unicos.add(periodo)
@@ -2194,6 +2204,7 @@ def compute_overview_totals(*, ano: int | None = None, mes: int | None = None, m
     meses_disponiveis = sorted({int(p.split("-")[1]) for p in periodos_base if "-" in p})
 
     detalhes["total_geral"] = float(total_geral)
+    detalhes["peso_total"] = float((detalhes.get("peso") or {}).get("valor") or 0.0)
     detalhes["segmentos"] = segmentos_dict
     detalhes["total_transporte"] = segmentos_dict.get("Transporte", 0.0)
     detalhes["total_vex"] = segmentos_dict.get("Vex", 0.0)
@@ -2203,7 +2214,7 @@ def compute_overview_totals(*, ano: int | None = None, mes: int | None = None, m
     detalhes["filtro"] = {"ano": ano, "mes": mes, "meses": meses_lista}
 
     if use_cache:
-        _OVERVIEW_CACHE["mtimes"] = tuple(_CACHE_MAP[nome]["mtime"] for nome in ("combustivel", "manutencao", "hoteis", "pedagio"))
+        _OVERVIEW_CACHE["mtimes"] = tuple(_CACHE_MAP[nome]["mtime"] for nome in overview_cache_datasets)
         _OVERVIEW_CACHE["dados"] = detalhes
     return detalhes
 
