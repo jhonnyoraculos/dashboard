@@ -26,7 +26,7 @@ MUTED = "#6B7280"
 CARD_BORDER = "#c2d2f3"
 LOGO_PATH = Path(__file__).parent / "static" / "logo-jr.png"
 CURRENT_YEAR = date.today().year
-APP_VERSION = "deploy-frota-ranking-row-readable-v1"
+APP_VERSION = "deploy-frota-ranking-home-first-v1"
 
 PLOTLY_CONFIG = {
     "responsive": True,
@@ -3441,6 +3441,12 @@ def render_home() -> None:
         """
         <section id="dashboards" class="home-grid">
           <article class="home-card">
+            <div><span class="home-chip">Ranking</span><h2>Ranking de gastos por caminhão</h2></div>
+            <p class="home-card-text">Veja todos os caminhões em formato de tabela, do maior para o menor gasto, com detalhamento por placa.</p>
+            <ul class="home-list"><li>Ordenação por combustível, manutenção, pedágio/IPVA ou total</li><li>Métricas individuais dentro da própria linha</li><li>Filtros por ano, mês e categoria</li></ul>
+            <a class="home-link" href="?page=frota" target="_self">Abrir dashboard &rarr;</a>
+          </article>
+          <article class="home-card">
             <div><span class="home-chip">Combustível</span><h2>Consumo, custo e eficiência da frota</h2></div>
             <p class="home-card-text">Filtros por mês, placa, posto e tipo de combustível com KPIs e gráficos de desempenho.</p>
             <ul class="home-list"><li>KPIs automáticos de custo, km e litros</li><li>Comparativo por posto e tipo de combustível</li><li>Histórico mensal de consumo e gastos</li></ul>
@@ -3469,12 +3475,6 @@ def render_home() -> None:
             <p class="home-card-text">Visão consolidada dos custos Vex, com filtros por ano e mês.</p>
             <ul class="home-list"><li>Totais Vex por área</li><li>Evolução mensal dos gastos</li><li>Resumo centralizado da categoria</li></ul>
             <a class="home-link" href="?page=vex" target="_self">Abrir dashboard &rarr;</a>
-          </article>
-          <article class="home-card">
-            <div><span class="home-chip">Ranking</span><h2>Ranking de gastos por caminhão</h2></div>
-            <p class="home-card-text">Veja todos os caminhões em formato de tabela, do maior para o menor gasto, com detalhamento por placa.</p>
-            <ul class="home-list"><li>Ordenação por combustível, manutenção, pedágio/IPVA ou total</li><li>Métricas individuais dentro da própria linha</li><li>Filtros por ano, mês e categoria</li></ul>
-            <a class="home-link" href="?page=frota" target="_self">Abrir dashboard &rarr;</a>
           </article>
         </section>
         </main>
