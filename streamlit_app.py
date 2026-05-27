@@ -26,7 +26,7 @@ MUTED = "#6B7280"
 CARD_BORDER = "#c2d2f3"
 LOGO_PATH = Path(__file__).parent / "static" / "logo-jr.png"
 CURRENT_YEAR = date.today().year
-APP_VERSION = "deploy-frota-ranking-versus-v1"
+APP_VERSION = "deploy-frota-ranking-difference-v1"
 
 PLOTLY_CONFIG = {
     "responsive": True,
@@ -1143,6 +1143,60 @@ def inject_css() -> None:
           font-weight: 900;
         }}
 
+        .ranking-difference {{
+          margin: 0 0 16px;
+          padding: 16px;
+          border: 1.5px solid rgba(194,210,243,.95);
+          border-top: 4px solid var(--jr-red);
+          border-radius: 12px;
+          background: rgba(255,255,255,.92);
+          box-shadow: 0 10px 24px rgba(16,24,40,.10);
+        }}
+
+        .ranking-difference h3 {{
+          margin: 0 0 12px;
+          color: var(--jr-blue);
+          font-size: 17px;
+          font-weight: 900;
+        }}
+
+        .ranking-difference-grid {{
+          display: grid;
+          grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+          gap: 10px;
+        }}
+
+        .ranking-difference-item {{
+          padding: 12px;
+          border-radius: 10px;
+          background: #f8faff;
+          border: 1px solid rgba(194,210,243,.72);
+        }}
+
+        .ranking-difference-label {{
+          margin: 0 0 6px;
+          color: var(--muted);
+          font-size: 10px;
+          font-weight: 900;
+          letter-spacing: .06em;
+          text-transform: uppercase;
+        }}
+
+        .ranking-difference-value {{
+          margin: 0;
+          color: var(--jr-red);
+          font-size: 20px;
+          line-height: 1.15;
+          font-weight: 900;
+        }}
+
+        .ranking-difference-note {{
+          margin: 4px 0 0;
+          color: var(--jr-blue);
+          font-size: 12px;
+          font-weight: 800;
+        }}
+
         .ranking-empty {{
           margin: 18px 0;
           padding: 18px;
@@ -1419,6 +1473,18 @@ def fmt_brl_compact(value: object) -> str:
         number = 0.0
     formatted = f"{number:,.0f}".replace(",", ".")
     return f"R$ {formatted}"
+
+
+def fmt_brl_big(value: object, *, threshold: float = 1000.0) -> str:
+    try:
+        number = float(value or 0)
+    except (TypeError, ValueError):
+        number = 0.0
+    if abs(number) >= threshold:
+        integer = int(number) if number >= 0 else -int(abs(number))
+        formatted = f"{integer:,}".replace(",", ".")
+        return f"R$ {formatted}"
+    return fmt_brl(number)
 
 
 def fmt_num(value: object, decimals: int = 0) -> str:
@@ -3097,10 +3163,10 @@ def ranking_summary_html(row: dict) -> str:
     items = [
         ("Posição", f"#{int(row.get('rank') or 0):02d}"),
         ("Placa", row.get("placa") or "Sem placa"),
-        ("Total", fmt_brl(row.get("total"))),
-        ("Combustível", fmt_brl(row.get("combustivel"))),
-        ("Manutenção", fmt_brl(row.get("manutencao"))),
-        ("Pedágio/IPVA", fmt_brl(row.get("pedagio"))),
+        ("Total", fmt_brl_big(row.get("total"))),
+        ("Combustível", fmt_brl_big(row.get("combustivel"))),
+        ("Manutenção", fmt_brl_big(row.get("manutencao"))),
+        ("Pedágio/IPVA", fmt_brl_big(row.get("pedagio"))),
     ]
     return "".join(
         f'<div class="ranking-summary-item"><p class="ranking-summary-label">{h(label)}</p><p class="ranking-summary-value">{h(value)}</p></div>'
@@ -3110,10 +3176,10 @@ def ranking_summary_html(row: dict) -> str:
 
 def ranking_detail_html(row: dict) -> str:
     items = [
-        ("Gasto total", fmt_brl(row.get("total"))),
-        ("Combustível", fmt_brl(row.get("combustivel"))),
-        ("Manutenção", fmt_brl(row.get("manutencao"))),
-        ("Pedágio/IPVA", fmt_brl(row.get("pedagio"))),
+        ("Gasto total", fmt_brl_big(row.get("total"))),
+        ("Combustível", fmt_brl_big(row.get("combustivel"))),
+        ("Manutenção", fmt_brl_big(row.get("manutencao"))),
+        ("Pedágio/IPVA", fmt_brl_big(row.get("pedagio"))),
         ("KM total", fmt_num(row.get("km_total"))),
         ("Litros", fmt_num(row.get("litros_total"))),
         ("Custo total por KM", fmt_brl(row.get("custo_por_km"))),
@@ -3133,15 +3199,54 @@ def ranking_detail_html(row: dict) -> str:
 
 
 def ranking_row_label(row: dict) -> str:
-    return f"{int(row.get('rank') or 0):02d} · {row.get('placa') or 'Sem placa'} · Total {fmt_brl(row.get('total'))}"
+    return f"{int(row.get('rank') or 0):02d} · {row.get('placa') or 'Sem placa'} · Total {fmt_brl_big(row.get('total'))}"
+
+
+def _ranking_float(row: dict, key: str) -> float:
+    try:
+        return float(row.get(key) or 0)
+    except (TypeError, ValueError):
+        return 0.0
+
+
+def ranking_difference_html(rows: list[dict]) -> str:
+    if len(rows) < 2:
+        return ""
+    metrics = [
+        ("Diferença total", "total", fmt_brl_big),
+        ("Combustível", "combustivel", fmt_brl_big),
+        ("Manutenção", "manutencao", fmt_brl_big),
+        ("Pedágio/IPVA", "pedagio", fmt_brl_big),
+        ("KM total", "km_total", fmt_num),
+        ("Litros", "litros_total", fmt_num),
+        ("Custo/KM", "custo_por_km", fmt_brl),
+        ("KM/L", "km_por_litro", lambda value: f"{fmt_num(value, 2)} km/L"),
+    ]
+    items = []
+    for label, key, formatter in metrics:
+        ordered = sorted(rows, key=lambda row: _ranking_float(row, key), reverse=True)
+        high, low = ordered[0], ordered[-1]
+        diff = abs(_ranking_float(high, key) - _ranking_float(low, key))
+        note = f"{high.get('placa') or 'Sem placa'} acima de {low.get('placa') or 'Sem placa'}"
+        items.append(
+            f'<div class="ranking-difference-item"><p class="ranking-difference-label">{h(label)}</p>'
+            f'<p class="ranking-difference-value">{h(formatter(diff))}</p>'
+            f'<p class="ranking-difference-note">{h(note)}</p></div>'
+        )
+    return (
+        '<section class="ranking-difference">'
+        '<h3>Diferença entre as placas selecionadas</h3>'
+        f'<div class="ranking-difference-grid">{"".join(items)}</div>'
+        '</section>'
+    )
 
 
 def ranking_versus_html(rows: list[dict]) -> str:
     metrics = [
-        ("Total", "total", fmt_brl),
-        ("Combustível", "combustivel", fmt_brl),
-        ("Manutenção", "manutencao", fmt_brl),
-        ("Pedágio/IPVA", "pedagio", fmt_brl),
+        ("Total", "total", fmt_brl_big),
+        ("Combustível", "combustivel", fmt_brl_big),
+        ("Manutenção", "manutencao", fmt_brl_big),
+        ("Pedágio/IPVA", "pedagio", fmt_brl_big),
         ("KM total", "km_total", fmt_num),
         ("Litros", "litros_total", fmt_num),
         ("Custo/KM", "custo_por_km", fmt_brl),
@@ -3169,10 +3274,10 @@ def render_frota() -> None:
     render_kpis(
         [
             ("Placas no ranking", fmt_num(totais.get("placas")), JR_BLUE),
-            ("Gasto total", fmt_brl(totais.get("total")), JR_RED),
-            ("Combustível", fmt_brl(totais.get("combustivel")), JR_BLUE),
-            ("Manutenção", fmt_brl(totais.get("manutencao")), JR_RED),
-            ("Pedágio/IPVA", fmt_brl(totais.get("pedagio")), "#D97706"),
+            ("Gasto total", fmt_brl_big(totais.get("total")), JR_RED),
+            ("Combustível", fmt_brl_big(totais.get("combustivel")), JR_BLUE),
+            ("Manutenção", fmt_brl_big(totais.get("manutencao")), JR_RED),
+            ("Pedágio/IPVA", fmt_brl_big(totais.get("pedagio")), "#D97706"),
             ("Ordenado por", order_label, JR_BLUE),
         ]
     )
@@ -3186,7 +3291,8 @@ def render_frota() -> None:
     selected_plates = [str(item) for item in (params.get("placa") or []) if item not in (None, "", "Todos")]
     if len(selected_plates) >= 2:
         selected_set = set(selected_plates)
-        st.html(ranking_versus_html([row for row in ranking if row.get("placa") in selected_set]))
+        versus_rows = [row for row in ranking if row.get("placa") in selected_set]
+        st.html(ranking_difference_html(versus_rows) + ranking_versus_html(versus_rows))
 
     st.markdown(
         """
