@@ -28,7 +28,7 @@ MUTED = "#6B7280"
 CARD_BORDER = "#c2d2f3"
 LOGO_PATH = Path(__file__).parent / "static" / "logo-jr.png"
 CURRENT_YEAR = date.today().year
-APP_VERSION = "deploy-dominancia-total-cidade-v1"
+APP_VERSION = "deploy-ranking-defaults-monthly-v1"
 BR_TZ = ZoneInfo("America/Sao_Paulo")
 
 PLOTLY_CONFIG = {
@@ -104,8 +104,8 @@ COMPARE_SERIES = {
 }
 
 RANK_ORDER_OPTIONS = {
-    "combustivel": "Combustível",
     "total": "Gasto total",
+    "combustivel": "Combustível",
     "manutencao": "Manutenção",
     "pedagio": "Pedágio/IPVA",
     "peso": "Peso",
@@ -3304,9 +3304,10 @@ def frota_filter_controls(seed: dict) -> dict[str, object]:
             meses_selected = normalize_multiselect(meses_selected, st.session_state.get(mes_previous_key, ["Todos"]))
 
         category_options = ["Todos", *unique_filter_options(seed.get("categorias", []) or [])]
-        categoria_current = st.session_state.get("rank_categoria", "Todos")
+        categoria_default = "Transporte" if "Transporte" in category_options else "Todos"
+        categoria_current = st.session_state.get("rank_categoria", categoria_default)
         if categoria_current not in category_options:
-            categoria_current = "Todos"
+            categoria_current = categoria_default
         with cols[2]:
             categoria = st.selectbox(
                 "Categoria",
@@ -3323,7 +3324,7 @@ def frota_filter_controls(seed: dict) -> dict[str, object]:
                 "ano": None if ano == "Todos" else ano,
                 "mes": query_mes(meses_selected),
                 "categoria": None if categoria == "Todos" else categoria,
-                "ordenar_por": "combustivel",
+                "ordenar_por": "total",
             },
         )
         plate_options = ["Todos", *unique_filter_options(plate_seed.get("placas", []) or [])]
@@ -3350,9 +3351,9 @@ def frota_filter_controls(seed: dict) -> dict[str, object]:
             placas_selected = normalize_multiselect(placas_selected, st.session_state.get(plate_previous_key, ["Todos"]))
 
         order_options = list(RANK_ORDER_OPTIONS)
-        order_current = st.session_state.get("rank_ordenar_por", "combustivel")
+        order_current = st.session_state.get("rank_ordenar_por", "total")
         if order_current not in order_options:
-            order_current = "combustivel"
+            order_current = "total"
         with cols[4]:
             ordenar_por = st.selectbox(
                 "Ordenar por",
@@ -3587,6 +3588,29 @@ def dominance_city_ranking_html(cidades: list[dict]) -> str:
     )
 
 
+def peso_bar_chart(labels: list, values: list) -> go.Figure:
+    rows = [(str(label), float(value or 0)) for label, value in zip(labels or [], values or [])]
+    values_clean = [item[1] for item in rows]
+    labels_clean = [item[0] for item in rows]
+    text = [fmt_peso(value) for value in values_clean]
+    fig = go.Figure(
+        go.Bar(
+            x=labels_clean,
+            y=values_clean,
+            marker={"color": JR_BLUE},
+            text=text,
+            textposition="outside",
+            textfont={"size": 11, "color": JR_BLUE},
+            cliponaxis=False,
+            hovertemplate="<b>%{x}</b><br>%{text}<extra></extra>",
+        )
+    )
+    max_value = max(values_clean) if values_clean else 0
+    fig.update_xaxes(tickangle=-30, type="category")
+    fig.update_yaxes(title="kg", range=[0, max_value * 1.16] if max_value else None, automargin=True)
+    return apply_theme(fig, height=370, margin={"l": 60, "r": 48, "t": 58, "b": 70})
+
+
 def dominance_city_summaries(cidades: list[dict], *, limit: int = 10) -> dict[str, str]:
     grouped: dict[str, list[dict]] = {}
     for item in cidades:
@@ -3605,7 +3629,7 @@ def dominance_city_summaries(cidades: list[dict], *, limit: int = 10) -> dict[st
 
 def render_frota() -> None:
     topbar("JR DASHBOARD • Ranking de caminhões", back=False)
-    seed = route_json("frota", {"ano": "Todos", "mes": ["Todos"], "ordenar_por": "combustivel"})
+    seed = route_json("frota", {"ano": "Todos", "mes": ["Todos"], "categoria": "Transporte", "ordenar_por": "total"})
     params = frota_filter_controls(seed)
     data = route_json("frota", params)
     totais = data.get("totais", {}) or {}
@@ -3634,6 +3658,37 @@ def render_frota() -> None:
         selected_set = set(selected_plates)
         versus_rows = [row for row in ranking if row.get("placa") in selected_set]
         st.html(ranking_difference_html(versus_rows) + ranking_versus_html(versus_rows))
+
+    include_year = params.get("ano") is None
+    fallback_year = params.get("ano")
+    total_labels, total_values = sorted_series(
+        data.get("mensal_total", {}),
+        "Mes",
+        "Valor",
+        include_year=include_year,
+        fallback_year=fallback_year,
+    )
+    peso_labels, peso_values = sorted_series(
+        data.get("peso_mensal", {}),
+        "Mes",
+        "Peso",
+        include_year=include_year,
+        fallback_year=fallback_year,
+    )
+    total_monthly_fig = (
+        yearly_month_line_chart(data.get("mensal_total", {}), "Mes", "Valor", fallback_year=fallback_year)
+        if include_year
+        else line_chart(total_labels, total_values)
+    )
+    peso_monthly_fig = (
+        yearly_month_bar_chart(data.get("peso_mensal", {}), "Mes", "Peso", fallback_year=fallback_year, currency=False)
+        if include_year
+        else peso_bar_chart(peso_labels, peso_values)
+    )
+    chart_grid([
+        ("Gasto total por mês", total_monthly_fig),
+        ("Peso por mês", peso_monthly_fig),
+    ])
 
     dominancia = data.get("dominancia_peso", {}) or {}
     cidades_dominadas = dominancia.get("cidades", []) or []

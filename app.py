@@ -1905,6 +1905,22 @@ def _ranking_count_by_plate(df: pd.DataFrame) -> dict[str, int]:
     return {str(placa): int(valor or 0) for placa, valor in grouped.items()}
 
 
+def _ranking_monthly_sum(frames: list[tuple[pd.DataFrame, str]], value_name: str) -> dict:
+    monthly: dict[str, float] = defaultdict(float)
+    for df, value_col in frames:
+        if df.empty or "Mes" not in df.columns or value_col not in df.columns:
+            continue
+        data = df[["Mes", value_col]].dropna(subset=["Mes"]).copy()
+        data[value_col] = pd.to_numeric(data[value_col], errors="coerce")
+        data = data.dropna(subset=[value_col])
+        for mes_val, value in data.groupby("Mes")[value_col].sum().items():
+            key = str(mes_val).strip()
+            if key:
+                monthly[key] += float(value or 0.0)
+    meses = sorted(monthly)
+    return {"Mes": meses, value_name: [round(monthly[mes], 3) for mes in meses]}
+
+
 def _ranking_weight_dominance_by_city(df: pd.DataFrame, placas: list[str] | None = None) -> dict:
     if df.empty or not {"Cidade", "PLACA", "Peso"}.issubset(df.columns):
         return {"labels": [], "values": [], "city_counts": [], "cidades": []}
@@ -1986,7 +2002,7 @@ def data_frota(params: dict | None = None) -> dict:
     meses = _parse_mes_list(params.get("mes"))
     categoria = _param(params, "categoria")
     placas = _ranking_parse_plate_list(params.get("placa"))
-    ordenar_por = str(_param(params, "ordenar_por") or "combustivel").strip().lower()
+    ordenar_por = str(_param(params, "ordenar_por") or "total").strip().lower()
 
     df_comb = _ranking_filter_valid_plates(_apply_plate_categories(load_combustivel()))
     df_manu = _ranking_filter_valid_plates(_apply_plate_categories(load_manutencao()))
@@ -2044,6 +2060,8 @@ def data_frota(params: dict | None = None) -> dict:
     total_ped = _ranking_sum_by_plate(df_ped, "Custo")
     peso_map = _ranking_sum_by_plate(df_peso, "Peso")
     valor_peso_map = _ranking_sum_by_plate(df_peso, "Valor")
+    mensal_total = _ranking_monthly_sum([(df_comb, "Custo"), (df_manu, "Custo"), (df_ped, "Custo")], "Valor")
+    mensal_peso = _ranking_monthly_sum([(df_peso, "Peso")], "Peso")
     litros_map = _ranking_sum_by_plate(df_comb, "Litros")
     km_fuel_map = _ranking_sum_by_plate(df_comb, "Km Rodados")
     km_override_map = _ranking_sum_by_plate(df_km, "Km Rodados")
@@ -2105,6 +2123,8 @@ def data_frota(params: dict | None = None) -> dict:
         "ordenar_por": sort_key,
         "ranking": ranking,
         "dominancia_peso": dominancia_peso,
+        "mensal_total": mensal_total,
+        "peso_mensal": mensal_peso,
         "totais": {
             "placas": len(ranking),
             "total": round(sum(row["total"] for row in ranking), 2),
