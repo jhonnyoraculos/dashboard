@@ -4819,6 +4819,56 @@ def _render_peso_sheet_import(plate_map: dict[str, str]) -> None:
             st.rerun()
 
 
+def _render_peso_month_reset() -> None:
+    with st.expander("Zerar peso por mes", expanded=False):
+        st.warning("Essa acao apaga todos os lancamentos de peso do mes escolhido.")
+
+        anos = [CURRENT_YEAR]
+        df_preview = pd.DataFrame()
+        try:
+            df_preview = backend.load_peso()
+            if not df_preview.empty and "Mes" in df_preview.columns:
+                parsed_years = pd.to_datetime(df_preview["Mes"], errors="coerce").dt.year.dropna().astype(int).unique().tolist()
+                anos = sorted(set(anos) | set(parsed_years), reverse=True)
+        except Exception as exc:
+            st.info("Nao foi possivel carregar a tabela de peso para prever os totais, mas a exclusao ainda pode ser tentada.")
+            st.caption(str(exc))
+
+        c1, c2 = st.columns(2)
+        with c1:
+            ano = st.selectbox("Ano", anos, index=0, key="cad_peso_reset_ano")
+        with c2:
+            mes_num = st.selectbox(
+                "Mes",
+                list(range(1, 13)),
+                index=max(date.today().month - 1, 0),
+                format_func=lambda value: f"{value:02d}",
+                key="cad_peso_reset_mes",
+            )
+
+        mes_key = f"{int(ano)}-{int(mes_num):02d}"
+        if not df_preview.empty and "Mes" in df_preview.columns:
+            mask = df_preview["Mes"].astype("string").str.strip().eq(mes_key)
+            linhas = int(mask.sum())
+            peso_total = float(pd.to_numeric(df_preview.loc[mask, "Peso"], errors="coerce").sum()) if "Peso" in df_preview.columns else 0.0
+            st.caption(f"{mes_key}: {linhas} lancamento(s), {fmt_peso(peso_total)}.")
+        else:
+            st.caption(f"Mes selecionado: {mes_key}.")
+
+        confirmar = st.checkbox(f"Confirmo que quero zerar o peso de {mes_key}.", key="cad_peso_reset_confirm")
+        if st.button("Zerar mes de peso", type="primary", width="stretch", disabled=not confirmar, key="cad_peso_reset_button"):
+            try:
+                deleted = backend.delete_dashboard_month("peso", mes_key)
+            except Exception as exc:
+                st.error("Nao foi possivel zerar esse mes no Neon.")
+                st.exception(exc)
+                return
+            _reset_dataset_editor("cad_peso_table")
+            clear_cached_reads()
+            st.success(f"{deleted} lancamento(s) de peso apagado(s) em {mes_key}.")
+            st.rerun()
+
+
 def _clear_pedagio_last_import() -> None:
     st.session_state.pop("cad_ped_last_import_rows", None)
     st.session_state.pop("cad_ped_last_import_count", None)
@@ -5213,6 +5263,7 @@ def render_cadastro() -> None:
 
         with tabs[5]:
             _render_peso_sheet_import(plate_map)
+            _render_peso_month_reset()
 
             with st.form("form_peso", clear_on_submit=True):
                 c1, c2, c3 = st.columns(3)

@@ -684,6 +684,44 @@ def delete_matching_dashboard_records(dataset: str, rows: list[dict]) -> int:
     return deleted
 
 
+def delete_dashboard_month(dataset: str, mes: str) -> int:
+    if dataset not in DB_TABLES or dataset not in _DATASET_COLUMNS:
+        raise ValueError(f"Dataset invalido: {dataset}")
+
+    mes_value = str(mes or "").strip()
+    if not re.fullmatch(r"\d{4}-\d{2}", mes_value):
+        raise ValueError("Mes invalido. Use o formato YYYY-MM.")
+    year, month = (int(part) for part in mes_value.split("-"))
+    start_date = datetime(year, month, 1)
+    end_date = datetime(year + (1 if month == 12 else 0), 1 if month == 12 else month + 1, 1)
+
+    from sqlalchemy import text
+
+    table = _quote_identifier(DB_TABLES[dataset])
+    version = datetime.now(timezone.utc).isoformat()
+
+    with _db_engine().begin() as conn:
+        _ensure_dataset_table(conn, dataset)
+        if "Data" in _DATASET_COLUMNS[dataset]:
+            delete_sql = f"DELETE FROM {table} WHERE \"Mes\" = :mes OR (\"Data\" >= :start_date AND \"Data\" < :end_date)"
+            params = {"mes": mes_value, "start_date": start_date, "end_date": end_date}
+        else:
+            delete_sql = f"DELETE FROM {table} WHERE \"Mes\" = :mes"
+            params = {"mes": mes_value}
+        result = conn.execute(text(delete_sql), params)
+        deleted = max(result.rowcount or 0, 0)
+
+        if dataset in {"combustivel", "manutencao", "pedagio", "peso"}:
+            _write_metadata(conn, "placas.version", version)
+        _write_metadata(conn, f"{dataset}.version", version)
+        _write_metadata(conn, "import.version", version)
+
+    if dataset in {"combustivel", "manutencao", "pedagio", "peso"}:
+        _clear_dataset_cache("placas")
+    _clear_dataset_cache(dataset)
+    return deleted
+
+
 def rename_plate(old_plate, new_plate, categoria: str) -> str:
     old_value = _normalize_plate_value(old_plate)
     new_value = _normalize_plate_value(new_plate)
