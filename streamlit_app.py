@@ -4858,7 +4858,19 @@ def _render_peso_month_reset() -> None:
         confirmar = st.checkbox(f"Confirmo que quero zerar o peso de {mes_key}.", key="cad_peso_reset_confirm")
         if st.button("Zerar mes de peso", type="primary", width="stretch", disabled=not confirmar, key="cad_peso_reset_button"):
             try:
-                deleted = backend.delete_dashboard_month("peso", mes_key)
+                delete_month = getattr(backend, "delete_dashboard_month", None)
+                if callable(delete_month):
+                    deleted = delete_month("peso", mes_key)
+                else:
+                    if df_preview.empty:
+                        raise RuntimeError("A tabela de peso nao foi carregada para apagar pelo modo compativel.")
+                    fallback = df_preview.copy()
+                    month_mask = fallback["Mes"].astype("string").str.strip().eq(mes_key) if "Mes" in fallback.columns else pd.Series(False, index=fallback.index)
+                    if "Data" in fallback.columns:
+                        data_period = pd.to_datetime(fallback["Data"], errors="coerce").dt.to_period("M").astype("string")
+                        month_mask = month_mask | data_period.eq(mes_key)
+                    rows = fallback.loc[month_mask].to_dict("records")
+                    deleted = backend.delete_matching_dashboard_records("peso", rows) if rows else 0
             except Exception as exc:
                 st.error("Nao foi possivel zerar esse mes no Neon.")
                 st.exception(exc)
