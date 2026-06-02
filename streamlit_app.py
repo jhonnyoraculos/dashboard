@@ -3931,7 +3931,15 @@ def _registered_plate_map() -> dict[str, str]:
         placa = clean_text(row.get("PLACA")).strip().upper()
         categoria = clean_text(row.get("Categoria") or "Transporte").strip()
         if placa:
-            mapping[placa] = "Vex" if categoria.lower() == "vex" else "Transporte"
+            normalized = categoria.lower()
+            if "EMPILHADEIRA" in placa:
+                mapping[placa] = "Equipamento"
+            elif normalized == "vex":
+                mapping[placa] = "Vex"
+            elif normalized == "equipamento":
+                mapping[placa] = "Equipamento"
+            else:
+                mapping[placa] = "Transporte"
     return dict(sorted(mapping.items()))
 
 
@@ -3948,6 +3956,21 @@ def _clear_stale_plate_editor_state(active_key: str) -> None:
     for key in list(st.session_state.keys()):
         if key == "cad_placas_editor" or (key.startswith("cad_placas_editor_") and key != active_key):
             del st.session_state[key]
+
+
+def _filter_plate_table(table: pd.DataFrame, editor_token: str) -> pd.DataFrame:
+    with st.expander("Filtros da tabela", expanded=True):
+        search = st.text_input(
+            "Buscar",
+            key=f"cad_placas_search_{editor_token}",
+            placeholder="Digite para buscar placa ou categoria",
+        )
+    if not search.strip():
+        return table
+    needle = search.strip().lower()
+    searchable = table[["Placa atual", "Placa", "Categoria"]].astype("string").fillna("").apply(lambda col: col.str.lower())
+    mask = searchable.apply(lambda row: any(needle in value for value in row), axis=1)
+    return table.loc[mask].copy()
 
 
 def _registered_text_options(loader, column: str) -> list[str]:
@@ -4078,7 +4101,13 @@ def _save_plate_sheet(original_map: dict[str, str], edited: pd.DataFrame) -> boo
         if not new_plate:
             st.warning("Existe uma linha sem placa preenchida.")
             return False
-        categoria_final = "Vex" if categoria.lower() == "vex" else "Transporte"
+        normalized = categoria.lower()
+        if normalized == "vex":
+            categoria_final = "Vex"
+        elif normalized == "equipamento":
+            categoria_final = "Equipamento"
+        else:
+            categoria_final = "Transporte"
         final_categories[new_plate] = categoria_final
         rows.append((old_plate, new_plate))
 
@@ -5061,8 +5090,9 @@ def render_cadastro() -> None:
                         for placa, categoria in plate_map.items()
                     ]
                 )
+                filtered_table = _filter_plate_table(table, editor_token)
                 edited_plates = st.data_editor(
-                    table,
+                    filtered_table,
                     width="stretch",
                     hide_index=True,
                     num_rows="dynamic",

@@ -888,10 +888,19 @@ def _normalize_category_value(value, *, default: str = "Transporte") -> str:
 def _normalize_category_column(df: pd.DataFrame, *, default: str = "Transporte") -> None:
     if "Categoria" not in df.columns:
         df["Categoria"] = default
+    else:
+        _normalize_text_column(df, "Categoria")
+        df["Categoria"] = df["Categoria"].fillna(default)
+        df["Categoria"] = df["Categoria"].apply(lambda value: _normalize_category_value(value, default=default))
+    _force_equipment_category(df)
+
+
+def _force_equipment_category(df: pd.DataFrame) -> None:
+    if df.empty or "PLACA" not in df.columns or "Categoria" not in df.columns:
         return
-    _normalize_text_column(df, "Categoria")
-    df["Categoria"] = df["Categoria"].fillna(default)
-    df["Categoria"] = df["Categoria"].apply(lambda value: _normalize_category_value(value, default=default))
+    mask = df["PLACA"].apply(_is_equipment_identifier)
+    if mask.any():
+        df.loc[mask, "Categoria"] = "Equipamento"
 
 
 def _normalize_tipo_value(value):
