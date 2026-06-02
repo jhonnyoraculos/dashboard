@@ -32,6 +32,7 @@ APP_VERSION = "deploy-ranking-defaults-monthly-v1"
 BR_TZ = ZoneInfo("America/Sao_Paulo")
 CATEGORY_OPTIONS = ["Transporte", "Vex", "Equipamento"]
 PEDAGIO_TIPO_OPTIONS = ["Pedagio", "Extras", "Taxi", "IPVA", "Seguro", "Licenciamento", "DPVAT", "Outros"]
+PEDAGIO_OPTIONAL_PLATE_TYPES = {"Extras", "Taxi"}
 
 PLOTLY_CONFIG = {
     "responsive": True,
@@ -5509,14 +5510,21 @@ def render_cadastro() -> None:
 
             with st.form("form_pedagio", clear_on_submit=True):
                 c1, c2, c3 = st.columns(3)
-                with c1:
-                    data = st.date_input("Data", value=date.today(), key="cad_ped_data")
-                    placa, categoria = _plate_fields("cad_ped", plate_map)
                 with c2:
                     tipo = st.selectbox("Tipo", PEDAGIO_TIPO_OPTIONS, key="cad_ped_tipo")
+                plate_required = tipo not in PEDAGIO_OPTIONAL_PLATE_TYPES
+                with c1:
+                    data = st.date_input("Data", value=date.today(), key="cad_ped_data")
+                    if plate_required:
+                        placa, categoria = _plate_fields("cad_ped", plate_map)
+                    else:
+                        st.text_input("Placa", value="Sem placa", disabled=True, key="cad_ped_no_plate")
+                        st.text_input("Categoria da placa", value="Transporte", disabled=True, key="cad_ped_no_plate_categoria")
+                        placa, categoria = None, "Transporte"
                 with c3:
                     custo = st.number_input("Custo", min_value=0.0, step=10.0, format="%.2f", key="cad_ped_custo")
                     submitted = st.form_submit_button("Salvar pedágio/extra", type="primary", width="stretch")
+                required = ["Data", "Tipo"] if not plate_required else ["Data", "PLACA", "Tipo"]
                 if submitted:
                     _save_entry(
                         "pedagio",
@@ -5528,14 +5536,14 @@ def render_cadastro() -> None:
                             "Custo": custo,
                             "Categoria": categoria,
                         },
-                        required=["Data", "PLACA", "Tipo"],
+                        required=required,
                         success="Lançamento de pedágio/extra salvo.",
                     )
             _render_dataset_editor(
                 "pedagio",
                 backend.load_pedagio,
                 ["Data", "Mes", "PLACA", "Categoria", "Tipo", "Custo"],
-                ["Data", "PLACA", "Tipo"],
+                ["Data", "Tipo"],
                 "cad_ped_table",
                 {
                     "Data": _date_col(),
