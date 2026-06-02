@@ -30,6 +30,7 @@ LOGO_PATH = Path(__file__).parent / "static" / "logo-jr.png"
 CURRENT_YEAR = date.today().year
 APP_VERSION = "deploy-ranking-defaults-monthly-v1"
 BR_TZ = ZoneInfo("America/Sao_Paulo")
+CATEGORY_OPTIONS = ["Transporte", "Vex", "Equipamento"]
 
 PLOTLY_CONFIG = {
     "responsive": True,
@@ -4002,7 +4003,11 @@ def _plate_fields(prefix: str, plate_map: dict[str, str] | None = None) -> tuple
     selected = st.selectbox("Placa", options, key=f"{prefix}_placa_select")
     if selected == "Cadastrar nova placa":
         placa = st.text_input("Nova placa", placeholder="ABC1D23", key=f"{prefix}_placa_manual").upper()
-        categoria = st.selectbox("Categoria da placa", ["Transporte", "Vex"], key=f"{prefix}_categoria_manual")
+        categoria_key = f"{prefix}_categoria_manual"
+        default_categoria = "Equipamento" if "EMPILHADEIRA" in clean_text(placa).upper() else "Transporte"
+        if default_categoria == "Equipamento" and st.session_state.get(categoria_key, "Transporte") == "Transporte":
+            st.session_state[categoria_key] = "Equipamento"
+        categoria = st.selectbox("Categoria da placa", CATEGORY_OPTIONS, index=CATEGORY_OPTIONS.index(default_categoria), key=categoria_key)
         return placa, categoria
     if selected == "Selecione uma placa":
         st.text_input("Categoria da placa", value="", disabled=True, key=f"{prefix}_categoria_empty")
@@ -5028,7 +5033,10 @@ def render_cadastro() -> None:
                 with c1:
                     placa = st.text_input("Placa", placeholder="ABC1D23", key="cad_placa_nome").upper()
                 with c2:
-                    categoria = st.selectbox("Categoria", ["Transporte", "Vex"], key="cad_placa_categoria")
+                    default_categoria = "Equipamento" if "EMPILHADEIRA" in clean_text(placa).upper() else "Transporte"
+                    if default_categoria == "Equipamento" and st.session_state.get("cad_placa_categoria", "Transporte") == "Transporte":
+                        st.session_state["cad_placa_categoria"] = "Equipamento"
+                    categoria = st.selectbox("Categoria", CATEGORY_OPTIONS, index=CATEGORY_OPTIONS.index(default_categoria), key="cad_placa_categoria")
                 with c3:
                     st.write("")
                     submitted = st.form_submit_button("Cadastrar placa", type="primary", width="stretch")
@@ -5064,7 +5072,7 @@ def render_cadastro() -> None:
                         "Placa": st.column_config.TextColumn("Placa"),
                         "Categoria": st.column_config.SelectboxColumn(
                             "Categoria",
-                            options=["Transporte", "Vex"],
+                            options=CATEGORY_OPTIONS,
                             required=True,
                         ),
                     },
@@ -5161,7 +5169,7 @@ def render_cadastro() -> None:
                     "Data": _date_col(),
                     "Mes": st.column_config.TextColumn("Mes"),
                     "PLACA": st.column_config.TextColumn("Placa"),
-                    "Categoria": st.column_config.SelectboxColumn("Categoria", options=["Transporte", "Vex"], required=True),
+                    "Categoria": st.column_config.SelectboxColumn("Categoria", options=CATEGORY_OPTIONS, required=True),
                     "Combustivel": st.column_config.TextColumn("Combustivel"),
                     "POSTOS": st.column_config.TextColumn("Posto"),
                     "Km Rodados": _number_col("KM rodados"),
@@ -5243,7 +5251,7 @@ def render_cadastro() -> None:
                     "Data": _date_col(),
                     "Mes": st.column_config.TextColumn("Mes"),
                     "PLACA": st.column_config.TextColumn("Placa"),
-                    "Categoria": st.column_config.SelectboxColumn("Categoria", options=["Transporte", "Vex"], required=True),
+                    "Categoria": st.column_config.SelectboxColumn("Categoria", options=CATEGORY_OPTIONS, required=True),
                     "OFICINA": st.column_config.TextColumn("Oficina"),
                     "Custo": _money_col("Custo"),
                 },
@@ -5343,7 +5351,7 @@ def render_cadastro() -> None:
                     "Ajudante": st.column_config.TextColumn("Ajudante"),
                     "Dias": _number_col("Dias"),
                     "Valor": _money_col("Valor"),
-                    "Categoria": st.column_config.SelectboxColumn("Categoria", options=["Transporte", "Vex"], required=True),
+                    "Categoria": st.column_config.SelectboxColumn("Categoria", options=CATEGORY_OPTIONS, required=True),
                 },
                 ["Mes", "Cidade", "Hotel", "Tipo", "Motorista", "Categoria"],
             )
@@ -5390,7 +5398,7 @@ def render_cadastro() -> None:
                     "Mes": st.column_config.TextColumn("Mes"),
                     "Cidade": st.column_config.TextColumn("Cidade"),
                     "PLACA": st.column_config.TextColumn("Placa"),
-                    "Categoria": st.column_config.SelectboxColumn("Categoria", options=["Transporte", "Vex"], required=True),
+                    "Categoria": st.column_config.SelectboxColumn("Categoria", options=CATEGORY_OPTIONS, required=True),
                     "Peso": _number_col("Peso"),
                     "Valor": _money_col("Valor"),
                 },
@@ -5434,7 +5442,7 @@ def render_cadastro() -> None:
                     "Data": _date_col(),
                     "Mes": st.column_config.TextColumn("Mes"),
                     "PLACA": st.column_config.TextColumn("Placa"),
-                    "Categoria": st.column_config.SelectboxColumn("Categoria", options=["Transporte", "Vex"], required=True),
+                    "Categoria": st.column_config.SelectboxColumn("Categoria", options=CATEGORY_OPTIONS, required=True),
                     "Tipo": st.column_config.SelectboxColumn("Tipo", options=["Pedagio", "IPVA", "Seguro", "Licenciamento", "DPVAT", "Outros"], required=True),
                     "Custo": _money_col("Custo"),
                 },

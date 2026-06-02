@@ -372,15 +372,16 @@ def _prepare_insert_row(dataset: str, row: dict) -> dict:
 
     if "PLACA" in prepared:
         prepared["PLACA"] = _normalize_insert_value(_normalize_plate_value(prepared["PLACA"]))
-        if dataset == "placas" and not _is_plate_identifier(prepared["PLACA"]):
+        if dataset == "placas" and not _is_plate_or_asset_identifier(prepared["PLACA"]):
             prepared["PLACA"] = None
     if "Tipo" in prepared and dataset == "pedagio":
         prepared["Tipo"] = _normalize_tipo_value(prepared["Tipo"])
     if "Combustivel" in prepared:
         prepared["Combustivel"] = _normalize_combustivel_value(prepared["Combustivel"])
     if "Categoria" in prepared:
-        categoria = str(prepared["Categoria"] or "Transporte").strip()
-        prepared["Categoria"] = "Vex" if categoria.lower() == "vex" else "Transporte"
+        prepared["Categoria"] = _normalize_category_value(prepared["Categoria"])
+    if prepared.get("PLACA") and _is_equipment_identifier(prepared["PLACA"]):
+        prepared["Categoria"] = "Equipamento"
 
     for column, value in list(prepared.items()):
         if isinstance(value, str):
@@ -736,12 +737,12 @@ def delete_dashboard_month(dataset: str, mes: str) -> int:
 def rename_plate(old_plate, new_plate, categoria: str) -> str:
     old_value = _normalize_plate_value(old_plate)
     new_value = _normalize_plate_value(new_plate)
-    if not _is_plate_identifier(old_value):
-        raise ValueError("Placa original invalida.")
-    if not _is_plate_identifier(new_value):
-        raise ValueError("Nova placa invalida.")
+    if not _is_plate_or_asset_identifier(old_value):
+        raise ValueError("Placa/equipamento original invalido.")
+    if not _is_plate_or_asset_identifier(new_value):
+        raise ValueError("Nova placa/equipamento invalido.")
 
-    categoria_value = "Vex" if str(categoria or "").strip().lower() == "vex" else "Transporte"
+    categoria_value = _normalize_category_value(categoria)
     version = datetime.now(timezone.utc).isoformat()
 
     from sqlalchemy import text
@@ -806,6 +807,22 @@ def _is_plate_identifier(value) -> bool:
     return bool(re.fullmatch(r"[A-Z]{3}[0-9][A-Z0-9][0-9]{2}|[A-Z]{3}[0-9]{4}", text))
 
 
+def _is_plate_or_asset_identifier(value) -> bool:
+    if _is_plate_identifier(value):
+        return True
+    if pd.isna(value):
+        return False
+    text = _normalize_ascii(value).upper().strip()
+    return bool(re.fullmatch(r"[A-Z0-9][A-Z0-9 ]{1,39}", text))
+
+
+def _is_equipment_identifier(value) -> bool:
+    if pd.isna(value):
+        return False
+    text = _normalize_ascii(value).upper().strip()
+    return "EMPILHADEIRA" in text
+
+
 def _normalize_plate_series(series: pd.Series) -> pd.Series:
     if series is None:
         return pd.Series(dtype="string")
@@ -854,14 +871,27 @@ def _normalize_combustivel_column(df: pd.DataFrame) -> None:
     df["Combustivel"] = df["Combustivel"].apply(_normalize_combustivel_value).astype("string")
 
 
+def _normalize_category_value(value, *, default: str = "Transporte") -> str:
+    try:
+        missing = pd.isna(value)
+    except TypeError:
+        missing = False
+    raw = str(default if missing or value is None else value).strip()
+    key = _normalize_ascii(raw).lower()
+    if key == "vex":
+        return "Vex"
+    if key in {"equipamento", "equipamentos", "empilhadeira"}:
+        return "Equipamento"
+    return "Transporte"
+
+
 def _normalize_category_column(df: pd.DataFrame, *, default: str = "Transporte") -> None:
     if "Categoria" not in df.columns:
         df["Categoria"] = default
         return
     _normalize_text_column(df, "Categoria")
     df["Categoria"] = df["Categoria"].fillna(default)
-    normalized = df["Categoria"].astype("string").str.strip().str.lower()
-    df["Categoria"] = normalized.map({"vex": "Vex", "transporte": "Transporte"}).fillna(df["Categoria"])
+    df["Categoria"] = df["Categoria"].apply(lambda value: _normalize_category_value(value, default=default))
 
 
 def _normalize_tipo_value(value):
@@ -900,7 +930,7 @@ def _read_plate_registry() -> pd.DataFrame:
             df["PLACA"] = _normalize_plate_series(df["PLACA"])
             _normalize_category_column(df)
             df = df.dropna(subset=["PLACA"]).drop_duplicates(subset=["PLACA"], keep="last")
-            df = df[df["PLACA"].apply(_is_plate_identifier)]
+            df = df[df["PLACA"].apply(_is_plate_or_asset_identifier)]
         else:
             df = _empty(_PLACAS_COLUMNS)
 
@@ -947,12 +977,18 @@ def _derived_plate_registry() -> pd.DataFrame:
     df["PLACA"] = _normalize_plate_series(df["PLACA"])
     _normalize_category_column(df)
     df = df.dropna(subset=["PLACA"])
-    df = df[df["PLACA"].apply(_is_plate_identifier)]
+    df = df[df["PLACA"].apply(_is_plate_or_asset_identifier)]
     if df.empty:
         return _empty(_PLACAS_COLUMNS)
     grouped = (
         df.groupby("PLACA", as_index=False)["Categoria"]
-        .agg(lambda values: "Vex" if any(str(value).strip().lower() == "vex" for value in values) else "Transporte")
+        .agg(
+            lambda values: (
+                "Equipamento"
+                if any(_normalize_category_value(value) == "Equipamento" for value in values)
+                else ("Vex" if any(_normalize_category_value(value) == "Vex" for value in values) else "Transporte")
+            )
+        )
     )
     return grouped.sort_values("PLACA").reset_index(drop=True)
 
@@ -979,7 +1015,7 @@ def load_placas() -> pd.DataFrame:
         df["PLACA"] = _normalize_plate_series(df["PLACA"])
         _normalize_category_column(df)
         df = df.dropna(subset=["PLACA"]).drop_duplicates(subset=["PLACA"], keep="last")
-        df = df[df["PLACA"].apply(_is_plate_identifier)]
+        df = df[df["PLACA"].apply(_is_plate_or_asset_identifier)]
         df = df[_PLACAS_COLUMNS].sort_values("PLACA").reset_index(drop=True)
 
     with _PLACAS_CACHE["lock"]:
@@ -1071,7 +1107,7 @@ def _parse_int(value, *, min_value: int | None = None, max_value: int | None = N
 def _normalize_categoria(series: pd.Series) -> pd.Series:
     if series is None:
         return pd.Series(dtype="string")
-    return series.astype("string").fillna("").str.strip().str.lower()
+    return series.astype("string").fillna("").apply(lambda value: _normalize_ascii(value).strip().lower())
 
 
 def _exclude_vex(df: pd.DataFrame) -> pd.DataFrame:
@@ -1112,9 +1148,14 @@ def _only_registered_category(df: pd.DataFrame, categoria: str) -> pd.DataFrame:
         return df.iloc[0:0].copy()
     plates = _registered_plates_for_category(categoria)
     if not plates:
-        return _only_vex(df) if str(categoria).strip().lower() == "vex" else _only_transporte(df)
+        target = _normalize_category_value(categoria)
+        if target == "Vex":
+            return _only_vex(df)
+        if target == "Transporte":
+            return _only_transporte(df)
+        return df.iloc[0:0].copy()
     filtered = df[df["PLACA"].isin(plates)].copy()
-    filtered["Categoria"] = "Vex" if str(categoria).strip().lower() == "vex" else "Transporte"
+    filtered["Categoria"] = _normalize_category_value(categoria)
     return filtered
 
 
