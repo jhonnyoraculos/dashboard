@@ -41,6 +41,7 @@ DB_TABLES = {
     "combustiveis": "dashboard_combustiveis",
     "postos": "dashboard_postos",
     "manutencao": "dashboard_manutencao",
+    "pneus": "dashboard_pneus",
     "hoteis": "dashboard_hoteis",
     "pedagio": "dashboard_pedagio",
     "peso": "dashboard_peso",
@@ -54,6 +55,7 @@ _METADATA_CACHE = {"loaded": False, "loaded_at": 0.0, "values": {}, "lock": thre
 _PEDAGIO_CACHE = {"mtime": None, "df": None, "lock": threading.Lock()}
 _COMBUSTIVEL_CACHE = {"mtime": None, "df": None, "lock": threading.Lock()}
 _MANUTENCAO_CACHE = {"mtime": None, "df": None, "lock": threading.Lock()}
+_PNEUS_CACHE = {"mtime": None, "df": None, "lock": threading.Lock()}
 _HOTEIS_CACHE = {"mtime": None, "df": None, "lock": threading.Lock()}
 _PESO_CACHE = {"mtime": None, "df": None, "lock": threading.Lock()}
 _OVERVIEW_CACHE = {"mtimes": None, "dados": None}
@@ -66,6 +68,7 @@ _TEXT_REGISTRY_CACHES = {
 _CACHE_MAP = {
     "combustivel": _COMBUSTIVEL_CACHE,
     "manutencao": _MANUTENCAO_CACHE,
+    "pneus": _PNEUS_CACHE,
     "hoteis": _HOTEIS_CACHE,
     "pedagio": _PEDAGIO_CACHE,
     "peso": _PESO_CACHE,
@@ -86,6 +89,7 @@ _COMBUSTIVEL_KM_COLUMNS = ["Mes", "PLACA", "Km Rodados"]
 _COMBUSTIVEIS_COLUMNS = ["Combustivel"]
 _POSTOS_COLUMNS = ["POSTOS"]
 _MANUTENCAO_COLUMNS = ["Data", "Mes", "Custo", "PLACA", "OFICINA", "Categoria"]
+_PNEUS_COLUMNS = ["Data", "Mes", "PLACA", "Categoria", "Fornecedor", "Quantidade", "Medida", "Custo", "Observacao"]
 _HOTEIS_COLUMNS = [
     "Data",
     "Valor",
@@ -107,6 +111,7 @@ _DATASET_COLUMNS = {
     "combustiveis": _COMBUSTIVEIS_COLUMNS,
     "postos": _POSTOS_COLUMNS,
     "manutencao": _MANUTENCAO_COLUMNS,
+    "pneus": _PNEUS_COLUMNS,
     "hoteis": _HOTEIS_COLUMNS,
     "pedagio": _PEDAGIO_COLUMNS,
     "peso": _PESO_COLUMNS,
@@ -131,6 +136,10 @@ _COLUMN_SQL_TYPES = {
     "Tipo": "TEXT",
     "OFICINA": "TEXT",
     "Peso": "DOUBLE PRECISION",
+    "Fornecedor": "TEXT",
+    "Quantidade": "DOUBLE PRECISION",
+    "Medida": "TEXT",
+    "Observacao": "TEXT",
 }
 
 
@@ -305,7 +314,7 @@ def _write_metadata(conn, key: str, value) -> None:
 
 
 def _clear_dataset_cache(dataset: str) -> None:
-    if dataset in {"placas", "combustivel", "manutencao", "pedagio"}:
+    if dataset in {"placas", "combustivel", "manutencao", "pneus", "pedagio", "peso"}:
         _PLATE_REGISTRY_CACHE["mtime"] = None
         _PLATE_REGISTRY_CACHE["df"] = None
         _PLACAS_CACHE["mtime"] = None
@@ -320,7 +329,7 @@ def _clear_dataset_cache(dataset: str) -> None:
     if dataset == "combustivel_km":
         targets = ["combustivel"]
     elif dataset == "placas":
-        targets = ["combustivel", "manutencao", "pedagio", "peso"]
+        targets = ["combustivel", "manutencao", "pneus", "pedagio", "peso"]
     elif dataset in {"combustiveis", "postos"}:
         targets = ["combustivel"]
     else:
@@ -446,7 +455,7 @@ def save_dashboard_record(dataset: str, row: dict, *, replace_keys: list[str] | 
                     replace_params,
                 )
         conn.execute(text(f"INSERT INTO {table} ({column_sql}) VALUES ({value_sql})"), value_params)
-        if dataset in {"combustivel", "manutencao", "pedagio", "peso"} and prepared.get("PLACA") and prepared.get("Categoria"):
+        if dataset in {"combustivel", "manutencao", "pneus", "pedagio", "peso"} and prepared.get("PLACA") and prepared.get("Categoria"):
             plate_registry_changed = True
             _ensure_dataset_table(conn, "placas")
             placas_table = _quote_identifier(DB_TABLES["placas"])
@@ -516,7 +525,7 @@ def replace_dashboard_records(dataset: str, rows: list[dict]) -> str:
             value_sql = ", ".join(value_refs[column] for column in columns)
             conn.execute(text(f"INSERT INTO {table} ({column_sql}) VALUES ({value_sql})"), value_params)
 
-            if dataset in {"combustivel", "manutencao", "pedagio", "peso"} and prepared.get("PLACA") and prepared.get("Categoria"):
+            if dataset in {"combustivel", "manutencao", "pneus", "pedagio", "peso"} and prepared.get("PLACA") and prepared.get("Categoria"):
                 _ensure_dataset_table(conn, "placas")
                 placas_table = _quote_identifier(DB_TABLES["placas"])
                 conn.execute(text(f"DELETE FROM {placas_table} WHERE \"PLACA\" = :placa"), {"placa": prepared["PLACA"]})
@@ -549,12 +558,12 @@ def replace_dashboard_records(dataset: str, rows: list[dict]) -> str:
                     )
                     _write_metadata(conn, f"{registry_dataset}.version", version)
 
-        if dataset in {"combustivel", "manutencao", "pedagio", "peso"}:
+        if dataset in {"combustivel", "manutencao", "pneus", "pedagio", "peso"}:
             _write_metadata(conn, "placas.version", version)
         _write_metadata(conn, f"{dataset}.version", version)
         _write_metadata(conn, "import.version", version)
 
-    if dataset in {"combustivel", "manutencao", "pedagio", "peso"}:
+    if dataset in {"combustivel", "manutencao", "pneus", "pedagio", "peso"}:
         _clear_dataset_cache("placas")
     _clear_dataset_cache(dataset)
     for registry_dataset in text_registry_changed:
@@ -589,7 +598,7 @@ def append_dashboard_records(dataset: str, rows: list[dict], *, update_plate_reg
             value_sql = ", ".join(value_refs[column] for column in columns)
             conn.execute(text(f"INSERT INTO {table} ({column_sql}) VALUES ({value_sql})"), value_params)
 
-            if update_plate_registry and dataset in {"combustivel", "manutencao", "pedagio", "peso"} and prepared.get("PLACA") and prepared.get("Categoria"):
+            if update_plate_registry and dataset in {"combustivel", "manutencao", "pneus", "pedagio", "peso"} and prepared.get("PLACA") and prepared.get("Categoria"):
                 _ensure_dataset_table(conn, "placas")
                 placas_table = _quote_identifier(DB_TABLES["placas"])
                 conn.execute(text(f"DELETE FROM {placas_table} WHERE \"PLACA\" = :placa"), {"placa": prepared["PLACA"]})
@@ -622,12 +631,12 @@ def append_dashboard_records(dataset: str, rows: list[dict], *, update_plate_reg
                     )
                     _write_metadata(conn, f"{registry_dataset}.version", version)
 
-        if update_plate_registry and dataset in {"combustivel", "manutencao", "pedagio", "peso"}:
+        if update_plate_registry and dataset in {"combustivel", "manutencao", "pneus", "pedagio", "peso"}:
             _write_metadata(conn, "placas.version", version)
         _write_metadata(conn, f"{dataset}.version", version)
         _write_metadata(conn, "import.version", version)
 
-    if update_plate_registry and dataset in {"combustivel", "manutencao", "pedagio", "peso"}:
+    if update_plate_registry and dataset in {"combustivel", "manutencao", "pneus", "pedagio", "peso"}:
         _clear_dataset_cache("placas")
     _clear_dataset_cache(dataset)
     for registry_dataset in text_registry_changed:
@@ -673,12 +682,12 @@ def delete_matching_dashboard_records(dataset: str, rows: list[dict]) -> int:
             )
             deleted += max(result.rowcount or 0, 0)
 
-        if dataset in {"combustivel", "manutencao", "pedagio", "peso"}:
+        if dataset in {"combustivel", "manutencao", "pneus", "pedagio", "peso"}:
             _write_metadata(conn, "placas.version", version)
         _write_metadata(conn, f"{dataset}.version", version)
         _write_metadata(conn, "import.version", version)
 
-    if dataset in {"combustivel", "manutencao", "pedagio", "peso"}:
+    if dataset in {"combustivel", "manutencao", "pneus", "pedagio", "peso"}:
         _clear_dataset_cache("placas")
     _clear_dataset_cache(dataset)
     return deleted
@@ -711,12 +720,12 @@ def delete_dashboard_month(dataset: str, mes: str) -> int:
         result = conn.execute(text(delete_sql), params)
         deleted = max(result.rowcount or 0, 0)
 
-        if dataset in {"combustivel", "manutencao", "pedagio", "peso"}:
+        if dataset in {"combustivel", "manutencao", "pneus", "pedagio", "peso"}:
             _write_metadata(conn, "placas.version", version)
         _write_metadata(conn, f"{dataset}.version", version)
         _write_metadata(conn, "import.version", version)
 
-    if dataset in {"combustivel", "manutencao", "pedagio", "peso"}:
+    if dataset in {"combustivel", "manutencao", "pneus", "pedagio", "peso"}:
         _clear_dataset_cache("placas")
     _clear_dataset_cache(dataset)
     return deleted
@@ -737,7 +746,8 @@ def rename_plate(old_plate, new_plate, categoria: str) -> str:
 
     with _db_engine().begin() as conn:
         _ensure_dataset_table(conn, "placas")
-        for dataset in ("combustivel", "combustivel_km", "manutencao", "pedagio", "peso"):
+        for dataset in ("combustivel", "combustivel_km", "manutencao", "pneus", "pedagio", "peso"):
+            _ensure_dataset_table(conn, dataset)
             table = _quote_identifier(DB_TABLES[dataset])
             conn.execute(
                 text(f"UPDATE {table} SET \"PLACA\" = :new_plate WHERE \"PLACA\" = :old_plate"),
@@ -917,7 +927,7 @@ def _apply_plate_categories(df: pd.DataFrame) -> pd.DataFrame:
 
 def _derived_plate_registry() -> pd.DataFrame:
     frames = []
-    for loader in (load_combustivel, load_manutencao, load_pedagio, load_peso):
+    for loader in (load_combustivel, load_manutencao, load_pneus, load_pedagio, load_peso):
         try:
             df = loader()
         except Exception:
@@ -1438,6 +1448,28 @@ def agg_manutencao(df: pd.DataFrame) -> dict:
         "segmentos": _unique_sorted(df, "Categoria"),
         "custo_semana": _weekly_series(df, "Data", "Custo", "Custo"),
     }
+
+
+def load_pneus() -> pd.DataFrame:
+    cache = _PNEUS_CACHE
+    with cache["lock"]:
+        version = _db_version("pneus")
+        cached = cache.get("df")
+        if cached is not None and cache.get("mtime") == version:
+            return cached.copy()
+
+        df = _read_database_table("pneus", _PNEUS_COLUMNS, date_columns=["Data"])
+        df = _finalize_common(
+            df,
+            date_columns=["Data"],
+            numeric_columns=["Quantidade", "Custo"],
+            text_columns=["Fornecedor", "Medida", "Observacao"],
+            plate_columns=["PLACA"],
+        )
+        df = _apply_plate_categories(df)
+        cache["mtime"] = version
+        cache["df"] = df.copy()
+        return df.copy()
 
 
 def load_hoteis() -> pd.DataFrame:
@@ -2182,6 +2214,7 @@ def _warm_data_caches(*, blocking: bool = False) -> None:
     loaders = (
         (load_combustivel, "combustivel"),
         (load_manutencao, "manutencao"),
+        (load_pneus, "pneus"),
         (load_hoteis, "hoteis"),
         (load_pedagio, "pedagio/seguro/IPVA"),
         (load_peso, "peso"),

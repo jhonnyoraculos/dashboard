@@ -5020,7 +5020,7 @@ def _render_pedagio_sheet_import(plate_map: dict[str, str]) -> None:
 def render_cadastro() -> None:
     topbar("JR DASHBOARD • Adicionar dados", back=True)
     with st.container(key="cadastro_shell"):
-        tabs = st.tabs(["Placas", "Combustível", "KM mensal", "Manutenção", "Hotéis", "Peso", "Pedágio/IPVA"])
+        tabs = st.tabs(["Placas", "Combustível", "KM mensal", "Manutenção", "Pneus", "Hotéis", "Peso", "Pedágio/IPVA"])
 
         with tabs[0]:
             with st.form("form_placas", clear_on_submit=True):
@@ -5251,6 +5251,58 @@ def render_cadastro() -> None:
             )
 
         with tabs[4]:
+            with st.form("form_pneus", clear_on_submit=True):
+                c1, c2, c3 = st.columns(3)
+                with c1:
+                    data = st.date_input("Data", value=date.today(), key="cad_pneu_data")
+                    placa, categoria = _plate_fields("cad_pneu", plate_map)
+                with c2:
+                    fornecedor = st.text_input("Fornecedor", placeholder="PNEUSMAX", key="cad_pneu_fornecedor")
+                    medida = st.text_input("Medida/descrição", placeholder="295/80 R22.5", key="cad_pneu_medida")
+                    observacao = st.text_input("Observação", key="cad_pneu_observacao")
+                with c3:
+                    quantidade = st.number_input("Quantidade", min_value=0.0, step=1.0, key="cad_pneu_quantidade")
+                    custo = st.number_input("Custo", min_value=0.0, step=10.0, format="%.2f", key="cad_pneu_custo")
+                    submitted = st.form_submit_button("Salvar pneu", type="primary", width="stretch")
+                if submitted:
+                    _save_entry(
+                        "pneus",
+                        {
+                            "Data": data,
+                            "Mes": _entry_month(data),
+                            "PLACA": placa,
+                            "Categoria": categoria,
+                            "Fornecedor": fornecedor,
+                            "Quantidade": quantidade,
+                            "Medida": medida,
+                            "Custo": custo,
+                            "Observacao": observacao,
+                        },
+                        required=["Data", "PLACA", "Fornecedor", "Custo"],
+                        success="Lançamento de pneu salvo.",
+                    )
+
+            _render_dataset_editor(
+                "pneus",
+                backend.load_pneus,
+                ["Data", "Mes", "PLACA", "Categoria", "Fornecedor", "Quantidade", "Medida", "Custo", "Observacao"],
+                ["Data", "PLACA", "Fornecedor"],
+                "cad_pneu_table",
+                {
+                    "Data": _date_col(),
+                    "Mes": st.column_config.TextColumn("Mes"),
+                    "PLACA": st.column_config.TextColumn("Placa"),
+                    "Categoria": st.column_config.SelectboxColumn("Categoria", options=["Transporte", "Vex"], required=True),
+                    "Fornecedor": st.column_config.TextColumn("Fornecedor"),
+                    "Quantidade": _number_col("Quantidade"),
+                    "Medida": st.column_config.TextColumn("Medida/descrição"),
+                    "Custo": _money_col("Custo"),
+                    "Observacao": st.column_config.TextColumn("Observação"),
+                },
+                ["Mes", "PLACA", "Categoria", "Fornecedor", "Medida"],
+            )
+
+        with tabs[5]:
             _render_hoteis_sheet_import()
 
             with st.form("form_hoteis", clear_on_submit=True):
@@ -5307,7 +5359,7 @@ def render_cadastro() -> None:
                 ["Mes", "Cidade", "Hotel", "Tipo", "Motorista", "Categoria"],
             )
 
-        with tabs[5]:
+        with tabs[6]:
             _render_peso_sheet_import(plate_map)
             _render_peso_month_reset()
 
@@ -5356,7 +5408,7 @@ def render_cadastro() -> None:
                 ["Mes", "Cidade", "PLACA", "Categoria"],
             )
 
-        with tabs[6]:
+        with tabs[7]:
             _render_pedagio_sheet_import(plate_map)
 
             with st.form("form_pedagio", clear_on_submit=True):
