@@ -1497,8 +1497,8 @@ def load_pneus() -> pd.DataFrame:
                 {
                     "Data": legacy.get("Data"),
                     "Mes": legacy.get("Mes"),
-                    "PLACA": legacy.get("PLACA"),
-                    "Categoria": legacy.get("Categoria"),
+                    "PLACA": pd.NA,
+                    "Categoria": "Transporte",
                     "Fornecedor": legacy.get("OFICINA"),
                     "Quantidade": pd.NA,
                     "Medida": "",
@@ -1509,7 +1509,7 @@ def load_pneus() -> pd.DataFrame:
             df = pd.concat([df, legacy_pneus[_PNEUS_COLUMNS]], ignore_index=True)
 
         if not df.empty:
-            dedupe_cols = ["Data", "Mes", "PLACA", "Fornecedor", "Custo"]
+            dedupe_cols = ["Data", "Mes", "Fornecedor", "Custo"]
             df = df.drop_duplicates(subset=[column for column in dedupe_cols if column in df.columns], keep="first")
         cache["mtime"] = version
         cache["df"] = df.copy()
