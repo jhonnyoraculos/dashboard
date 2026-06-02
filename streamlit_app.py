@@ -3972,11 +3972,25 @@ def _select_or_create_text(
     manual_label: str,
     *,
     placeholder: str = "",
+    preferred: str | None = None,
 ) -> str:
     clean_options = [option for option in options if option]
     if not clean_options:
         return st.text_input(label, placeholder=placeholder, key=f"{prefix}_manual_only")
-    selected = st.selectbox(label, [*clean_options, create_label], key=f"{prefix}_select")
+    select_options = [*clean_options, create_label]
+    selected_index = 0
+    if preferred:
+        preferred_norm = clean_text(preferred).strip().lower()
+        selected_index = next(
+            (idx for idx, option in enumerate(select_options) if clean_text(option).strip().lower() == preferred_norm),
+            0,
+        )
+        state_key = f"{prefix}_select"
+        init_key = f"{prefix}_preferred_initialized"
+        if not st.session_state.get(init_key):
+            st.session_state[state_key] = select_options[selected_index]
+            st.session_state[init_key] = True
+    selected = st.selectbox(label, select_options, index=selected_index, key=f"{prefix}_select")
     if selected == create_label:
         return st.text_input(manual_label, placeholder=placeholder, key=f"{prefix}_manual")
     return selected
@@ -5103,6 +5117,7 @@ def render_cadastro() -> None:
                         "Cadastrar novo combustível",
                         "Novo combustível",
                         placeholder="Diesel S10",
+                        preferred="Diesel S10",
                     )
                     posto = _select_or_create_text(
                         "Posto",
@@ -5111,6 +5126,7 @@ def render_cadastro() -> None:
                         "Cadastrar novo posto",
                         "Novo posto",
                         placeholder="Posto JR",
+                        preferred="POSTO NICODEMOS",
                     )
                     km = st.number_input("KM rodados", min_value=0.0, step=1.0, key="cad_comb_km")
                 with c3:
