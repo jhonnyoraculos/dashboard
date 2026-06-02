@@ -328,6 +328,8 @@ def _clear_dataset_cache(dataset: str) -> None:
 
     if dataset == "combustivel_km":
         targets = ["combustivel"]
+    elif dataset == "manutencao":
+        targets = ["manutencao", "pneus"]
     elif dataset == "placas":
         targets = ["combustivel", "manutencao", "pneus", "pedagio", "peso"]
     elif dataset in {"combustiveis", "postos"}:
@@ -1369,6 +1371,13 @@ def _registry_values(df: pd.DataFrame, column: str, loader) -> list:
     return sorted(values)
 
 
+def _pneu_legacy_mask(df: pd.DataFrame) -> pd.Series:
+    if df.empty or "OFICINA" not in df.columns:
+        return pd.Series(False, index=df.index)
+    oficina = df["OFICINA"].astype("string").fillna("").map(_normalize_ascii).str.upper()
+    return oficina.str.contains("PNEU", na=False)
+
+
 def agg_combustivel(df: pd.DataFrame, *, km_override: pd.DataFrame | None = None) -> dict:
     custo_total = float(pd.to_numeric(df.get("Custo"), errors="coerce").sum()) if "Custo" in df else 0.0
     if km_override is not None and "Km Rodados" in km_override.columns:
@@ -1422,6 +1431,7 @@ def load_manutencao() -> pd.DataFrame:
             plate_columns=["PLACA"],
         )
         df = _apply_plate_categories(df)
+        df = df.loc[~_pneu_legacy_mask(df)].copy()
         cache["mtime"] = version
         cache["df"] = df.copy()
         return df.copy()
@@ -1453,7 +1463,7 @@ def agg_manutencao(df: pd.DataFrame) -> dict:
 def load_pneus() -> pd.DataFrame:
     cache = _PNEUS_CACHE
     with cache["lock"]:
-        version = _db_version("pneus")
+        version = (_db_version("pneus"), _db_version("manutencao"))
         cached = cache.get("df")
         if cached is not None and cache.get("mtime") == version:
             return cached.copy()
@@ -1467,6 +1477,40 @@ def load_pneus() -> pd.DataFrame:
             plate_columns=["PLACA"],
         )
         df = _apply_plate_categories(df)
+
+        try:
+            manutencao = _read_database_table("manutencao", _MANUTENCAO_COLUMNS, date_columns=["Data"])
+            manutencao = _finalize_common(
+                manutencao,
+                date_columns=["Data"],
+                numeric_columns=["Custo"],
+                text_columns=["OFICINA"],
+                plate_columns=["PLACA"],
+            )
+            manutencao = _apply_plate_categories(manutencao)
+            legacy = manutencao.loc[_pneu_legacy_mask(manutencao)].copy()
+        except Exception:
+            legacy = _empty(_MANUTENCAO_COLUMNS)
+
+        if not legacy.empty:
+            legacy_pneus = pd.DataFrame(
+                {
+                    "Data": legacy.get("Data"),
+                    "Mes": legacy.get("Mes"),
+                    "PLACA": legacy.get("PLACA"),
+                    "Categoria": legacy.get("Categoria"),
+                    "Fornecedor": legacy.get("OFICINA"),
+                    "Quantidade": pd.NA,
+                    "Medida": "",
+                    "Custo": legacy.get("Custo"),
+                    "Observacao": "Origem: manutenção",
+                }
+            )
+            df = pd.concat([df, legacy_pneus[_PNEUS_COLUMNS]], ignore_index=True)
+
+        if not df.empty:
+            dedupe_cols = ["Data", "Mes", "PLACA", "Fornecedor", "Custo"]
+            df = df.drop_duplicates(subset=[column for column in dedupe_cols if column in df.columns], keep="first")
         cache["mtime"] = version
         cache["df"] = df.copy()
         return df.copy()
