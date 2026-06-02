@@ -4195,11 +4195,29 @@ def _save_dataset_editor(
     original_table: pd.DataFrame,
     visible_row_ids: set[int],
 ) -> bool:
-    rows = _merge_filtered_editor_rows(original_table, edited, columns, required, visible_row_ids)
-    if rows is None:
-        return False
     try:
-        backend.replace_dashboard_records(dataset, rows)
+        if visible_row_ids and len(visible_row_ids) < len(original_table):
+            records = _prepare_editor_records(edited, columns, required)
+            if records is None:
+                return False
+
+            visible_original = []
+            original_reset = original_table.reset_index(drop=True)
+            for row_id in sorted(visible_row_ids):
+                idx = row_id - 1
+                if 0 <= idx < len(original_reset):
+                    visible_original.append({column: original_reset.iloc[idx].get(column) for column in columns})
+
+            rows = [item for _row_id, item in records]
+            if visible_original:
+                backend.delete_matching_dashboard_records(dataset, visible_original)
+            if rows:
+                backend.append_dashboard_records(dataset, rows)
+        else:
+            rows = _merge_filtered_editor_rows(original_table, edited, columns, required, visible_row_ids)
+            if rows is None:
+                return False
+            backend.replace_dashboard_records(dataset, rows)
     except Exception as exc:
         st.error("Não foi possível salvar a tabela no Neon.")
         st.exception(exc)
