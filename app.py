@@ -915,6 +915,10 @@ def _normalize_tipo_value(value):
         return "IPVA"
     if "SEGUR" in text or "APOLI" in text:
         return "Seguro"
+    if "TAXI" in text:
+        return "Taxi"
+    if "EXTRA" in text:
+        return "Extras"
     if "LICENCI" in text:
         return "Licenciamento"
     if "DPVAT" in text:

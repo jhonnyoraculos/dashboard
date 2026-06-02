@@ -31,6 +31,7 @@ CURRENT_YEAR = date.today().year
 APP_VERSION = "deploy-ranking-defaults-monthly-v1"
 BR_TZ = ZoneInfo("America/Sao_Paulo")
 CATEGORY_OPTIONS = ["Transporte", "Vex", "Equipamento"]
+PEDAGIO_TIPO_OPTIONS = ["Pedagio", "Extras", "Taxi", "IPVA", "Seguro", "Licenciamento", "DPVAT", "Outros"]
 
 PLOTLY_CONFIG = {
     "responsive": True,
@@ -70,7 +71,7 @@ DASHBOARD_META = {
     "combustivel": {"label": "Combustível", "color": JR_BLUE, "supports_plate": True},
     "manutencao": {"label": "Manutenção", "color": JR_RED, "supports_plate": True},
     "hoteis": {"label": "Hotéis", "color": "#0F766E", "supports_plate": False},
-    "pedagio": {"label": "Pedágio/IPVA", "color": "#D97706", "supports_plate": True},
+    "pedagio": {"label": "Pedágio/Extras", "color": "#D97706", "supports_plate": True},
     "vex": {"label": "Vex", "color": "#7C3AED", "supports_plate": True},
     "frota": {"label": "Ranking da frota", "color": JR_BLUE, "supports_plate": True},
 }
@@ -108,7 +109,7 @@ RANK_ORDER_OPTIONS = {
     "total": "Gasto total",
     "combustivel": "Combustível",
     "manutencao": "Manutenção",
-    "pedagio": "Pedágio/IPVA",
+    "pedagio": "Pedágio/Extras",
     "peso": "Peso",
 }
 
@@ -3390,7 +3391,7 @@ def ranking_summary_html(row: dict) -> str:
         ("Total", fmt_brl_big(row.get("total"))),
         ("Combustível", fmt_brl_big(row.get("combustivel"))),
         ("Manutenção", fmt_brl_big(row.get("manutencao"))),
-        ("Pedágio/IPVA", fmt_brl_big(row.get("pedagio"))),
+        ("Pedágio/Extras", fmt_brl_big(row.get("pedagio"))),
         ("Peso", fmt_peso(row.get("peso_total"))),
     ]
     return "".join(
@@ -3404,7 +3405,7 @@ def ranking_detail_html(row: dict) -> str:
         ("Gasto total", fmt_brl_big(row.get("total"))),
         ("Combustível", fmt_brl_big(row.get("combustivel"))),
         ("Manutenção", fmt_brl_big(row.get("manutencao"))),
-        ("Pedágio/IPVA", fmt_brl_big(row.get("pedagio"))),
+        ("Pedágio/Extras", fmt_brl_big(row.get("pedagio"))),
         ("Peso", fmt_peso(row.get("peso_total"))),
         ("Valor entregas", fmt_brl_big(row.get("valor_peso"))),
         ("KM total", fmt_num(row.get("km_total"))),
@@ -3415,7 +3416,7 @@ def ranking_detail_html(row: dict) -> str:
         ("Custo por litro", fmt_brl(row.get("custo_por_litro"))),
         ("Abastecimentos", fmt_num(row.get("abastecimentos"))),
         ("Serviços", fmt_num(row.get("servicos"))),
-        ("Pedágio/IPVA", fmt_num(row.get("despesas_pedagio"))),
+        ("Pedágio/Extras", fmt_num(row.get("despesas_pedagio"))),
     ]
     cards = "".join(
         f'<div class="ranking-detail-card"><p class="ranking-detail-label">{h(label)}</p><p class="ranking-detail-value">{h(value)}</p></div>'
@@ -3433,7 +3434,7 @@ def ranking_row_label(row: dict) -> str:
         f"Total {money(row.get('total'))} | "
         f"Combustivel {money(row.get('combustivel'))} | "
         f"Manutencao {money(row.get('manutencao'))} | "
-        f"Pedagio/IPVA {money(row.get('pedagio'))} | "
+        f"Pedagio/Extras {money(row.get('pedagio'))} | "
         f"Peso {fmt_peso(row.get('peso_total'))} | "
         f"KM {fmt_num(row.get('km_total'))} | "
         f"Litros {fmt_num(row.get('litros_total'))}"
@@ -3454,7 +3455,7 @@ def ranking_difference_html(rows: list[dict]) -> str:
         ("Diferença total", "total", fmt_brl_big),
         ("Combustível", "combustivel", fmt_brl_big),
         ("Manutenção", "manutencao", fmt_brl_big),
-        ("Pedágio/IPVA", "pedagio", fmt_brl_big),
+        ("Pedágio/Extras", "pedagio", fmt_brl_big),
         ("Peso", "peso_total", fmt_peso),
         ("KM total", "km_total", fmt_num),
         ("Litros", "litros_total", fmt_num),
@@ -3485,7 +3486,7 @@ def ranking_versus_html(rows: list[dict]) -> str:
         ("Total", "total", fmt_brl_big),
         ("Combustível", "combustivel", fmt_brl_big),
         ("Manutenção", "manutencao", fmt_brl_big),
-        ("Pedágio/IPVA", "pedagio", fmt_brl_big),
+        ("Pedágio/Extras", "pedagio", fmt_brl_big),
         ("Peso", "peso_total", fmt_peso),
         ("Valor entregas", "valor_peso", fmt_brl_big),
         ("KM total", "km_total", fmt_num),
@@ -3642,7 +3643,7 @@ def render_frota() -> None:
             ("Gasto total", fmt_brl_big(totais.get("total")), JR_RED),
             ("Combustível", fmt_brl_big(totais.get("combustivel")), JR_BLUE),
             ("Manutenção", fmt_brl_big(totais.get("manutencao")), JR_RED),
-            ("Pedágio/IPVA", fmt_brl_big(totais.get("pedagio")), "#D97706"),
+            ("Pedágio/Extras", fmt_brl_big(totais.get("pedagio")), "#D97706"),
             ("Peso total", fmt_peso(totais.get("peso_total")), JR_BLUE),
             ("Ordenado por", order_label, JR_BLUE),
         ]
@@ -3651,7 +3652,7 @@ def render_frota() -> None:
     ranking = data.get("ranking", []) or []
     if not ranking:
         st.markdown('<div class="ranking-empty">Nenhum caminhão encontrado para os filtros selecionados.</div>', unsafe_allow_html=True)
-        footer("Ranking calculado com dados de combustível, manutenção e pedágio/IPVA do Neon. © JR")
+        footer("Ranking calculado com dados de combustível, manutenção e pedágio/extras do Neon. © JR")
         return
 
     selected_plates = [str(item) for item in (params.get("placa") or []) if item not in (None, "", "Todos")]
@@ -3701,7 +3702,7 @@ def render_frota() -> None:
     st.markdown(
         """
         <div class="ranking-header">
-          <span>#</span><span>Placa</span><span>Total</span><span>Combustivel</span><span>Manutencao</span><span>Pedagio/IPVA</span><span>Peso</span><span>KM</span><span>Litros</span>
+          <span>#</span><span>Placa</span><span>Total</span><span>Combustivel</span><span>Manutencao</span><span>Pedagio/Extras</span><span>Peso</span><span>KM</span><span>Litros</span>
         </div>
         """,
         unsafe_allow_html=True,
@@ -3710,7 +3711,7 @@ def render_frota() -> None:
         for row in ranking:
             with st.expander(ranking_row_label(row), expanded=False):
                 st.html(ranking_detail_html(row))
-    footer("Ranking calculado com dados de combustível, manutenção e pedágio/IPVA do Neon. © JR")
+    footer("Ranking calculado com dados de combustível, manutenção e pedágio/extras do Neon. © JR")
 
 
 def render_home() -> None:
@@ -3729,7 +3730,7 @@ def render_home() -> None:
             <div>
               <p class="home-eyebrow">JR Ferragens &amp; Madeiras</p>
               <h1>Dashboards operacionais</h1>
-              <p class="home-subtitle">Monitore combustível, manutenção, hospedagens e despesas de pedágio/seguro/IPVA em tempo real, com dados centralizados no Neon.</p>
+              <p class="home-subtitle">Monitore combustível, manutenção, hospedagens e despesas de pedágio/extras em tempo real, com dados centralizados no Neon.</p>
             </div>
           </div>
           <a class="home-cta" href="#dashboards">Explorar dashboards</a>
@@ -3841,7 +3842,7 @@ def render_home() -> None:
           <a class="home-card" href="?page=frota" target="_self" aria-label="Abrir dashboard Ranking">
             <div><span class="home-chip">Ranking</span><h2>Ranking de gastos por caminhão</h2></div>
             <p class="home-card-text">Veja todos os caminhões em formato de tabela, do maior para o menor gasto, com detalhamento por placa.</p>
-            <ul class="home-list"><li>Ordenação por combustível, manutenção, pedágio/IPVA ou total</li><li>Métricas individuais dentro da própria linha</li><li>Filtros por ano, mês e categoria</li></ul>
+            <ul class="home-list"><li>Ordenação por combustível, manutenção, pedágio/extras ou total</li><li>Métricas individuais dentro da própria linha</li><li>Filtros por ano, mês e categoria</li></ul>
             <span class="home-link">Abrir dashboard &rarr;</span>
           </a>
           <a class="home-card" href="?page=combustivel" target="_self" aria-label="Abrir dashboard CombustÃ­vel">
@@ -3862,8 +3863,8 @@ def render_home() -> None:
             <ul class="home-list"><li>KPIs automáticos de valor total, reservas e médias</li><li>Ranking por cidade e hotel/pousada</li><li>Histórico mensal dos gastos com hospedagem</li></ul>
             <span class="home-link">Abrir dashboard &rarr;</span>
           </a>
-          <a class="home-card" href="?page=pedagio" target="_self" aria-label="Abrir dashboard PedÃ¡gio, Seguro e IPVA">
-            <div><span class="home-chip">Pedágio &amp; Seguros</span><h2>Pedágio, IPVA e seguros da frota</h2></div>
+          <a class="home-card" href="?page=pedagio" target="_self" aria-label="Abrir dashboard Pedágio e Extras">
+            <div><span class="home-chip">Pedágio &amp; Extras</span><h2>Pedágio e custos extras da frota</h2></div>
             <p class="home-card-text">Acompanhe quanto cada placa consome com pedágio, seguros e tributos, com KPIs dinâmicos.</p>
             <ul class="home-list"><li>Resumo mensal consolidado por tipo de despesa</li><li>Comparativo por placa e categoria</li><li>Filtros rápidos por mês, placa e tipo</li></ul>
             <span class="home-link">Abrir dashboard &rarr;</span>
@@ -4317,6 +4318,73 @@ def _apply_table_filters(table: pd.DataFrame, columns: list[str], key_prefix: st
     return filtered
 
 
+def _format_delete_value(value: object) -> str:
+    if _editor_empty_value(value):
+        return ""
+    if isinstance(value, (datetime, date, pd.Timestamp)):
+        try:
+            return pd.to_datetime(value).strftime("%d/%m/%Y")
+        except Exception:
+            return clean_text(value)
+    return clean_text(value).strip()
+
+
+def _delete_option_label(row: pd.Series, columns: list[str]) -> str:
+    row_id = row.get(ROW_ID_COLUMN)
+    parts = []
+    for column in columns:
+        value = _format_delete_value(row.get(column))
+        if value:
+            parts.append(value)
+        if len(parts) >= 5:
+            break
+    summary = " | ".join(parts) if parts else "linha sem dados"
+    return f"Linha {row_id} - {summary}"
+
+
+def _render_delete_record_control(dataset: str, filtered_table: pd.DataFrame, columns: list[str], key_prefix: str, nonce: int) -> None:
+    if filtered_table.empty or ROW_ID_COLUMN not in filtered_table.columns:
+        return
+
+    row_ids = pd.to_numeric(filtered_table[ROW_ID_COLUMN], errors="coerce").dropna().astype(int).tolist()
+    if not row_ids:
+        return
+
+    rows_by_id = {}
+    labels = {}
+    for _, row in filtered_table.iterrows():
+        try:
+            row_id = int(row.get(ROW_ID_COLUMN))
+        except (TypeError, ValueError):
+            continue
+        rows_by_id[row_id] = row
+        labels[row_id] = _delete_option_label(row, columns)
+
+    with st.expander("Apagar lançamento", expanded=False):
+        selected_id = st.selectbox(
+            "Escolha a linha para apagar",
+            row_ids,
+            format_func=lambda value: labels.get(value, f"Linha {value}"),
+            key=f"{key_prefix}_delete_select_{nonce}",
+        )
+        if st.button("Apagar lançamento selecionado", type="primary", width="stretch", key=f"{key_prefix}_delete_button_{nonce}"):
+            row = rows_by_id.get(selected_id)
+            if row is None:
+                st.warning("Selecione um lançamento válido.")
+                return
+            item = {column: row.get(column) for column in columns}
+            try:
+                deleted = backend.delete_matching_dashboard_records(dataset, [item])
+            except Exception as exc:
+                st.error("Não foi possível apagar esse lançamento no Neon.")
+                st.exception(exc)
+                return
+            _reset_dataset_editor(key_prefix)
+            clear_cached_reads()
+            st.success(f"{deleted} lançamento(s) apagado(s).")
+            st.rerun()
+
+
 def _render_dataset_editor(
     dataset: str,
     loader,
@@ -4345,6 +4413,7 @@ def _render_dataset_editor(
     filtered_table = _apply_table_filters(table, columns, key_prefix, filter_columns)
     visible_row_ids = set(pd.to_numeric(filtered_table[ROW_ID_COLUMN], errors="coerce").dropna().astype(int).tolist())
     nonce = st.session_state.get(f"{key_prefix}_editor_nonce", 0)
+    _render_delete_record_control(dataset, filtered_table, columns, key_prefix, nonce)
     editor_config = {ROW_ID_COLUMN: st.column_config.NumberColumn("Linha")}
     editor_config.update(column_config)
     edited = st.data_editor(
@@ -5005,7 +5074,7 @@ def _render_pedagio_sheet_import(plate_map: dict[str, str]) -> None:
                 _clear_pedagio_last_import()
                 st.rerun()
 
-    with st.expander("Adicionar pedagio/IPVA por planilha", expanded=False):
+    with st.expander("Adicionar pedagio/extras por planilha", expanded=False):
         uploaded = st.file_uploader("Enviar planilha", type=["xlsx", "csv"], key="cad_ped_upload")
         if uploaded is None:
             return
@@ -5054,7 +5123,7 @@ def _render_pedagio_sheet_import(plate_map: dict[str, str]) -> None:
 def render_cadastro() -> None:
     topbar("JR DASHBOARD • Adicionar dados", back=True)
     with st.container(key="cadastro_shell"):
-        tabs = st.tabs(["Placas", "Combustível", "KM mensal", "Manutenção", "Pneus", "Hotéis", "Peso", "Pedágio/IPVA"])
+        tabs = st.tabs(["Placas", "Combustível", "KM mensal", "Manutenção", "Pneus", "Hotéis", "Peso", "Pedágio/Extras"])
 
         with tabs[0]:
             with st.form("form_placas", clear_on_submit=True):
@@ -5444,10 +5513,10 @@ def render_cadastro() -> None:
                     data = st.date_input("Data", value=date.today(), key="cad_ped_data")
                     placa, categoria = _plate_fields("cad_ped", plate_map)
                 with c2:
-                    tipo = st.selectbox("Tipo", ["Pedagio", "IPVA", "Seguro", "Licenciamento", "DPVAT", "Outros"], key="cad_ped_tipo")
+                    tipo = st.selectbox("Tipo", PEDAGIO_TIPO_OPTIONS, key="cad_ped_tipo")
                 with c3:
                     custo = st.number_input("Custo", min_value=0.0, step=10.0, format="%.2f", key="cad_ped_custo")
-                    submitted = st.form_submit_button("Salvar pedágio/IPVA", type="primary", width="stretch")
+                    submitted = st.form_submit_button("Salvar pedágio/extra", type="primary", width="stretch")
                 if submitted:
                     _save_entry(
                         "pedagio",
@@ -5460,7 +5529,7 @@ def render_cadastro() -> None:
                             "Categoria": categoria,
                         },
                         required=["Data", "PLACA", "Tipo"],
-                        success="Lançamento de pedágio/IPVA salvo.",
+                        success="Lançamento de pedágio/extra salvo.",
                     )
             _render_dataset_editor(
                 "pedagio",
@@ -5473,7 +5542,7 @@ def render_cadastro() -> None:
                     "Mes": st.column_config.TextColumn("Mes"),
                     "PLACA": st.column_config.TextColumn("Placa"),
                     "Categoria": st.column_config.SelectboxColumn("Categoria", options=CATEGORY_OPTIONS, required=True),
-                    "Tipo": st.column_config.SelectboxColumn("Tipo", options=["Pedagio", "IPVA", "Seguro", "Licenciamento", "DPVAT", "Outros"], required=True),
+                    "Tipo": st.column_config.SelectboxColumn("Tipo", options=PEDAGIO_TIPO_OPTIONS, required=True),
                     "Custo": _money_col("Custo"),
                 },
                 ["Mes", "PLACA", "Categoria", "Tipo"],
@@ -5662,7 +5731,7 @@ def render_hoteis() -> None:
 
 
 def render_pedagio() -> None:
-    topbar("JR DASHBOARD • Pedágio, Seguro e IPVA", back=False)
+    topbar("JR DASHBOARD • Pedágio/Extras", back=False)
     seed = route_json("pedagio", {"ano": "Todos", "mes": ["Todos"]})
     params, filter_state = filter_controls(
         "pedagio",
@@ -5713,7 +5782,7 @@ def render_pedagio() -> None:
         ("gasto_placa", "Gasto por placa", plate_fig),
         ("gasto_segmento", "Gasto por segmento", bar_chart(data.get("gasto_por_categoria", {}).get("Categoria", []), data.get("gasto_por_categoria", {}).get("Custo", []))),
     ]
-    render_controlled_dashboard("ped", title="JR Dashboard - Pedágio, Seguro e IPVA", kpis=kpis, charts=charts)
+    render_controlled_dashboard("ped", title="JR Dashboard - Pedágio/Extras", kpis=kpis, charts=charts)
     footer("Dados atualizados pelo Neon. © JR")
 
 
