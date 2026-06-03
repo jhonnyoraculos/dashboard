@@ -4542,6 +4542,12 @@ COMBUSTIVEL_SHEET_ALIASES = {
     "PLACA": ["PLACA", "PLACAS"],
 }
 
+KM_SHEET_ALIASES = {
+    "PLACA": ["PLACA", "PLACAS"],
+    "KM": ["KM", "KMRODADOS", "KMMES", "KMDOMES"],
+    "MES": ["MES", "MS"],
+}
+
 PEDAGIO_SHEET_ALIASES = {
     "PLACA": ["PLACA", "PLACAS"],
     "TIPO": ["TIPO"],
@@ -4740,6 +4746,47 @@ def _combustivel_rows_from_sheet(df: pd.DataFrame, plate_map: dict[str, str]) ->
                 "Categoria": plate_map.get(placa, "Transporte"),
             }
         )
+    return rows, errors
+
+
+def _km_rows_from_sheet(df: pd.DataFrame) -> tuple[list[dict], list[str]]:
+    header_map = {_normalize_sheet_header(column): column for column in df.columns}
+    aliases = {
+        "PLACA": ["PLACA", "PLACAS"],
+        "KM": ["KM", "KMRODADOS", "KMMES", "KMDOMES"],
+        "MES": ["MES", "MS"],
+    }
+    resolved = {field: next((header_map[key] for key in keys if key in header_map), None) for field, keys in aliases.items()}
+    labels = {"PLACA": "Placa", "KM": "KM", "MES": "MES"}
+    missing = [labels[field] for field in labels if resolved.get(field) is None]
+    if missing:
+        return [], [f"Colunas faltando: {', '.join(missing)}."]
+
+    rows: list[dict] = []
+    errors: list[str] = []
+    for idx, row in df.iterrows():
+        placa_raw = _sheet_text(row, resolved.get("PLACA"), upper=True)
+        placa_normalizada = backend._normalize_plate_value(placa_raw)
+        placa = "" if pd.isna(placa_normalizada) else str(placa_normalizada)
+        km = _parse_brl_number(row.get(resolved["KM"]))
+        mes_info = _parse_sheet_month(row.get(resolved["MES"]))
+
+        if not any([placa_raw, km is not None, mes_info]):
+            continue
+
+        missing_row = []
+        if not placa:
+            missing_row.append("Placa")
+        if km is None:
+            missing_row.append("KM")
+        if mes_info is None:
+            missing_row.append("MES")
+        if missing_row:
+            errors.append(f"Linha {idx + 2}: preencher {', '.join(missing_row)}.")
+            continue
+
+        mes, _data = mes_info
+        rows.append({"Mes": mes, "PLACA": placa, "Km Rodados": km})
     return rows, errors
 
 
@@ -5220,6 +5267,72 @@ def _append_records_in_batches(dataset: str, rows: list[dict], *, batch_size: in
     return imported
 
 
+def _save_records_with_replace_in_batches(dataset: str, rows: list[dict], replace_keys: list[str], *, batch_size: int = 100) -> list[dict]:
+    imported: list[dict] = []
+    total = len(rows)
+    progress = st.progress(0, text="Preparando envio...")
+    status = st.empty()
+
+    for start in range(0, total, batch_size):
+        batch = rows[start : start + batch_size]
+        batch_number = (start // batch_size) + 1
+        batch_total = (total + batch_size - 1) // batch_size
+        status.info(f"Enviando lote {batch_number}/{batch_total} ({start + 1}-{min(start + len(batch), total)} de {total})...")
+        for row in batch:
+            backend.save_dashboard_record(dataset, row, replace_keys=replace_keys)
+        imported.extend(batch)
+        progress.progress(min(len(imported) / total, 1.0), text=f"{len(imported)} de {total} registros enviados")
+
+    status.empty()
+    progress.empty()
+    clear_cached_reads()
+    return imported
+
+
+def _render_km_sheet_import() -> None:
+    with st.expander("Adicionar KM mensal por planilha", expanded=False):
+        uploaded = st.file_uploader("Enviar planilha", type=["xlsx", "csv"], key="cad_km_upload")
+        if uploaded is None:
+            return
+
+        try:
+            raw_df = _read_uploaded_sheet(uploaded, KM_SHEET_ALIASES)
+        except Exception as exc:
+            st.error("Nao foi possivel ler a planilha. Envie um arquivo .xlsx ou .csv.")
+            st.exception(exc)
+            return
+
+        rows, errors = _km_rows_from_sheet(raw_df)
+        if errors:
+            st.warning("Revise a planilha antes de importar.")
+            for error in errors[:8]:
+                st.write(error)
+            if len(errors) > 8:
+                st.write(f"...mais {len(errors) - 8} erro(s).")
+            return
+        if not rows:
+            st.warning("Nenhuma linha valida encontrada na planilha.")
+            return
+
+        substituir = st.checkbox("Substituir KM se ja existir o mesmo mes e placa", value=True, key="cad_km_import_replace")
+        preview = pd.DataFrame(rows)
+        st.success(f"{len(rows)} registro(s) prontos para importar.")
+        st.dataframe(preview[["Mes", "PLACA", "Km Rodados"]], width="stretch", hide_index=True)
+        if st.button("Importar KM mensal", type="primary", width="stretch", key="cad_km_import_confirm"):
+            try:
+                if substituir:
+                    imported_rows = _save_records_with_replace_in_batches("combustivel_km", rows, ["Mes", "PLACA"], batch_size=100)
+                else:
+                    imported_rows = _append_records_in_batches("combustivel_km", rows, batch_size=100)
+            except Exception as exc:
+                st.error("Nao foi possivel salvar no Neon.")
+                st.exception(exc)
+                return
+            _reset_dataset_editor("cad_km_table")
+            st.success(f"{len(imported_rows)} registro(s) de KM importado(s).")
+            st.rerun()
+
+
 def _render_pedagio_sheet_import(plate_map: dict[str, str]) -> None:
     last_rows = st.session_state.get("cad_ped_last_import_rows") or []
     if last_rows:
@@ -5440,6 +5553,8 @@ def render_cadastro() -> None:
             )
 
         with tabs[2]:
+            _render_km_sheet_import()
+
             with st.form("form_km_mensal", clear_on_submit=True):
                 c1, c2, c3 = st.columns(3)
                 with c1:
