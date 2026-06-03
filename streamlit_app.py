@@ -4533,6 +4533,15 @@ def _parse_sheet_month(value: object) -> tuple[str, date] | None:
     return f"{year}-{month:02d}", date(year, month, 1)
 
 
+COMBUSTIVEL_SHEET_ALIASES = {
+    "DATA": ["DATA", "DT"],
+    "LITROS": ["LITROS", "LITRO"],
+    "CUSTO": ["CUSTO", "VALOR"],
+    "COMBUSTIVEL": ["COMBUSTIVEL", "COMBUSTVEL", "COMBUSTI", "COMBUST"],
+    "POSTOS": ["POSTOS", "POSTO"],
+    "PLACA": ["PLACA", "PLACAS"],
+}
+
 PEDAGIO_SHEET_ALIASES = {
     "PLACA": ["PLACA", "PLACAS"],
     "TIPO": ["TIPO"],
@@ -4656,6 +4665,78 @@ def _pedagio_rows_from_sheet(df: pd.DataFrame, plate_map: dict[str, str]) -> tup
                 "PLACA": placa,
                 "Tipo": tipo,
                 "Custo": custo,
+                "Categoria": plate_map.get(placa, "Transporte"),
+            }
+        )
+    return rows, errors
+
+
+def _combustivel_rows_from_sheet(df: pd.DataFrame, plate_map: dict[str, str]) -> tuple[list[dict], list[str]]:
+    header_map = {_normalize_sheet_header(column): column for column in df.columns}
+    aliases = {
+        "DATA": ["DATA", "DT"],
+        "LITROS": ["LITROS", "LITRO"],
+        "CUSTO": ["CUSTO", "VALOR"],
+        "COMBUSTIVEL": ["COMBUSTIVEL", "COMBUSTVEL", "COMBUSTI", "COMBUST"],
+        "POSTOS": ["POSTOS", "POSTO"],
+        "PLACA": ["PLACA", "PLACAS"],
+    }
+    resolved = {field: next((header_map[key] for key in keys if key in header_map), None) for field, keys in aliases.items()}
+    labels = {
+        "DATA": "Data",
+        "LITROS": "Litros",
+        "CUSTO": "Custo",
+        "COMBUSTIVEL": "Combustivel",
+        "POSTOS": "Postos",
+        "PLACA": "Placa",
+    }
+    missing = [labels[field] for field in labels if resolved.get(field) is None]
+    if missing:
+        return [], [f"Colunas faltando: {', '.join(missing)}."]
+
+    rows: list[dict] = []
+    errors: list[str] = []
+    for idx, row in df.iterrows():
+        data_info = _parse_sheet_date(row.get(resolved["DATA"]))
+        litros = _parse_brl_number(row.get(resolved["LITROS"]))
+        custo = _parse_brl_number(row.get(resolved["CUSTO"]))
+        combustivel = _sheet_text(row, resolved.get("COMBUSTIVEL"))
+        posto = _sheet_text(row, resolved.get("POSTOS"), upper=True)
+        placa_raw = _sheet_text(row, resolved.get("PLACA"), upper=True)
+        placa_normalizada = backend._normalize_plate_value(placa_raw)
+        placa = "" if pd.isna(placa_normalizada) else str(placa_normalizada)
+
+        if not any([data_info, litros is not None, custo is not None, combustivel, posto, placa_raw]):
+            continue
+
+        missing_row = []
+        if data_info is None:
+            missing_row.append("Data")
+        if litros is None:
+            missing_row.append("Litros")
+        if custo is None:
+            missing_row.append("Custo")
+        if not combustivel:
+            missing_row.append("Combustivel")
+        if not posto:
+            missing_row.append("Postos")
+        if not placa:
+            missing_row.append("Placa")
+        if missing_row:
+            errors.append(f"Linha {idx + 2}: preencher {', '.join(missing_row)}.")
+            continue
+
+        data, mes = data_info
+        rows.append(
+            {
+                "Data": data,
+                "Mes": mes,
+                "Km Rodados": 0.0,
+                "Litros": litros,
+                "Custo": custo,
+                "Combustivel": combustivel,
+                "POSTOS": posto,
+                "PLACA": placa,
                 "Categoria": plate_map.get(placa, "Transporte"),
             }
         )
@@ -4955,6 +5036,84 @@ def _render_peso_sheet_import(plate_map: dict[str, str]) -> None:
             st.rerun()
 
 
+def _clear_combustivel_last_import() -> None:
+    st.session_state.pop("cad_comb_last_import_rows", None)
+    st.session_state.pop("cad_comb_last_import_count", None)
+
+
+def _undo_combustivel_last_import() -> None:
+    rows = st.session_state.get("cad_comb_last_import_rows") or []
+    if not rows:
+        st.warning("Nao ha importacao recente para apagar.")
+        return
+    try:
+        deleted = backend.delete_matching_dashboard_records("combustivel", rows)
+    except Exception as exc:
+        st.error("Nao foi possivel apagar a ultima importacao.")
+        st.exception(exc)
+        return
+    _clear_combustivel_last_import()
+    _reset_dataset_editor("cad_comb_table")
+    clear_cached_reads()
+    st.success(f"{deleted} lancamento(s) apagado(s).")
+    st.rerun()
+
+
+def _render_combustivel_sheet_import(plate_map: dict[str, str]) -> None:
+    last_rows = st.session_state.get("cad_comb_last_import_rows") or []
+    if last_rows:
+        last_count = st.session_state.get("cad_comb_last_import_count", len(last_rows))
+        st.warning(f"Ultima importacao por planilha: {last_count} lancamento(s).")
+        undo_col, clear_col = st.columns([1, 1])
+        with undo_col:
+            if st.button("Apagar ultima importacao", type="primary", width="stretch", key="cad_comb_undo_import"):
+                _undo_combustivel_last_import()
+        with clear_col:
+            if st.button("Manter importacao", width="stretch", key="cad_comb_keep_import"):
+                _clear_combustivel_last_import()
+                st.rerun()
+
+    with st.expander("Adicionar combustivel por planilha", expanded=False):
+        uploaded = st.file_uploader("Enviar planilha", type=["xlsx", "csv"], key="cad_comb_upload")
+        if uploaded is None:
+            return
+
+        try:
+            raw_df = _read_uploaded_sheet(uploaded, COMBUSTIVEL_SHEET_ALIASES)
+        except Exception as exc:
+            st.error("Nao foi possivel ler a planilha. Envie um arquivo .xlsx ou .csv.")
+            st.exception(exc)
+            return
+
+        rows, errors = _combustivel_rows_from_sheet(raw_df, plate_map)
+        if errors:
+            st.warning("Revise a planilha antes de importar.")
+            for error in errors[:8]:
+                st.write(error)
+            if len(errors) > 8:
+                st.write(f"...mais {len(errors) - 8} erro(s).")
+            return
+        if not rows:
+            st.warning("Nenhuma linha valida encontrada na planilha.")
+            return
+
+        preview = pd.DataFrame(rows)
+        st.success(f"{len(rows)} lancamento(s) prontos para importar.")
+        st.dataframe(preview[["Data", "Mes", "PLACA", "Combustivel", "POSTOS", "Litros", "Custo", "Categoria"]], width="stretch", hide_index=True)
+        if st.button("Importar combustivel", type="primary", width="stretch", key="cad_comb_import_confirm"):
+            try:
+                imported_rows = _append_records_in_batches("combustivel", rows, batch_size=100)
+            except Exception as exc:
+                st.error("Nao foi possivel salvar no Neon.")
+                st.exception(exc)
+                return
+            st.session_state["cad_comb_last_import_rows"] = imported_rows
+            st.session_state["cad_comb_last_import_count"] = len(imported_rows)
+            _reset_dataset_editor("cad_comb_table")
+            st.success(f"{len(imported_rows)} lancamentos importados.")
+            st.rerun()
+
+
 def _render_peso_month_reset() -> None:
     with st.expander("Zerar peso por mes", expanded=False):
         st.warning("Essa acao apaga todos os lancamentos de peso do mes escolhido.")
@@ -5187,6 +5346,7 @@ def render_cadastro() -> None:
         with tabs[1]:
             combustivel_options = _registered_text_options(backend.load_combustiveis, "Combustivel")
             posto_options = _registered_text_options(backend.load_postos, "POSTOS")
+            _render_combustivel_sheet_import(plate_map)
 
             r1, r2 = st.columns(2)
             with r1:
