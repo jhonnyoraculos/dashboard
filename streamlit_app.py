@@ -3934,6 +3934,8 @@ def _save_entry(
     if reset_table_key:
         _clear_table_filter_state(reset_table_key)
         _reset_dataset_editor(reset_table_key)
+        st.session_state[f"{reset_table_key}_last_success"] = success
+        st.rerun()
     st.success(success)
     return True
 
@@ -4426,6 +4428,10 @@ def _render_dataset_editor(
     table = table[columns]
     table = table.reset_index(drop=True)
     table.insert(0, ROW_ID_COLUMN, range(1, len(table) + 1))
+
+    last_success = st.session_state.pop(f"{key_prefix}_last_success", None)
+    if last_success:
+        st.success(last_success)
 
     st.markdown("#### Tabela cadastrada")
     filtered_table = _apply_table_filters(table, columns, key_prefix, filter_columns)
