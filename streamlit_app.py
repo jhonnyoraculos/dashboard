@@ -3139,6 +3139,35 @@ def compare_chart_series(bundle: list[tuple[str, dict]], metric: str) -> list[di
     return series
 
 
+def frota_plate_compare_bundle(params: dict[str, object], selected_plates: list[str]) -> list[tuple[str, dict, str]]:
+    bundle = []
+    for index, plate in enumerate(selected_plates):
+        plate_params = dict(params)
+        plate_params["placa"] = [plate]
+        try:
+            data = route_json("frota", plate_params)
+        except Exception:
+            data = {}
+        bundle.append((plate, data, YEAR_SERIES_COLORS[index % len(YEAR_SERIES_COLORS)]))
+    return bundle
+
+
+def frota_plate_monthly_series(bundle: list[tuple[str, dict, str]], source_key: str, value_key: str) -> list[dict]:
+    series = []
+    for plate, data, color in bundle:
+        source = data.get(source_key, {}) if isinstance(data, dict) else {}
+        series.append(
+            {
+                "route": "frota",
+                "label": plate,
+                "color": color,
+                "raw_labels": list(source.get("Mes", []) or []),
+                "values": list(source.get(value_key, []) or []),
+            }
+        )
+    return series
+
+
 def color_kpis(
     kpis: list[tuple],
     route: str,
@@ -3660,6 +3689,7 @@ def render_frota() -> None:
         return
 
     selected_plates = [str(item) for item in (params.get("placa") or []) if item not in (None, "", "Todos")]
+    plate_compare = frota_plate_compare_bundle(params, selected_plates) if len(selected_plates) >= 2 else []
     if len(selected_plates) >= 2:
         selected_set = set(selected_plates)
         versus_rows = [row for row in ranking if row.get("placa") in selected_set]
@@ -3695,26 +3725,51 @@ def render_frota() -> None:
         include_year=include_year,
         fallback_year=fallback_year,
     )
-    total_monthly_fig = (
-        yearly_month_line_chart(data.get("mensal_total", {}), "Mes", "Valor", fallback_year=fallback_year)
-        if include_year
-        else line_chart(total_labels, total_values)
-    )
-    peso_monthly_fig = (
-        yearly_month_bar_chart(data.get("peso_mensal", {}), "Mes", "Peso", fallback_year=fallback_year, currency=False)
-        if include_year
-        else peso_bar_chart(peso_labels, peso_values)
-    )
-    km_monthly_fig = (
-        yearly_month_bar_chart(data.get("km_mensal", {}), "Mes", "Km Rodados", fallback_year=fallback_year, currency=False)
-        if include_year
-        else bar_chart(km_labels, km_values, currency=False, show_text=True)
-    )
-    litros_monthly_fig = (
-        yearly_month_bar_chart(data.get("litros_mensal", {}), "Mes", "Litros", fallback_year=fallback_year, currency=False)
-        if include_year
-        else bar_chart(litros_labels, litros_values, currency=False, show_text=True)
-    )
+    if plate_compare:
+        total_monthly_fig = multi_line_chart(
+            frota_plate_monthly_series(plate_compare, "mensal_total", "Valor"),
+            include_year=include_year,
+            fallback_year=fallback_year,
+        )
+        km_monthly_fig = multi_bar_chart(
+            frota_plate_monthly_series(plate_compare, "km_mensal", "Km Rodados"),
+            currency=False,
+            label_mode="month",
+            fallback_year=fallback_year,
+        )
+        litros_monthly_fig = multi_bar_chart(
+            frota_plate_monthly_series(plate_compare, "litros_mensal", "Litros"),
+            currency=False,
+            label_mode="month",
+            fallback_year=fallback_year,
+        )
+        peso_monthly_fig = multi_bar_chart(
+            frota_plate_monthly_series(plate_compare, "peso_mensal", "Peso"),
+            currency=False,
+            label_mode="month",
+            fallback_year=fallback_year,
+        )
+    else:
+        total_monthly_fig = (
+            yearly_month_line_chart(data.get("mensal_total", {}), "Mes", "Valor", fallback_year=fallback_year)
+            if include_year
+            else line_chart(total_labels, total_values)
+        )
+        peso_monthly_fig = (
+            yearly_month_bar_chart(data.get("peso_mensal", {}), "Mes", "Peso", fallback_year=fallback_year, currency=False)
+            if include_year
+            else peso_bar_chart(peso_labels, peso_values)
+        )
+        km_monthly_fig = (
+            yearly_month_bar_chart(data.get("km_mensal", {}), "Mes", "Km Rodados", fallback_year=fallback_year, currency=False)
+            if include_year
+            else bar_chart(km_labels, km_values, currency=False, show_text=True)
+        )
+        litros_monthly_fig = (
+            yearly_month_bar_chart(data.get("litros_mensal", {}), "Mes", "Litros", fallback_year=fallback_year, currency=False)
+            if include_year
+            else bar_chart(litros_labels, litros_values, currency=False, show_text=True)
+        )
     chart_grid([
         ("Gasto total por mês", total_monthly_fig),
         ("KM por mês", km_monthly_fig),
