@@ -105,6 +105,9 @@ _HOTEIS_COLUMNS = [
 _PEDAGIO_COLUMNS = ["PLACA", "Tipo", "Custo", "Mes", "Data", "Categoria"]
 _PESO_COLUMNS = ["Data", "Mes", "Cidade", "Peso", "Valor", "PLACA", "Categoria"]
 _PLACAS_COLUMNS = ["PLACA", "Categoria"]
+_PLATE_ALIASES = {
+    "EUX6525": "EUX6F25",
+}
 _DATASET_COLUMNS = {
     "combustivel": _COMBUSTIVEL_COLUMNS,
     "combustivel_km": _COMBUSTIVEL_KM_COLUMNS,
@@ -794,8 +797,9 @@ def _normalize_plate_value(value):
     compact = re.sub(r"[^A-Z0-9]", "", text)
     match = re.search(r"[A-Z]{3}[0-9][A-Z0-9][0-9]{2}|[A-Z]{3}[0-9]{4}", compact)
     if match:
-        return match.group(0)
-    return text
+        plate = match.group(0)
+        return _PLATE_ALIASES.get(plate, plate)
+    return _PLATE_ALIASES.get(text, text)
 
 
 def _is_plate_identifier(value) -> bool:
