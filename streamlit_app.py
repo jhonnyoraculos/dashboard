@@ -5662,6 +5662,7 @@ def render_cadastro() -> None:
                 c1, c2, c3 = st.columns(3)
                 with c1:
                     data = st.date_input("Data", value=date.today(), key="cad_pneu_data")
+                    placa, categoria = _plate_fields("cad_pneu", plate_map)
                 with c2:
                     fornecedor = st.text_input("Fornecedor", placeholder="PNEUSMAX", key="cad_pneu_fornecedor")
                     observacao = st.text_input("Observação", key="cad_pneu_observacao")
@@ -5674,6 +5675,8 @@ def render_cadastro() -> None:
                         {
                             "Data": data,
                             "Mes": _entry_month(data),
+                            "PLACA": placa,
+                            "Categoria": categoria,
                             "Fornecedor": fornecedor,
                             "Custo": custo,
                             "Observacao": observacao,
@@ -5685,17 +5688,19 @@ def render_cadastro() -> None:
             _render_dataset_editor(
                 "pneus",
                 backend.load_pneus,
-                ["Data", "Mes", "Fornecedor", "Custo", "Observacao"],
+                ["Data", "Mes", "PLACA", "Categoria", "Fornecedor", "Custo", "Observacao"],
                 ["Data", "Fornecedor"],
                 "cad_pneu_table",
                 {
                     "Data": _date_col(),
                     "Mes": st.column_config.TextColumn("Mes"),
+                    "PLACA": st.column_config.TextColumn("Placa"),
+                    "Categoria": st.column_config.SelectboxColumn("Categoria", options=CATEGORY_OPTIONS),
                     "Fornecedor": st.column_config.TextColumn("Fornecedor"),
                     "Custo": _money_col("Custo"),
                     "Observacao": st.column_config.TextColumn("Observação"),
                 },
-                ["Mes", "Fornecedor"],
+                ["Mes", "PLACA", "Categoria", "Fornecedor"],
             )
 
         with tabs[5]:
