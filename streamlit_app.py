@@ -3898,6 +3898,19 @@ def _entry_required_missing(row: dict, fields: list[str]) -> list[str]:
     return missing
 
 
+def _entry_field_label(field: str) -> str:
+    labels = {
+        "PLACA": "Placa",
+        "OFICINA": "Oficina",
+        "POSTOS": "Posto",
+        "Combustivel": "Combustível",
+        "Data": "Data",
+        "Custo": "Custo",
+        "Tipo": "Tipo",
+    }
+    return labels.get(field, field)
+
+
 def _save_entry(
     dataset: str,
     row: dict,
@@ -3905,10 +3918,11 @@ def _save_entry(
     required: list[str],
     success: str,
     replace_keys: list[str] | None = None,
+    reset_table_key: str | None = None,
 ) -> bool:
     missing = _entry_required_missing(row, required)
     if missing:
-        st.warning("Preencha os campos obrigatórios: " + ", ".join(missing))
+        st.warning("Preencha os campos obrigatórios: " + ", ".join(_entry_field_label(field) for field in missing))
         return False
     try:
         backend.save_dashboard_record(dataset, row, replace_keys=replace_keys)
@@ -3917,6 +3931,9 @@ def _save_entry(
         st.exception(exc)
         return False
     clear_cached_reads()
+    if reset_table_key:
+        _clear_table_filter_state(reset_table_key)
+        _reset_dataset_editor(reset_table_key)
     st.success(success)
     return True
 
@@ -5614,6 +5631,7 @@ def render_cadastro() -> None:
                         },
                         required=["Data", "PLACA", "OFICINA"],
                         success="Lançamento de manutenção salvo.",
+                        reset_table_key="cad_manu_table",
                     )
 
             _render_dataset_editor(
