@@ -3646,6 +3646,9 @@ def render_frota() -> None:
             ("Manutenção", fmt_brl_big(totais.get("manutencao")), JR_RED),
             ("Pedágio/Extras", fmt_brl_big(totais.get("pedagio")), "#D97706"),
             ("Peso total", fmt_peso(totais.get("peso_total")), JR_BLUE),
+            ("KM total", fmt_num(totais.get("km_total")), JR_BLUE),
+            ("Litros", fmt_num(totais.get("litros_total")), JR_BLUE),
+            ("Média KM/L", f"{fmt_num(totais.get('km_por_litro'), 2)} km/L", JR_RED),
             ("Ordenado por", order_label, JR_BLUE),
         ]
     )
@@ -3678,6 +3681,20 @@ def render_frota() -> None:
         include_year=include_year,
         fallback_year=fallback_year,
     )
+    km_labels, km_values = sorted_series(
+        data.get("km_mensal", {}),
+        "Mes",
+        "Km Rodados",
+        include_year=include_year,
+        fallback_year=fallback_year,
+    )
+    litros_labels, litros_values = sorted_series(
+        data.get("litros_mensal", {}),
+        "Mes",
+        "Litros",
+        include_year=include_year,
+        fallback_year=fallback_year,
+    )
     total_monthly_fig = (
         yearly_month_line_chart(data.get("mensal_total", {}), "Mes", "Valor", fallback_year=fallback_year)
         if include_year
@@ -3688,8 +3705,20 @@ def render_frota() -> None:
         if include_year
         else peso_bar_chart(peso_labels, peso_values)
     )
+    km_monthly_fig = (
+        yearly_month_bar_chart(data.get("km_mensal", {}), "Mes", "Km Rodados", fallback_year=fallback_year, currency=False)
+        if include_year
+        else bar_chart(km_labels, km_values, currency=False, show_text=True)
+    )
+    litros_monthly_fig = (
+        yearly_month_bar_chart(data.get("litros_mensal", {}), "Mes", "Litros", fallback_year=fallback_year, currency=False)
+        if include_year
+        else bar_chart(litros_labels, litros_values, currency=False, show_text=True)
+    )
     chart_grid([
         ("Gasto total por mês", total_monthly_fig),
+        ("KM por mês", km_monthly_fig),
+        ("Litros por mês", litros_monthly_fig),
         ("Peso por mês", peso_monthly_fig),
     ])
 

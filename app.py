@@ -2089,6 +2089,26 @@ def _ranking_monthly_sum(frames: list[tuple[pd.DataFrame, str]], value_name: str
     return {"Mes": meses, value_name: [round(monthly[mes], 3) for mes in meses]}
 
 
+def _ranking_monthly_km(df_km: pd.DataFrame, df_comb: pd.DataFrame) -> dict:
+    def _monthly_map(df: pd.DataFrame, value_col: str) -> dict[str, float]:
+        if df.empty or "Mes" not in df.columns or value_col not in df.columns:
+            return {}
+        values = pd.to_numeric(df[value_col], errors="coerce")
+        data = df.loc[values.notna(), ["Mes"]].copy()
+        data[value_col] = values.loc[values.notna()].astype("float64")
+        data["Mes"] = data["Mes"].astype("string").str.strip()
+        data = data.dropna(subset=["Mes"])
+        if data.empty:
+            return {}
+        grouped = data.groupby("Mes")[value_col].sum()
+        return {str(mes): float(value) for mes, value in grouped.items() if pd.notna(value)}
+
+    km_override = _monthly_map(df_km, "Km Rodados")
+    km_comb = _monthly_map(df_comb, "Km Rodados")
+    meses = sorted(set(km_override) | set(km_comb))
+    return {"Mes": meses, "Km Rodados": [round(km_override.get(mes, km_comb.get(mes, 0.0)), 3) for mes in meses]}
+
+
 def _ranking_weight_dominance_by_city(df: pd.DataFrame, placas: list[str] | None = None) -> dict:
     if df.empty or not {"Cidade", "PLACA", "Peso"}.issubset(df.columns):
         return {"labels": [], "values": [], "city_counts": [], "cidades": []}
@@ -2230,6 +2250,8 @@ def data_frota(params: dict | None = None) -> dict:
     valor_peso_map = _ranking_sum_by_plate(df_peso, "Valor")
     mensal_total = _ranking_monthly_sum([(df_comb, "Custo"), (df_manu, "Custo"), (df_ped, "Custo")], "Valor")
     mensal_peso = _ranking_monthly_sum([(df_peso, "Peso")], "Peso")
+    mensal_km = _ranking_monthly_km(df_km, df_comb)
+    mensal_litros = _ranking_monthly_sum([(df_comb, "Litros")], "Litros")
     litros_map = _ranking_sum_by_plate(df_comb, "Litros")
     km_fuel_map = _ranking_sum_by_plate(df_comb, "Km Rodados")
     km_override_map = _ranking_sum_by_plate(df_km, "Km Rodados")
@@ -2283,6 +2305,9 @@ def data_frota(params: dict | None = None) -> dict:
     for index, row in enumerate(ranking, start=1):
         row["rank"] = index
 
+    total_km = sum(row["km_total"] for row in ranking)
+    total_litros = sum(row["litros_total"] for row in ranking)
+
     return {
         "anos": sorted(anos_disponiveis),
         "meses": meses_disponiveis,
@@ -2293,6 +2318,8 @@ def data_frota(params: dict | None = None) -> dict:
         "dominancia_peso": dominancia_peso,
         "mensal_total": mensal_total,
         "peso_mensal": mensal_peso,
+        "km_mensal": mensal_km,
+        "litros_mensal": mensal_litros,
         "totais": {
             "placas": len(ranking),
             "total": round(sum(row["total"] for row in ranking), 2),
@@ -2301,8 +2328,9 @@ def data_frota(params: dict | None = None) -> dict:
             "pedagio": round(sum(row["pedagio"] for row in ranking), 2),
             "peso_total": round(sum(row["peso_total"] for row in ranking), 3),
             "valor_peso": round(sum(row["valor_peso"] for row in ranking), 2),
-            "km_total": round(sum(row["km_total"] for row in ranking), 2),
-            "litros_total": round(sum(row["litros_total"] for row in ranking), 2),
+            "km_total": round(total_km, 2),
+            "litros_total": round(total_litros, 2),
+            "km_por_litro": round((total_km / total_litros) if total_litros else 0.0, 3),
             "lancamentos": sum(row["lancamentos"] for row in ranking),
         },
     }
