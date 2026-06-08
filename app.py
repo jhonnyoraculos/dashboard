@@ -2110,7 +2110,7 @@ def _ranking_monthly_km(df_km: pd.DataFrame, df_comb: pd.DataFrame) -> dict:
     km_override = _monthly_map(df_km, "Km Rodados")
     km_comb = _monthly_map(df_comb, "Km Rodados")
     meses = sorted(set(km_override) | set(km_comb))
-    return {"Mes": meses, "Km Rodados": [round(km_override.get(mes, km_comb.get(mes, 0.0)), 3) for mes in meses]}
+    return {"Mes": meses, "Km Rodados": [round(max(km_override.get(mes, 0.0), km_comb.get(mes, 0.0)), 3) for mes in meses]}
 
 
 def _ranking_weight_dominance_by_city(df: pd.DataFrame, placas: list[str] | None = None) -> dict:
@@ -2272,7 +2272,7 @@ def data_frota(params: dict | None = None) -> dict:
         peso_total = peso_map.get(placa, 0.0)
         valor_peso_total = valor_peso_map.get(placa, 0.0)
         total = combustivel_total + manutencao_total + pedagio_total
-        km_total = km_override_map.get(placa, km_fuel_map.get(placa, 0.0))
+        km_total = max(km_override_map.get(placa, 0.0), km_fuel_map.get(placa, 0.0))
         litros_total = litros_map.get(placa, 0.0)
         lancamentos = abastecimentos_map.get(placa, 0) + servicos_map.get(placa, 0) + pedagio_count_map.get(placa, 0)
         ranking.append(
