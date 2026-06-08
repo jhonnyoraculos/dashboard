@@ -28,7 +28,7 @@ MUTED = "#6B7280"
 CARD_BORDER = "#c2d2f3"
 LOGO_PATH = Path(__file__).parent / "static" / "logo-jr.png"
 CURRENT_YEAR = date.today().year
-APP_VERSION = "deploy-home-km-design-v1"
+APP_VERSION = "deploy-home-card-polish-v1"
 BR_TZ = ZoneInfo("America/Sao_Paulo")
 CATEGORY_OPTIONS = ["Transporte", "Vex", "Equipamento"]
 PEDAGIO_TIPO_OPTIONS = ["Pedagio", "Extras", "Taxi", "IPVA", "Seguro", "Licenciamento", "DPVAT", "Outros"]
@@ -663,8 +663,53 @@ def inject_css() -> None:
         }}
 
         .home-total-card {{
-          border: 0;
-          box-shadow: 0 14px 32px rgba(16,24,40,0.12);
+          position: relative;
+          overflow: hidden;
+          min-height: 136px;
+          border: 1px solid rgba(194,210,243,.72);
+          box-shadow:
+            0 18px 40px rgba(16,24,40,0.11),
+            inset 0 1px 0 rgba(255,255,255,.88);
+        }}
+
+        .home-total-card::before {{
+          content: "";
+          position: absolute;
+          inset: 0 0 auto 0;
+          height: 4px;
+          background: var(--home-accent, var(--jr-blue));
+        }}
+
+        .home-total-card::after {{
+          content: "";
+          position: absolute;
+          top: -72px;
+          right: -48px;
+          width: 170px;
+          height: 170px;
+          border-radius: 999px;
+          background: radial-gradient(circle, var(--home-glow, rgba(28,45,107,.13)), rgba(255,255,255,0) 68%);
+          pointer-events: none;
+        }}
+
+        .home-total-card > * {{
+          position: relative;
+          z-index: 1;
+        }}
+
+        .home-total-card--money {{
+          --home-accent: var(--jr-red);
+          --home-glow: rgba(190,30,45,.16);
+        }}
+
+        .home-total-card--weight {{
+          --home-accent: var(--jr-blue);
+          --home-glow: rgba(28,45,107,.14);
+        }}
+
+        .home-total-card--vex {{
+          --home-accent: #7C3AED;
+          --home-glow: rgba(124,58,237,.15);
         }}
 
         .home-total-card--km {{
@@ -677,6 +722,11 @@ def inject_css() -> None:
           border: 1px solid rgba(194,210,243,.9);
           border-radius: 12px;
           box-shadow: 0 10px 24px rgba(16,24,40,0.09);
+        }}
+
+        .home-total-card--km::before,
+        .home-total-card--km::after {{
+          display: none;
         }}
 
         .kpis {{
@@ -758,6 +808,14 @@ def inject_css() -> None:
           text-align: center;
         }}
 
+        .home-total-card:not(.home-total-card--km) .home-total-label {{
+          text-align: left;
+          font-size: 13px;
+          font-weight: 900;
+          letter-spacing: .055em;
+          color: #6B7280;
+        }}
+
         .home-total-value {{
           margin: 0;
           font-size: 28px;
@@ -766,10 +824,30 @@ def inject_css() -> None:
           line-height: 1.2;
         }}
 
+        .home-total-card:not(.home-total-card--km) .home-total-value {{
+          position: relative;
+          z-index: 1;
+          margin-top: 8px;
+          font-size: clamp(22px, 2vw, 30px);
+          font-weight: 950;
+          letter-spacing: 0;
+          color: var(--home-accent, var(--jr-blue));
+        }}
+
         .home-total-status {{
           margin: 0;
           font-size: 12px;
           color: #4B5563;
+        }}
+
+        .home-total-card:not(.home-total-card--km) .home-total-status {{
+          position: relative;
+          z-index: 1;
+          margin-top: 8px;
+          max-width: 360px;
+          color: #4B5563;
+          font-size: 14px;
+          line-height: 1.55;
         }}
 
         .home-total-card--km .home-total-label,
@@ -1992,7 +2070,16 @@ def render_home_totals(cards: list[tuple[str, str, str]]) -> None:
     seen_km = False
 
     def _home_card(label: str, value: str, status: str, *, km: bool = False) -> str:
-        extra_class = " home-total-card--km" if km else ""
+        if km:
+            extra_class = " home-total-card--km"
+        elif label == "Peso total":
+            extra_class = " home-total-card--weight"
+        elif label == "Gasto Vex":
+            extra_class = " home-total-card--vex"
+        elif label.startswith("Gasto"):
+            extra_class = " home-total-card--money"
+        else:
+            extra_class = ""
         return (
             f'<div class="home-total-card home-total-card--secondary{extra_class}">'
             f'<p class="home-total-label">{h(label)}</p>'
