@@ -4547,26 +4547,26 @@ def _render_table_plate_counter(filtered_table: pd.DataFrame, key_prefix: str) -
         scope = f"{scope} - Dia {dia_label}"
     plural = "placa" if count == 1 else "placas"
     cards = [
-        f"""
-        <div class="table-counter-card">
-          <span>{h(scope)}</span>
-          <strong>{count}</strong>
-          <span>{plural} diferentes</span>
-        </div>
-        """
+        (
+            '<div class="table-counter-card">'
+            f"<span>{h(scope)}</span>"
+            f"<strong>{count}</strong>"
+            f"<span>{plural} diferentes</span>"
+            "</div>"
+        )
     ]
 
     if "Km Rodados" in filtered_table.columns:
         km_values = filtered_table["Km Rodados"].apply(lambda value: _parse_brl_number(value) or 0.0)
         km_total = float(km_values.sum())
         cards.append(
-            f"""
-            <div class="table-counter-card table-counter-card--metric">
-              <span>KM total</span>
-              <strong>{h(fmt_num(km_total))}</strong>
-              <span>km rodados</span>
-            </div>
-            """
+            (
+                '<div class="table-counter-card table-counter-card--metric">'
+                "<span>KM total</span>"
+                f"<strong>{h(fmt_num(km_total))}</strong>"
+                "<span>km rodados</span>"
+                "</div>"
+            )
         )
 
         if "Categoria" in filtered_table.columns:
@@ -4580,13 +4580,13 @@ def _render_table_plate_counter(filtered_table: pd.DataFrame, key_prefix: str) -
         for label, key in (("Transporte", "transporte"), ("Vex", "vex")):
             sector_total = float(km_values.loc[normalized == key].sum())
             cards.append(
-                f"""
-                <div class="table-counter-card table-counter-card--metric">
-                  <span>{h(label)}</span>
-                  <strong>{h(fmt_num(sector_total))}</strong>
-                  <span>km</span>
-                </div>
-                """
+                (
+                    '<div class="table-counter-card table-counter-card--metric">'
+                    f"<span>{h(label)}</span>"
+                    f"<strong>{h(fmt_num(sector_total))}</strong>"
+                    "<span>km</span>"
+                    "</div>"
+                )
             )
 
     st.markdown(
