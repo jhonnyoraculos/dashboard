@@ -1447,12 +1447,39 @@ def _pneu_legacy_mask(df: pd.DataFrame) -> pd.Series:
     return oficina.str.contains("PNEU", na=False)
 
 
+def _km_by_month_plate(df: pd.DataFrame) -> dict[tuple[str, str], float]:
+    if df is None or df.empty or "Mes" not in df.columns or "Km Rodados" not in df.columns:
+        return {}
+    columns = ["Mes", "Km Rodados"]
+    if "PLACA" in df.columns:
+        columns.append("PLACA")
+    data = df[columns].copy()
+    data["Km Rodados"] = pd.to_numeric(data["Km Rodados"], errors="coerce")
+    data = data.dropna(subset=["Mes", "Km Rodados"])
+    if data.empty:
+        return {}
+    if "PLACA" not in data.columns:
+        data["PLACA"] = "__GERAL__"
+    data["Mes"] = data["Mes"].astype("string").str.strip()
+    data["PLACA"] = data["PLACA"].astype("string").fillna("__GERAL__").str.strip()
+    grouped = data.groupby(["Mes", "PLACA"], dropna=False)["Km Rodados"].sum()
+    return {(str(mes), str(placa)): float(value or 0.0) for (mes, placa), value in grouped.items()}
+
+
+def _combined_km_metrics(df: pd.DataFrame, km_override: pd.DataFrame | None = None) -> tuple[float, dict]:
+    fuel_map = _km_by_month_plate(df)
+    override_map = _km_by_month_plate(km_override) if km_override is not None else {}
+    monthly = defaultdict(float)
+    for mes, placa in sorted(set(fuel_map) | set(override_map)):
+        monthly[mes] += max(fuel_map.get((mes, placa), 0.0), override_map.get((mes, placa), 0.0))
+    total = sum(monthly.values())
+    meses = sorted(monthly)
+    return total, {"Mes": meses, "Km Rodados": [round(monthly[mes], 3) for mes in meses]}
+
+
 def agg_combustivel(df: pd.DataFrame, *, km_override: pd.DataFrame | None = None) -> dict:
     custo_total = float(pd.to_numeric(df.get("Custo"), errors="coerce").sum()) if "Custo" in df else 0.0
-    if km_override is not None and "Km Rodados" in km_override.columns:
-        km_total = float(pd.to_numeric(km_override["Km Rodados"], errors="coerce").sum())
-    else:
-        km_total = float(pd.to_numeric(df.get("Km Rodados"), errors="coerce").sum()) if "Km Rodados" in df else 0.0
+    km_total, km_mensal = _combined_km_metrics(df, km_override)
     litros_total = float(pd.to_numeric(df.get("Litros"), errors="coerce").sum()) if "Litros" in df else 0.0
     custo_por_km = (custo_total / km_total) if km_total else 0.0
     km_por_litro = (km_total / litros_total) if litros_total else 0.0
@@ -1469,7 +1496,7 @@ def agg_combustivel(df: pd.DataFrame, *, km_override: pd.DataFrame | None = None
         "km_por_litro": km_por_litro,
         "custo_por_litro": custo_por_litro,
         "custo_mensal": _group_sum(df, "Mes", sort_by="group"),
-        "km_mensal": _group_sum(km_override, "Mes", "Km Rodados", sort_by="group") if km_override is not None else _group_sum(df, "Mes", "Km Rodados", sort_by="group"),
+        "km_mensal": km_mensal,
         "litros_mensal": _group_sum(df, "Mes", "Litros", sort_by="group"),
         "gasto_por_posto": _group_sum(df, "POSTOS"),
         "gasto_por_combustivel": _group_sum(df, "Combustivel"),
@@ -1810,7 +1837,7 @@ def data_comb(params: dict | None = None) -> dict:
         if km_override.empty:
             km_override = None
 
-    resultado = agg_combustivel(df, km_override=km_override if ano == 2026 else None)
+    resultado = agg_combustivel(df, km_override=km_override)
     resultado["anos"] = anos_disponiveis
     resultado["meses"] = meses_disponiveis
     return resultado
