@@ -1824,10 +1824,6 @@ def data_comb(params: dict | None = None) -> dict:
             km_override = km_override[pd.to_datetime(km_override["Mes"], errors="coerce").dt.year == ano]
         if meses:
             km_override = km_override[km_override["Mes"].isin(meses)]
-        if (posto and posto != "Todos" or combustivel and combustivel != "Todos") and not df.empty and "Mes" in df.columns and "PLACA" in df.columns:
-            allowed = df[["Mes", "PLACA"]].dropna().drop_duplicates()
-            if not allowed.empty:
-                km_override = km_override.merge(allowed, on=["Mes", "PLACA"], how="inner")
         if km_override.empty:
             km_override = None
 
