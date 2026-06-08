@@ -54,6 +54,7 @@ _METADATA_CACHE = {"loaded": False, "loaded_at": 0.0, "values": {}, "lock": thre
 
 _PEDAGIO_CACHE = {"mtime": None, "df": None, "lock": threading.Lock()}
 _COMBUSTIVEL_CACHE = {"mtime": None, "df": None, "lock": threading.Lock()}
+_COMBUSTIVEL_KM_CACHE = {"mtime": None, "df": None, "lock": threading.Lock()}
 _MANUTENCAO_CACHE = {"mtime": None, "df": None, "lock": threading.Lock()}
 _PNEUS_CACHE = {"mtime": None, "df": None, "lock": threading.Lock()}
 _HOTEIS_CACHE = {"mtime": None, "df": None, "lock": threading.Lock()}
@@ -67,6 +68,7 @@ _TEXT_REGISTRY_CACHES = {
 }
 _CACHE_MAP = {
     "combustivel": _COMBUSTIVEL_CACHE,
+    "combustivel_km": _COMBUSTIVEL_KM_CACHE,
     "manutencao": _MANUTENCAO_CACHE,
     "pneus": _PNEUS_CACHE,
     "hoteis": _HOTEIS_CACHE,
@@ -330,7 +332,7 @@ def _clear_dataset_cache(dataset: str) -> None:
         _TEXT_REGISTRY_CACHES["postos"]["df"] = None
 
     if dataset == "combustivel_km":
-        targets = ["combustivel"]
+        targets = ["combustivel", "combustivel_km"]
     elif dataset == "manutencao":
         targets = ["manutencao", "pneus"]
     elif dataset == "placas":
@@ -1344,13 +1346,22 @@ def load_combustivel() -> pd.DataFrame:
 
 
 def load_combustivel_km() -> pd.DataFrame:
-    try:
-        km = _read_database_table("combustivel_km", _COMBUSTIVEL_KM_COLUMNS)
-        km = _finalize_common(km, numeric_columns=["Km Rodados"], plate_columns=["PLACA"])
-        km = km.dropna(subset=["Mes", "PLACA"])
-    except Exception:
-        return _empty(_COMBUSTIVEL_KM_COLUMNS)
-    return km[_COMBUSTIVEL_KM_COLUMNS].copy()
+    cache = _COMBUSTIVEL_KM_CACHE
+    with cache["lock"]:
+        version = _db_version("combustivel_km")
+        cached = cache.get("df")
+        if cached is not None and cache.get("mtime") == version:
+            return cached.copy()
+        try:
+            km = _read_database_table("combustivel_km", _COMBUSTIVEL_KM_COLUMNS)
+            km = _finalize_common(km, numeric_columns=["Km Rodados"], plate_columns=["PLACA"])
+            km = km.dropna(subset=["Mes", "PLACA"])
+        except Exception:
+            km = _empty(_COMBUSTIVEL_KM_COLUMNS)
+        km = km[_COMBUSTIVEL_KM_COLUMNS].copy()
+        cache["mtime"] = version
+        cache["df"] = km.copy()
+        return km.copy()
 
 
 def _load_text_registry(dataset: str, columns: list[str], column: str) -> pd.DataFrame:
