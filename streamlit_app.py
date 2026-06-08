@@ -1069,6 +1069,28 @@ def inject_css() -> None:
           color: var(--jr-blue);
         }}
 
+        .table-counter-card {{
+          display: inline-flex;
+          align-items: center;
+          gap: 10px;
+          margin: 12px 0 8px;
+          padding: 10px 14px;
+          border: 1px solid rgba(194,210,243,.9);
+          border-radius: 12px;
+          background: rgba(255,255,255,.78);
+          box-shadow: 0 10px 22px rgba(16,24,40,.08);
+          color: var(--muted);
+          font-size: 13px;
+          font-weight: 800;
+        }}
+
+        .table-counter-card strong {{
+          color: var(--jr-red);
+          font-size: 22px;
+          line-height: 1;
+          font-weight: 950;
+        }}
+
         .ranking-header {{
           display: grid;
           grid-template-columns: .45fr .9fr repeat(4, 1.05fr) .85fr .75fr .8fr;
@@ -4489,6 +4511,40 @@ def _apply_table_filters(table: pd.DataFrame, columns: list[str], key_prefix: st
     return filtered
 
 
+def _selected_table_filter_label(key_prefix: str, column: str) -> str:
+    selected = st.session_state.get(f"{key_prefix}_filter_{column}") or []
+    selected = [clean_text(item).strip() for item in selected if clean_text(item).strip()]
+    if not selected:
+        return ""
+    if len(selected) <= 3:
+        return ", ".join(selected)
+    return f"{', '.join(selected[:3])} +{len(selected) - 3}"
+
+
+def _render_table_plate_counter(filtered_table: pd.DataFrame, key_prefix: str) -> None:
+    if filtered_table.empty or "PLACA" not in filtered_table.columns:
+        return
+    placas = filtered_table["PLACA"].astype("string").fillna("").str.strip()
+    placas = placas[(placas != "") & (~placas.str.lower().isin(["nan", "none", "nat", "<na>"]))]
+    count = int(placas.nunique())
+    mes_label = _selected_table_filter_label(key_prefix, "Mes")
+    dia_label = _selected_table_filter_label(key_prefix, "Data")
+    scope = f"Mês {mes_label}" if mes_label else "Resultado filtrado"
+    if dia_label:
+        scope = f"{scope} • Dia {dia_label}"
+    plural = "placa" if count == 1 else "placas"
+    st.markdown(
+        f"""
+        <div class="table-counter-card">
+          <span>{h(scope)}</span>
+          <strong>{count}</strong>
+          <span>{plural} diferentes</span>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
 def _format_delete_value(value: object) -> str:
     if _editor_empty_value(value):
         return ""
@@ -4586,6 +4642,7 @@ def _render_dataset_editor(
 
     st.markdown("#### Tabela cadastrada")
     filtered_table = _apply_table_filters(table, columns, key_prefix, filter_columns)
+    _render_table_plate_counter(filtered_table, key_prefix)
     visible_row_ids = set(pd.to_numeric(filtered_table[ROW_ID_COLUMN], errors="coerce").dropna().astype(int).tolist())
     nonce = st.session_state.get(f"{key_prefix}_editor_nonce", 0)
     _render_delete_record_control(dataset, filtered_table, columns, key_prefix, nonce)
