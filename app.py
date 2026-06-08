@@ -2445,13 +2445,25 @@ def _safe_total(
     }
 
 
-def _overview_km_total(*, ano: int | None = None, mes: int | None = None, meses: list[int] | None = None) -> float:
+def _overview_km_totals(*, ano: int | None = None, mes: int | None = None, meses: list[int] | None = None) -> dict[str, float]:
     try:
         df_km = _apply_plate_categories(load_combustivel_km())
         df_km = _filter_by_period(df_km, ano=ano, mes=mes, meses=meses or [])
     except Exception:
         df_km = _empty(_COMBUSTIVEL_KM_COLUMNS)
-    return float(pd.to_numeric(df_km.get("Km Rodados"), errors="coerce").sum()) if "Km Rodados" in df_km else 0.0
+    if df_km.empty or "Km Rodados" not in df_km:
+        return {"total": 0.0, "transporte": 0.0, "vex": 0.0}
+
+    work = df_km.copy()
+    work["Km Rodados"] = pd.to_numeric(work["Km Rodados"], errors="coerce").fillna(0.0)
+    if "Categoria" not in work.columns:
+        work["Categoria"] = "Transporte"
+    categorias = _normalize_categoria(work["Categoria"])
+    return {
+        "total": float(work["Km Rodados"].sum()),
+        "transporte": float(work.loc[categorias == "transporte", "Km Rodados"].sum()),
+        "vex": float(work.loc[categorias == "vex", "Km Rodados"].sum()),
+    }
 
 
 def compute_overview_totals(*, ano: int | None = None, mes: int | None = None, meses_lista: list[int] | None = None) -> dict:
@@ -2518,7 +2530,10 @@ def compute_overview_totals(*, ano: int | None = None, mes: int | None = None, m
 
     detalhes["total_geral"] = float(total_geral)
     detalhes["peso_total"] = float((detalhes.get("peso") or {}).get("valor") or 0.0)
-    detalhes["km_total"] = _overview_km_total(ano=ano, mes=mes, meses=meses_lista)
+    km_totais = _overview_km_totals(ano=ano, mes=mes, meses=meses_lista)
+    detalhes["km_total"] = km_totais["total"]
+    detalhes["km_transporte"] = km_totais["transporte"]
+    detalhes["km_vex"] = km_totais["vex"]
     detalhes["segmentos"] = segmentos_dict
     detalhes["total_transporte"] = segmentos_dict.get("Transporte", 0.0)
     detalhes["total_vex"] = segmentos_dict.get("Vex", 0.0)

@@ -28,7 +28,7 @@ MUTED = "#6B7280"
 CARD_BORDER = "#c2d2f3"
 LOGO_PATH = Path(__file__).parent / "static" / "logo-jr.png"
 CURRENT_YEAR = date.today().year
-APP_VERSION = "deploy-km-total-alinhado-v1"
+APP_VERSION = "deploy-home-km-setores-v1"
 BR_TZ = ZoneInfo("America/Sao_Paulo")
 CATEGORY_OPTIONS = ["Transporte", "Vex", "Equipamento"]
 PEDAGIO_TIPO_OPTIONS = ["Pedagio", "Extras", "Taxi", "IPVA", "Seguro", "Licenciamento", "DPVAT", "Outros"]
@@ -655,6 +655,17 @@ def inject_css() -> None:
           box-shadow: 0 14px 32px rgba(16,24,40,0.12);
         }}
 
+        .home-total-card--km {{
+          min-height: 44px;
+          padding: 10px 16px;
+          flex-direction: row;
+          align-items: center;
+          justify-content: center;
+          gap: 10px;
+          border: 1px solid rgba(194,210,243,.9);
+          border-radius: 12px;
+        }}
+
         .kpis {{
           margin: 18px 0 28px;
           gap: 28px;
@@ -746,6 +757,23 @@ def inject_css() -> None:
           margin: 0;
           font-size: 12px;
           color: #4B5563;
+        }}
+
+        .home-total-card--km .home-total-label,
+        .home-total-card--km .home-total-status {{
+          width: auto;
+          text-align: left;
+          font-size: 12px;
+          font-weight: 900;
+          letter-spacing: 0;
+          text-transform: none;
+        }}
+
+        .home-total-card--km .home-total-value {{
+          color: var(--jr-red);
+          font-size: 22px;
+          line-height: 1;
+          font-weight: 950;
         }}
 
         .home-filter-row {{
@@ -1934,9 +1962,11 @@ def render_kpis(items: list[tuple]) -> None:
 
 def render_home_totals(cards: list[tuple[str, str, str]]) -> None:
     body = []
+    compact_km_labels = {"KM total", "Transporte", "Vex"}
     for label, value, status in cards:
+        extra_class = " home-total-card--km" if label in compact_km_labels else ""
         body.append(
-            f'<div class="home-total-card home-total-card--secondary"><p class="home-total-label">{h(label)}</p><p class="home-total-value">{h(value)}</p><p class="home-total-status">{h(status)}</p></div>'
+            f'<div class="home-total-card home-total-card--secondary{extra_class}"><p class="home-total-label">{h(label)}</p><p class="home-total-value">{h(value)}</p><p class="home-total-status">{h(status)}</p></div>'
         )
     st.markdown(f'<div class="home-total-grid">{"".join(body)}</div>', unsafe_allow_html=True)
 
@@ -3899,6 +3929,15 @@ def render_home() -> None:
         ("KM rodado", fmt_num(overview.get("km_total")), "Somatório dos quilômetros rodados no filtro aplicado."),
         ("Gasto transporte", fmt_brl(overview.get("total_transporte")), 'Somatório das despesas marcadas como "Transporte".'),
         ("Gasto Vex", fmt_brl(overview.get("total_vex")), 'Somatório das despesas marcadas como "Vex".'),
+    ]
+
+    home_total_cards = [
+        home_total_cards[0],
+        home_total_cards[1],
+        ("KM total", fmt_num(overview.get("km_total")), "km rodados"),
+        ("Transporte", fmt_num(overview.get("km_transporte")), "km"),
+        ("Vex", fmt_num(overview.get("km_vex")), "km"),
+        *home_total_cards[3:],
     ]
 
     with st.container(key="home_total_section"):
