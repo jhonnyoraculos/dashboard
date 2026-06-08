@@ -28,7 +28,7 @@ MUTED = "#6B7280"
 CARD_BORDER = "#c2d2f3"
 LOGO_PATH = Path(__file__).parent / "static" / "logo-jr.png"
 CURRENT_YEAR = date.today().year
-APP_VERSION = "deploy-home-km-setores-v1"
+APP_VERSION = "deploy-home-km-design-v1"
 BR_TZ = ZoneInfo("America/Sao_Paulo")
 CATEGORY_OPTIONS = ["Transporte", "Vex", "Equipamento"]
 PEDAGIO_TIPO_OPTIONS = ["Pedagio", "Extras", "Taxi", "IPVA", "Seguro", "Licenciamento", "DPVAT", "Outros"]
@@ -632,6 +632,18 @@ def inject_css() -> None:
           gap: 20px;
         }}
 
+        .home-total-stack {{
+          display: grid;
+          gap: 16px;
+        }}
+
+        .home-km-strip {{
+          display: grid;
+          grid-template-columns: repeat(3, minmax(0, 1fr));
+          gap: 12px;
+          align-items: stretch;
+        }}
+
         .home-total-card,
         .kpi {{
           background:
@@ -656,14 +668,15 @@ def inject_css() -> None:
         }}
 
         .home-total-card--km {{
-          min-height: 44px;
-          padding: 10px 16px;
+          min-height: 56px;
+          padding: 12px 18px;
           flex-direction: row;
           align-items: center;
           justify-content: center;
-          gap: 10px;
+          gap: 12px;
           border: 1px solid rgba(194,210,243,.9);
           border-radius: 12px;
+          box-shadow: 0 10px 24px rgba(16,24,40,0.09);
         }}
 
         .kpis {{
@@ -763,17 +776,28 @@ def inject_css() -> None:
         .home-total-card--km .home-total-status {{
           width: auto;
           text-align: left;
-          font-size: 12px;
+          font-size: 13px;
           font-weight: 900;
           letter-spacing: 0;
           text-transform: none;
+          line-height: 1;
         }}
 
         .home-total-card--km .home-total-value {{
           color: var(--jr-red);
-          font-size: 22px;
+          font-size: 24px;
           line-height: 1;
           font-weight: 950;
+        }}
+
+        @media (max-width: 760px) {{
+          .home-km-strip {{
+            grid-template-columns: 1fr;
+          }}
+
+          .home-total-card--km {{
+            justify-content: flex-start;
+          }}
         }}
 
         .home-filter-row {{
@@ -1961,14 +1985,39 @@ def render_kpis(items: list[tuple]) -> None:
 
 
 def render_home_totals(cards: list[tuple[str, str, str]]) -> None:
-    body = []
     compact_km_labels = {"KM total", "Transporte", "Vex"}
-    for label, value, status in cards:
-        extra_class = " home-total-card--km" if label in compact_km_labels else ""
-        body.append(
-            f'<div class="home-total-card home-total-card--secondary{extra_class}"><p class="home-total-label">{h(label)}</p><p class="home-total-value">{h(value)}</p><p class="home-total-status">{h(status)}</p></div>'
+    regular_before: list[str] = []
+    regular_after: list[str] = []
+    km_body: list[str] = []
+    seen_km = False
+
+    def _home_card(label: str, value: str, status: str, *, km: bool = False) -> str:
+        extra_class = " home-total-card--km" if km else ""
+        return (
+            f'<div class="home-total-card home-total-card--secondary{extra_class}">'
+            f'<p class="home-total-label">{h(label)}</p>'
+            f'<p class="home-total-value">{h(value)}</p>'
+            f'<p class="home-total-status">{h(status)}</p>'
+            "</div>"
         )
-    st.markdown(f'<div class="home-total-grid">{"".join(body)}</div>', unsafe_allow_html=True)
+
+    for label, value, status in cards:
+        if label in compact_km_labels:
+            seen_km = True
+            km_body.append(_home_card(label, value, status, km=True))
+        elif seen_km:
+            regular_after.append(_home_card(label, value, status))
+        else:
+            regular_before.append(_home_card(label, value, status))
+
+    html_parts = []
+    if regular_before:
+        html_parts.append(f'<div class="home-total-grid">{"".join(regular_before)}</div>')
+    if km_body:
+        html_parts.append(f'<div class="home-km-strip">{"".join(km_body)}</div>')
+    if regular_after:
+        html_parts.append(f'<div class="home-total-grid">{"".join(regular_after)}</div>')
+    st.markdown(f'<div class="home-total-stack">{"".join(html_parts)}</div>', unsafe_allow_html=True)
 
 
 def apply_theme(fig: go.Figure, *, height: int = 360, margin: dict | None = None) -> go.Figure:
