@@ -1069,11 +1069,19 @@ def inject_css() -> None:
           color: var(--jr-blue);
         }}
 
+        .table-counter-grid {{
+          display: flex;
+          flex-wrap: wrap;
+          gap: 10px;
+          align-items: stretch;
+          margin: 12px 0 8px;
+        }}
+
         .table-counter-card {{
           display: inline-flex;
           align-items: center;
           gap: 10px;
-          margin: 12px 0 8px;
+          margin: 0;
           padding: 10px 14px;
           border: 1px solid rgba(194,210,243,.9);
           border-radius: 12px;
@@ -1082,6 +1090,10 @@ def inject_css() -> None:
           color: var(--muted);
           font-size: 13px;
           font-weight: 800;
+        }}
+
+        .table-counter-card--metric {{
+          min-width: 168px;
         }}
 
         .table-counter-card strong {{
@@ -4532,16 +4544,53 @@ def _render_table_plate_counter(filtered_table: pd.DataFrame, key_prefix: str) -
     dia_label = _selected_table_filter_label(key_prefix, "Data")
     scope = f"Mês {mes_label}" if mes_label else "Resultado filtrado"
     if dia_label:
-        scope = f"{scope} • Dia {dia_label}"
+        scope = f"{scope} - Dia {dia_label}"
     plural = "placa" if count == 1 else "placas"
-    st.markdown(
+    cards = [
         f"""
         <div class="table-counter-card">
           <span>{h(scope)}</span>
           <strong>{count}</strong>
           <span>{plural} diferentes</span>
         </div>
-        """,
+        """
+    ]
+
+    if "Km Rodados" in filtered_table.columns:
+        km_values = filtered_table["Km Rodados"].apply(lambda value: _parse_brl_number(value) or 0.0)
+        km_total = float(km_values.sum())
+        cards.append(
+            f"""
+            <div class="table-counter-card table-counter-card--metric">
+              <span>KM total</span>
+              <strong>{h(fmt_num(km_total))}</strong>
+              <span>km rodados</span>
+            </div>
+            """
+        )
+
+        if "Categoria" in filtered_table.columns:
+            categorias = filtered_table["Categoria"].astype("string").fillna("").map(clean_text).str.strip()
+        else:
+            plate_map = _registered_plate_map()
+            row_plates = filtered_table["PLACA"].astype("string").fillna("").map(clean_text).str.strip().str.upper()
+            categorias = row_plates.map(lambda placa: plate_map.get(placa, "Transporte"))
+
+        normalized = categorias.astype("string").fillna("").str.lower().str.strip()
+        for label, key in (("Transporte", "transporte"), ("Vex", "vex")):
+            sector_total = float(km_values.loc[normalized == key].sum())
+            cards.append(
+                f"""
+                <div class="table-counter-card table-counter-card--metric">
+                  <span>{h(label)}</span>
+                  <strong>{h(fmt_num(sector_total))}</strong>
+                  <span>km</span>
+                </div>
+                """
+            )
+
+    st.markdown(
+        f"""<div class="table-counter-grid">{''.join(cards)}</div>""",
         unsafe_allow_html=True,
     )
 
