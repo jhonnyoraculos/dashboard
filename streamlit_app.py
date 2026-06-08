@@ -4969,7 +4969,6 @@ def _combustivel_rows_from_sheet(df: pd.DataFrame, plate_map: dict[str, str]) ->
             {
                 "Data": data,
                 "Mes": mes,
-                "Km Rodados": 0.0,
                 "Litros": litros,
                 "Custo": custo,
                 "Combustivel": combustivel,
@@ -5741,7 +5740,6 @@ def render_cadastro() -> None:
                         placeholder="Posto JR",
                         preferred="POSTO NICODEMOS",
                     )
-                    km = st.number_input("KM rodados", min_value=0.0, step=1.0, key="cad_comb_km")
                 with c3:
                     litros = st.number_input("Litros", min_value=0.0, step=1.0, key="cad_comb_litros")
                     custo = st.number_input("Custo total", min_value=0.0, step=10.0, format="%.2f", key="cad_comb_custo")
@@ -5752,7 +5750,6 @@ def render_cadastro() -> None:
                         {
                             "Data": data,
                             "Mes": _entry_month(data),
-                            "Km Rodados": km,
                             "Litros": litros,
                             "Custo": custo,
                             "Combustivel": combustivel,
@@ -5767,7 +5764,7 @@ def render_cadastro() -> None:
             _render_dataset_editor(
                 "combustivel",
                 backend.load_combustivel,
-                ["Data", "Mes", "PLACA", "Categoria", "Combustivel", "POSTOS", "Km Rodados", "Litros", "Custo"],
+                ["Data", "Mes", "PLACA", "Categoria", "Combustivel", "POSTOS", "Litros", "Custo"],
                 ["Data", "PLACA", "Combustivel", "POSTOS"],
                 "cad_comb_table",
                 {
@@ -5777,7 +5774,6 @@ def render_cadastro() -> None:
                     "Categoria": st.column_config.SelectboxColumn("Categoria", options=CATEGORY_OPTIONS, required=True),
                     "Combustivel": st.column_config.TextColumn("Combustivel"),
                     "POSTOS": st.column_config.TextColumn("Posto"),
-                    "Km Rodados": _number_col("KM rodados"),
                     "Litros": _number_col("Litros"),
                     "Custo": _money_col("Custo"),
                 },

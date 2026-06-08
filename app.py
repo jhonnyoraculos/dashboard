@@ -1466,12 +1466,11 @@ def _km_by_month_plate(df: pd.DataFrame) -> dict[tuple[str, str], float]:
     return {(str(mes), str(placa)): float(value or 0.0) for (mes, placa), value in grouped.items()}
 
 
-def _combined_km_metrics(df: pd.DataFrame, km_override: pd.DataFrame | None = None) -> tuple[float, dict]:
-    fuel_map = _km_by_month_plate(df)
+def _combined_km_metrics(_df: pd.DataFrame, km_override: pd.DataFrame | None = None) -> tuple[float, dict]:
     override_map = _km_by_month_plate(km_override) if km_override is not None else {}
     monthly = defaultdict(float)
-    for mes, placa in sorted(set(fuel_map) | set(override_map)):
-        monthly[mes] += max(fuel_map.get((mes, placa), 0.0), override_map.get((mes, placa), 0.0))
+    for mes, placa in sorted(override_map):
+        monthly[mes] += override_map.get((mes, placa), 0.0)
     total = sum(monthly.values())
     meses = sorted(monthly)
     return total, {"Mes": meses, "Km Rodados": [round(monthly[mes], 3) for mes in meses]}
@@ -1792,8 +1791,7 @@ def agg_pedagio(df: pd.DataFrame) -> dict:
 def data_comb(params: dict | None = None) -> dict:
     params = params or {}
     df = _only_registered_category(load_combustivel(), "Transporte")
-    km_rodados = _COMBUSTIVEL_CACHE.get("km_rodados_mensal")
-    transport_plates = set(_unique_sorted(df, "PLACA"))
+    km_rodados = _only_registered_category(_apply_plate_categories(load_combustivel_km()), "Transporte")
 
     ano = _parse_int(_param(params, "ano"))
     meses = _parse_mes_list(params.get("mes"))
@@ -1820,17 +1818,13 @@ def data_comb(params: dict | None = None) -> dict:
     km_override = None
     if isinstance(km_rodados, pd.DataFrame) and not km_rodados.empty:
         km_override = km_rodados.copy()
-        if transport_plates:
-            km_override = km_override[km_override["PLACA"].isin(transport_plates)]
-        else:
-            km_override = km_override.iloc[0:0].copy()
         if placa and placa != "Todos":
             km_override = km_override[km_override["PLACA"] == _normalize_plate_value(placa)]
         if ano is not None:
             km_override = km_override[pd.to_datetime(km_override["Mes"], errors="coerce").dt.year == ano]
         if meses:
             km_override = km_override[km_override["Mes"].isin(meses)]
-        if not df.empty and "Mes" in df.columns and "PLACA" in df.columns:
+        if (posto and posto != "Todos" or combustivel and combustivel != "Todos") and not df.empty and "Mes" in df.columns and "PLACA" in df.columns:
             allowed = df[["Mes", "PLACA"]].dropna().drop_duplicates()
             if not allowed.empty:
                 km_override = km_override.merge(allowed, on=["Mes", "PLACA"], how="inner")
@@ -1950,7 +1944,7 @@ def data_vex(params: dict | None = None) -> dict:
     df_manu = _only_registered_category(load_manutencao(), "Vex")
     df_hoteis = load_hoteis().iloc[0:0].copy()
     df_ped = _only_registered_category(load_pedagio(), "Vex")
-    km_rodados = _COMBUSTIVEL_CACHE.get("km_rodados_mensal")
+    km_rodados = _only_registered_category(_apply_plate_categories(load_combustivel_km()), "Vex")
 
     anos_disponiveis: set[int] = set()
     for df_src in (df_comb, df_manu, df_hoteis, df_ped):
@@ -1992,7 +1986,7 @@ def data_vex(params: dict | None = None) -> dict:
     df_ped = _apply_filters(df_ped)
 
     km_override = None
-    if ano == 2026 and isinstance(km_rodados, pd.DataFrame) and not km_rodados.empty:
+    if isinstance(km_rodados, pd.DataFrame) and not km_rodados.empty:
         km_override = km_rodados.copy()
         if ano is not None:
             km_override = km_override[pd.to_datetime(km_override["Mes"], errors="coerce").dt.year == ano]
@@ -2009,7 +2003,7 @@ def data_vex(params: dict | None = None) -> dict:
     if km_override is not None and "Km Rodados" in km_override.columns:
         km_total = float(pd.to_numeric(km_override["Km Rodados"], errors="coerce").sum())
     else:
-        km_total = float(pd.to_numeric(df_comb.get("Km Rodados"), errors="coerce").sum()) if "Km Rodados" in df_comb else 0.0
+        km_total = 0.0
     litros_total = float(pd.to_numeric(df_comb.get("Litros"), errors="coerce").sum()) if "Litros" in df_comb else 0.0
     total_manu = float(pd.to_numeric(df_manu.get("Custo"), errors="coerce").sum()) if "Custo" in df_manu else 0.0
     total_hoteis = 0.0
@@ -2131,7 +2125,7 @@ def _ranking_monthly_sum(frames: list[tuple[pd.DataFrame, str]], value_name: str
     return {"Mes": meses, value_name: [round(monthly[mes], 3) for mes in meses]}
 
 
-def _ranking_monthly_km(df_km: pd.DataFrame, df_comb: pd.DataFrame) -> dict:
+def _ranking_monthly_km(df_km: pd.DataFrame, _df_comb: pd.DataFrame) -> dict:
     def _monthly_map(df: pd.DataFrame, value_col: str) -> dict[str, float]:
         if df.empty or "Mes" not in df.columns or value_col not in df.columns:
             return {}
@@ -2146,9 +2140,8 @@ def _ranking_monthly_km(df_km: pd.DataFrame, df_comb: pd.DataFrame) -> dict:
         return {str(mes): float(value) for mes, value in grouped.items() if pd.notna(value)}
 
     km_override = _monthly_map(df_km, "Km Rodados")
-    km_comb = _monthly_map(df_comb, "Km Rodados")
-    meses = sorted(set(km_override) | set(km_comb))
-    return {"Mes": meses, "Km Rodados": [round(max(km_override.get(mes, 0.0), km_comb.get(mes, 0.0)), 3) for mes in meses]}
+    meses = sorted(km_override)
+    return {"Mes": meses, "Km Rodados": [round(km_override.get(mes, 0.0), 3) for mes in meses]}
 
 
 def _ranking_weight_dominance_by_city(df: pd.DataFrame, placas: list[str] | None = None) -> dict:
@@ -2295,13 +2288,12 @@ def data_frota(params: dict | None = None) -> dict:
     mensal_km = _ranking_monthly_km(df_km, df_comb)
     mensal_litros = _ranking_monthly_sum([(df_comb, "Litros")], "Litros")
     litros_map = _ranking_sum_by_plate(df_comb, "Litros")
-    km_fuel_map = _ranking_sum_by_plate(df_comb, "Km Rodados")
     km_override_map = _ranking_sum_by_plate(df_km, "Km Rodados")
     abastecimentos_map = _ranking_count_by_plate(df_comb)
     servicos_map = _ranking_count_by_plate(df_manu)
     pedagio_count_map = _ranking_count_by_plate(df_ped)
 
-    placa_set = set(total_comb) | set(total_manu) | set(total_ped) | set(litros_map) | set(km_fuel_map) | set(km_override_map) | set(peso_map)
+    placa_set = set(total_comb) | set(total_manu) | set(total_ped) | set(litros_map) | set(km_override_map) | set(peso_map)
     ranking = []
     for placa in sorted(placa_set):
         combustivel_total = total_comb.get(placa, 0.0)
@@ -2310,7 +2302,7 @@ def data_frota(params: dict | None = None) -> dict:
         peso_total = peso_map.get(placa, 0.0)
         valor_peso_total = valor_peso_map.get(placa, 0.0)
         total = combustivel_total + manutencao_total + pedagio_total
-        km_total = max(km_override_map.get(placa, 0.0), km_fuel_map.get(placa, 0.0))
+        km_total = km_override_map.get(placa, 0.0)
         litros_total = litros_map.get(placa, 0.0)
         lancamentos = abastecimentos_map.get(placa, 0) + servicos_map.get(placa, 0) + pedagio_count_map.get(placa, 0)
         ranking.append(
@@ -2459,16 +2451,11 @@ def _safe_total(
 
 def _overview_km_total(*, ano: int | None = None, mes: int | None = None, meses: list[int] | None = None) -> float:
     try:
-        df_comb = _filter_by_period(load_combustivel(), ano=ano, mes=mes, meses=meses or [])
-    except Exception:
-        df_comb = _empty(_COMBUSTIVEL_COLUMNS)
-    try:
-        df_km = _filter_by_period(load_combustivel_km(), ano=ano, mes=mes, meses=meses or [])
+        df_km = _only_registered_category(_apply_plate_categories(load_combustivel_km()), "Transporte")
+        df_km = _filter_by_period(df_km, ano=ano, mes=mes, meses=meses or [])
     except Exception:
         df_km = _empty(_COMBUSTIVEL_KM_COLUMNS)
-    km_comb = float(pd.to_numeric(df_comb.get("Km Rodados"), errors="coerce").sum()) if "Km Rodados" in df_comb else 0.0
-    km_mensal = float(pd.to_numeric(df_km.get("Km Rodados"), errors="coerce").sum()) if "Km Rodados" in df_km else 0.0
-    return max(km_mensal, km_comb)
+    return float(pd.to_numeric(df_km.get("Km Rodados"), errors="coerce").sum()) if "Km Rodados" in df_km else 0.0
 
 
 def compute_overview_totals(*, ano: int | None = None, mes: int | None = None, meses_lista: list[int] | None = None) -> dict:
