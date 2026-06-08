@@ -28,7 +28,7 @@ MUTED = "#6B7280"
 CARD_BORDER = "#c2d2f3"
 LOGO_PATH = Path(__file__).parent / "static" / "logo-jr.png"
 CURRENT_YEAR = date.today().year
-APP_VERSION = "deploy-home-card-polish-v1"
+APP_VERSION = "deploy-liquid-glass-v1"
 BR_TZ = ZoneInfo("America/Sao_Paulo")
 CATEGORY_OPTIONS = ["Transporte", "Vex", "Equipamento"]
 PEDAGIO_TIPO_OPTIONS = ["Pedagio", "Extras", "Taxi", "IPVA", "Seguro", "Licenciamento", "DPVAT", "Outros"]
@@ -134,6 +134,13 @@ def inject_css() -> None:
           --muted: {MUTED};
           --card-border: {CARD_BORDER};
           --radius: 14px;
+          --glass-bg: rgba(255,255,255,.46);
+          --glass-bg-strong: rgba(255,255,255,.58);
+          --glass-border: rgba(255,255,255,.76);
+          --glass-blue-border: rgba(194,210,243,.62);
+          --glass-shadow: 0 24px 60px rgba(16,24,40,.12), inset 0 1px 0 rgba(255,255,255,.92);
+          --glass-shadow-soft: 0 14px 34px rgba(16,24,40,.09), inset 0 1px 0 rgba(255,255,255,.88);
+          --glass-blur: blur(28px) saturate(180%);
         }}
 
         html, body, [class*="css"] {{
@@ -1523,6 +1530,170 @@ def inject_css() -> None:
           font-weight: 900;
           text-align: right;
           white-space: nowrap;
+        }}
+
+        .jr-topbar {{
+          background:
+            linear-gradient(135deg, rgba(28,45,107,.96), rgba(28,45,107,.84)),
+            rgba(28,45,107,.88);
+          border-bottom: 1px solid rgba(255,255,255,.16);
+          box-shadow:
+            0 18px 44px rgba(7,15,40,.26),
+            inset 0 1px 0 rgba(255,255,255,.14),
+            0 0 0 100vmax rgba(28,45,107,.90);
+          backdrop-filter: blur(22px) saturate(155%);
+          -webkit-backdrop-filter: blur(22px) saturate(155%);
+        }}
+
+        .st-key-comb_filterbar,
+        .st-key-manu_filterbar,
+        .st-key-hotel_filterbar,
+        .st-key-ped_filterbar,
+        .st-key-vex_filterbar,
+        .st-key-rank_filterbar {{
+          background:
+            linear-gradient(135deg, rgba(28,45,107,.95), rgba(28,45,107,.82)),
+            rgba(28,45,107,.88);
+          border-bottom: 1px solid rgba(255,255,255,.14);
+          box-shadow:
+            0 18px 44px rgba(7,15,40,.24),
+            inset 0 1px 0 rgba(255,255,255,.12),
+            0 0 0 100vmax rgba(28,45,107,.88);
+          backdrop-filter: blur(22px) saturate(155%);
+          -webkit-backdrop-filter: blur(22px) saturate(155%);
+        }}
+
+        .home-header,
+        .home-card,
+        .home-footer,
+        .st-key-cadastro_shell,
+        .st-key-home_total_section,
+        div[data-testid="stVerticalBlockBorderWrapper"],
+        [class*="_dashboard_controls"],
+        .kpi-section,
+        .kpi,
+        .home-total-card,
+        .table-counter-card,
+        .ranking-header,
+        .st-key-frota_ranking_table [data-testid="stExpander"],
+        .ranking-detail-card,
+        .ranking-summary-item,
+        .ranking-versus-card,
+        .ranking-difference,
+        .ranking-difference-item,
+        .ranking-empty,
+        .dominance-panel,
+        .dominance-city-row {{
+          background:
+            linear-gradient(145deg, rgba(255,255,255,.64), rgba(255,255,255,.30)),
+            var(--glass-bg) !important;
+          border-color: var(--glass-border) !important;
+          box-shadow: var(--glass-shadow-soft) !important;
+          backdrop-filter: var(--glass-blur);
+          -webkit-backdrop-filter: var(--glass-blur);
+        }}
+
+        .home-header,
+        .home-card,
+        .home-footer,
+        .home-total-card,
+        .kpi,
+        div[data-testid="stVerticalBlockBorderWrapper"] {{
+          box-shadow: var(--glass-shadow) !important;
+        }}
+
+        .home-total-card,
+        .kpi,
+        .ranking-detail-card,
+        .ranking-summary-item,
+        .ranking-versus-card,
+        .ranking-difference-item,
+        .table-counter-card,
+        .dominance-city-row {{
+          border-color: rgba(194,210,243,.54) !important;
+        }}
+
+        .st-key-cadastro_shell [data-testid="stForm"] {{
+          background:
+            linear-gradient(145deg, rgba(255,255,255,.56), rgba(255,255,255,.28)),
+            rgba(255,255,255,.40) !important;
+          border-color: rgba(194,210,243,.56) !important;
+          box-shadow: var(--glass-shadow-soft) !important;
+          backdrop-filter: var(--glass-blur);
+          -webkit-backdrop-filter: var(--glass-blur);
+        }}
+
+        .home-card,
+        .home-total-card,
+        .kpi,
+        .ranking-detail-card,
+        .ranking-versus-card,
+        .dominance-panel,
+        div[data-testid="stVerticalBlockBorderWrapper"] {{
+          position: relative;
+          overflow: hidden;
+        }}
+
+        .home-card::before,
+        .home-total-card::after,
+        .kpi::after,
+        .ranking-detail-card::after,
+        .ranking-versus-card::after,
+        .dominance-panel::after,
+        div[data-testid="stVerticalBlockBorderWrapper"]::after {{
+          content: "";
+          position: absolute;
+          inset: 0 auto auto 0;
+          width: 100%;
+          height: 44%;
+          pointer-events: none;
+          background: linear-gradient(180deg, rgba(255,255,255,.46), rgba(255,255,255,0));
+          opacity: .62;
+        }}
+
+        .home-card > *,
+        .home-total-card > *,
+        .kpi > *,
+        .ranking-detail-card > *,
+        .ranking-versus-card > *,
+        .dominance-panel > *,
+        div[data-testid="stVerticalBlockBorderWrapper"] > * {{
+          position: relative;
+          z-index: 1;
+        }}
+
+        div[data-baseweb="select"] > div,
+        div[data-testid="stNumberInput"] input,
+        div[data-testid="stTextInput"] input,
+        div[data-testid="stDateInput"] input,
+        textarea {{
+          background: rgba(255,255,255,.58) !important;
+          border: 1px solid rgba(255,255,255,.72) !important;
+          box-shadow:
+            inset 0 1px 0 rgba(255,255,255,.90),
+            0 8px 20px rgba(16,24,40,.07) !important;
+          backdrop-filter: blur(18px) saturate(160%);
+          -webkit-backdrop-filter: blur(18px) saturate(160%);
+        }}
+
+        [class*="_export_"] button,
+        [class*="_toggle_"] button,
+        [data-testid="stDownloadButton"] button {{
+          background:
+            linear-gradient(145deg, rgba(255,255,255,.66), rgba(255,255,255,.30)),
+            rgba(255,255,255,.48) !important;
+          border-color: rgba(194,210,243,.62) !important;
+          box-shadow:
+            0 12px 28px rgba(16,24,40,.10),
+            inset 0 1px 0 rgba(255,255,255,.90) !important;
+          backdrop-filter: blur(20px) saturate(170%);
+          -webkit-backdrop-filter: blur(20px) saturate(170%);
+        }}
+
+        .stButton > button {{
+          box-shadow:
+            0 14px 30px rgba(190,30,45,.22),
+            inset 0 1px 0 rgba(255,255,255,.24);
         }}
 
         @media (max-width: 780px) {{
