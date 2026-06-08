@@ -4390,10 +4390,24 @@ def _filter_text_options(series: pd.Series) -> list[str]:
     return sorted(values.unique().tolist())
 
 
+def _parse_filter_dates(series: pd.Series) -> pd.Series:
+    if series is None or series.empty:
+        return pd.Series(dtype="datetime64[ns]")
+    parsed_values = []
+    for value in series:
+        text = str(value or "").strip()
+        if not text or text.lower() in {"nan", "none", "nat", "<na>"}:
+            parsed_values.append(pd.NaT)
+            continue
+        dayfirst = bool(re.match(r"^\d{1,2}/\d{1,2}/\d{2,4}$", text))
+        parsed_values.append(pd.to_datetime(value, errors="coerce", dayfirst=dayfirst))
+    return pd.Series(parsed_values, index=series.index)
+
+
 def _filter_date_labels(series: pd.Series) -> pd.Series:
     if series is None or series.empty:
         return pd.Series(dtype="string")
-    parsed = pd.to_datetime(series, errors="coerce")
+    parsed = _parse_filter_dates(series)
     fallback = series.astype("string").fillna("").str.strip()
     labels = parsed.dt.strftime("%d/%m/%Y").astype("string")
     labels = labels.where(parsed.notna(), fallback)
@@ -4409,11 +4423,34 @@ def _filter_date_options(series: pd.Series) -> list[str]:
         return []
     rows = []
     for index, label in enumerate(valid.drop_duplicates().tolist()):
-        parsed = pd.to_datetime(label, format="%d/%m/%Y", errors="coerce")
+        parsed = pd.to_datetime(label, format="%d/%m/%Y", errors="coerce", dayfirst=True)
         order = parsed.toordinal() if pd.notna(parsed) else 10**9 + index
         rows.append((order, label))
     rows.sort(key=lambda item: (item[0], item[1]))
     return [label for _, label in rows]
+
+
+def _ordered_table_filter_columns(table: pd.DataFrame, filter_columns: list[str]) -> list[str]:
+    active = [column for column in list(filter_columns or []) if column != "Data"]
+    if "Data" not in table.columns:
+        return active
+    if "Mes" in active:
+        active.insert(active.index("Mes") + 1, "Data")
+    else:
+        active.insert(0, "Data")
+    return active
+
+
+def _sync_filter_selection_options(key: str, options: list[str]) -> None:
+    if key not in st.session_state:
+        return
+    current = st.session_state.get(key) or []
+    if not isinstance(current, list):
+        current = list(current)
+    allowed = set(options)
+    normalized = [item for item in current if item in allowed]
+    if normalized != current:
+        st.session_state[key] = normalized
 
 
 def _clear_table_filter_state(key_prefix: str) -> None:
@@ -4432,18 +4469,18 @@ def _apply_table_filters(table: pd.DataFrame, columns: list[str], key_prefix: st
             mask = search_frame.apply(lambda row: any(needle in value for value in row), axis=1)
             filtered = filtered.loc[mask].copy()
 
-        active_filter_columns = list(filter_columns or [])
-        if "Data" in table.columns and "Data" not in active_filter_columns:
-            active_filter_columns = ["Data", *active_filter_columns]
+        active_filter_columns = _ordered_table_filter_columns(table, filter_columns)
         if active_filter_columns:
             filter_cols = st.columns(min(4, len(active_filter_columns)))
             for idx, column in enumerate(active_filter_columns):
                 if column not in table.columns:
                     continue
                 is_date_filter = column == "Data"
-                options = _filter_date_options(table[column]) if is_date_filter else _filter_text_options(table[column])
+                options = _filter_date_options(filtered[column]) if is_date_filter else _filter_text_options(filtered[column])
+                filter_key = f"{key_prefix}_filter_{column}"
+                _sync_filter_selection_options(filter_key, options)
                 with filter_cols[idx % len(filter_cols)]:
-                    selected = st.multiselect("Dia" if is_date_filter else column, options, key=f"{key_prefix}_filter_{column}")
+                    selected = st.multiselect("Dia" if is_date_filter else column, options, key=filter_key)
                 if selected:
                     values = _filter_date_labels(filtered[column]) if is_date_filter else filtered[column].astype("string").fillna("").str.strip()
                     filtered = filtered.loc[values.isin(selected)].copy()
