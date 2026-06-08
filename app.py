@@ -2419,6 +2419,20 @@ def _safe_total(
     }
 
 
+def _overview_km_total(*, ano: int | None = None, mes: int | None = None, meses: list[int] | None = None) -> float:
+    try:
+        df_comb = _filter_by_period(load_combustivel(), ano=ano, mes=mes, meses=meses or [])
+    except Exception:
+        df_comb = _empty(_COMBUSTIVEL_COLUMNS)
+    try:
+        df_km = _filter_by_period(load_combustivel_km(), ano=ano, mes=mes, meses=meses or [])
+    except Exception:
+        df_km = _empty(_COMBUSTIVEL_KM_COLUMNS)
+    km_comb = float(pd.to_numeric(df_comb.get("Km Rodados"), errors="coerce").sum()) if "Km Rodados" in df_comb else 0.0
+    km_mensal = float(pd.to_numeric(df_km.get("Km Rodados"), errors="coerce").sum()) if "Km Rodados" in df_km else 0.0
+    return max(km_mensal, km_comb)
+
+
 def compute_overview_totals(*, ano: int | None = None, mes: int | None = None, meses_lista: list[int] | None = None) -> dict:
     ano = _parse_int(ano)
     mes = _parse_int(mes, min_value=1, max_value=12)
@@ -2434,7 +2448,7 @@ def compute_overview_totals(*, ano: int | None = None, mes: int | None = None, m
         "peso": (load_peso, agg_peso, "peso_total", "Peso", False),
     }
 
-    overview_cache_datasets = ("combustivel", "manutencao", "hoteis", "pedagio", "peso")
+    overview_cache_datasets = ("combustivel", "combustivel_km", "manutencao", "hoteis", "pedagio", "peso")
     chave_cache = tuple(_CACHE_MAP[nome]["mtime"] for nome in overview_cache_datasets)
     use_cache = ano is None and mes is None and not meses_lista
     if use_cache and _OVERVIEW_CACHE["mtimes"] == chave_cache and _OVERVIEW_CACHE["dados"] is not None:
@@ -2483,6 +2497,7 @@ def compute_overview_totals(*, ano: int | None = None, mes: int | None = None, m
 
     detalhes["total_geral"] = float(total_geral)
     detalhes["peso_total"] = float((detalhes.get("peso") or {}).get("valor") or 0.0)
+    detalhes["km_total"] = _overview_km_total(ano=ano, mes=mes, meses=meses_lista)
     detalhes["segmentos"] = segmentos_dict
     detalhes["total_transporte"] = segmentos_dict.get("Transporte", 0.0)
     detalhes["total_vex"] = segmentos_dict.get("Vex", 0.0)

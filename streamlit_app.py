@@ -3884,6 +3884,7 @@ def render_home() -> None:
     home_total_cards = [
         ("Gasto consolidado", fmt_brl(overview.get("total_geral")), suffix),
         ("Peso total", fmt_peso(overview.get("peso_total")), "Somatório dos pesos lançados nas entregas."),
+        ("KM rodado", fmt_num(overview.get("km_total")), "Somatório dos quilômetros rodados no filtro aplicado."),
         ("Gasto transporte", fmt_brl(overview.get("total_transporte")), 'Somatório das despesas marcadas como "Transporte".'),
         ("Gasto Vex", fmt_brl(overview.get("total_vex")), 'Somatório das despesas marcadas como "Vex".'),
     ]
