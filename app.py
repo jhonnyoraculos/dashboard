@@ -1791,7 +1791,7 @@ def agg_pedagio(df: pd.DataFrame) -> dict:
 def data_comb(params: dict | None = None) -> dict:
     params = params or {}
     df = _only_registered_category(load_combustivel(), "Transporte")
-    km_rodados = _only_registered_category(_apply_plate_categories(load_combustivel_km()), "Transporte")
+    km_rodados = _only_transporte(_apply_plate_categories(load_combustivel_km()))
 
     ano = _parse_int(_param(params, "ano"))
     meses = _parse_mes_list(params.get("mes"))
@@ -2447,7 +2447,7 @@ def _safe_total(
 
 def _overview_km_total(*, ano: int | None = None, mes: int | None = None, meses: list[int] | None = None) -> float:
     try:
-        df_km = _only_registered_category(_apply_plate_categories(load_combustivel_km()), "Transporte")
+        df_km = _apply_plate_categories(load_combustivel_km())
         df_km = _filter_by_period(df_km, ano=ano, mes=mes, meses=meses or [])
     except Exception:
         df_km = _empty(_COMBUSTIVEL_KM_COLUMNS)
