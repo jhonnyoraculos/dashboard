@@ -4390,6 +4390,32 @@ def _filter_text_options(series: pd.Series) -> list[str]:
     return sorted(values.unique().tolist())
 
 
+def _filter_date_labels(series: pd.Series) -> pd.Series:
+    if series is None or series.empty:
+        return pd.Series(dtype="string")
+    parsed = pd.to_datetime(series, errors="coerce")
+    fallback = series.astype("string").fillna("").str.strip()
+    labels = parsed.dt.strftime("%d/%m/%Y").astype("string")
+    labels = labels.where(parsed.notna(), fallback)
+    return labels.fillna("").astype("string").str.strip()
+
+
+def _filter_date_options(series: pd.Series) -> list[str]:
+    labels = _filter_date_labels(series)
+    if labels.empty:
+        return []
+    valid = labels[(labels != "") & (~labels.str.lower().isin(["nan", "none", "nat", "<na>"]))]
+    if valid.empty:
+        return []
+    rows = []
+    for index, label in enumerate(valid.drop_duplicates().tolist()):
+        parsed = pd.to_datetime(label, format="%d/%m/%Y", errors="coerce")
+        order = parsed.toordinal() if pd.notna(parsed) else 10**9 + index
+        rows.append((order, label))
+    rows.sort(key=lambda item: (item[0], item[1]))
+    return [label for _, label in rows]
+
+
 def _clear_table_filter_state(key_prefix: str) -> None:
     for key in list(st.session_state.keys()):
         if key == f"{key_prefix}_search" or key.startswith(f"{key_prefix}_filter_"):
@@ -4406,16 +4432,20 @@ def _apply_table_filters(table: pd.DataFrame, columns: list[str], key_prefix: st
             mask = search_frame.apply(lambda row: any(needle in value for value in row), axis=1)
             filtered = filtered.loc[mask].copy()
 
-        if filter_columns:
-            filter_cols = st.columns(min(4, len(filter_columns)))
-            for idx, column in enumerate(filter_columns):
+        active_filter_columns = list(filter_columns or [])
+        if "Data" in table.columns and "Data" not in active_filter_columns:
+            active_filter_columns = ["Data", *active_filter_columns]
+        if active_filter_columns:
+            filter_cols = st.columns(min(4, len(active_filter_columns)))
+            for idx, column in enumerate(active_filter_columns):
                 if column not in table.columns:
                     continue
-                options = _filter_text_options(table[column])
+                is_date_filter = column == "Data"
+                options = _filter_date_options(table[column]) if is_date_filter else _filter_text_options(table[column])
                 with filter_cols[idx % len(filter_cols)]:
-                    selected = st.multiselect(column, options, key=f"{key_prefix}_filter_{column}")
+                    selected = st.multiselect("Dia" if is_date_filter else column, options, key=f"{key_prefix}_filter_{column}")
                 if selected:
-                    values = filtered[column].astype("string").fillna("").str.strip()
+                    values = _filter_date_labels(filtered[column]) if is_date_filter else filtered[column].astype("string").fillna("").str.strip()
                     filtered = filtered.loc[values.isin(selected)].copy()
 
         st.button("Limpar filtros", key=f"{key_prefix}_clear_filters", on_click=_clear_table_filter_state, args=(key_prefix,))
