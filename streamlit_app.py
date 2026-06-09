@@ -255,14 +255,14 @@ def inject_css() -> None:
           gap: 16px;
           flex-wrap: wrap;
           padding: 18px 32px;
-          margin: 0 0 0;
-          width: auto;
+          margin: 0 calc(50% - 50vw) 0;
+          width: 100vw;
+          max-width: 100vw;
           box-sizing: border-box;
           background: var(--jr-blue);
           box-shadow:
-            0 4px 12px rgba(0,0,0,.2),
-            0 0 0 100vmax var(--jr-blue);
-          clip-path: inset(0 -100vmax);
+            0 4px 12px rgba(0,0,0,.2);
+          clip-path: none;
           position: sticky;
           top: 0;
           z-index: 10;
@@ -311,14 +311,14 @@ def inject_css() -> None:
         .st-key-vex_filterbar,
         .st-key-rank_filterbar {{
           background: var(--jr-blue);
-          margin: 0 0 58px;
-          width: auto;
+          margin: 0 calc(50% - 50vw) 58px;
+          width: 100vw;
+          max-width: 100vw;
           padding: 0 32px 18px;
           box-sizing: border-box;
           box-shadow:
-            0 4px 12px rgba(0,0,0,.2),
-            0 0 0 100vmax var(--jr-blue);
-          clip-path: inset(0 -100vmax);
+            0 4px 12px rgba(0,0,0,.2);
+          clip-path: none;
           position: sticky;
           top: 80px;
           z-index: 9;
@@ -1541,8 +1541,7 @@ def inject_css() -> None:
           border-bottom: 1px solid rgba(255,255,255,.16);
           box-shadow:
             0 18px 44px rgba(7,15,40,.26),
-            inset 0 1px 0 rgba(255,255,255,.14),
-            0 0 0 100vmax rgba(28,45,107,.90);
+            inset 0 1px 0 rgba(255,255,255,.14);
           backdrop-filter: blur(22px) saturate(155%);
           -webkit-backdrop-filter: blur(22px) saturate(155%);
         }}
@@ -1559,8 +1558,7 @@ def inject_css() -> None:
           border-bottom: 1px solid rgba(255,255,255,.14);
           box-shadow:
             0 18px 44px rgba(7,15,40,.24),
-            inset 0 1px 0 rgba(255,255,255,.12),
-            0 0 0 100vmax rgba(28,45,107,.88);
+            inset 0 1px 0 rgba(255,255,255,.12);
           backdrop-filter: blur(22px) saturate(155%);
           -webkit-backdrop-filter: blur(22px) saturate(155%);
         }}
@@ -1791,8 +1789,9 @@ def inject_css() -> None:
           }}
 
           .jr-topbar {{
-            margin: 0;
-            width: auto;
+            margin: 0 calc(50% - 50vw);
+            width: 100vw;
+            max-width: 100vw;
             padding: 10px 12px;
             position: static;
           }}
@@ -1803,8 +1802,9 @@ def inject_css() -> None:
           .st-key-ped_filterbar,
           .st-key-vex_filterbar,
           .st-key-rank_filterbar {{
-            margin: 0 -10px 18px;
-            width: auto;
+            margin: 0 calc(50% - 50vw) 18px;
+            width: 100vw;
+            max-width: 100vw;
             padding: 8px 10px 10px;
             position: static;
             overflow: visible;
