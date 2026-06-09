@@ -151,12 +151,16 @@ def inject_css() -> None:
 
         html,
         body,
-        .stApp,
+        .stApp {{
+          max-width: 100%;
+          overflow-x: hidden;
+        }}
+
         [data-testid="stAppViewContainer"],
         [data-testid="stMain"],
         [data-testid="stMainBlockContainer"] {{
           max-width: 100%;
-          overflow-x: clip;
+          overflow-x: visible;
         }}
 
         .stApp {{
