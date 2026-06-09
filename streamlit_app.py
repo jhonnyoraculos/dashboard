@@ -134,13 +134,14 @@ def inject_css() -> None:
           --muted: {MUTED};
           --card-border: {CARD_BORDER};
           --radius: 14px;
-          --glass-bg: rgba(255,255,255,.46);
-          --glass-bg-strong: rgba(255,255,255,.58);
-          --glass-border: rgba(255,255,255,.76);
+          --glass-bg: rgba(255,255,255,.38);
+          --glass-bg-strong: rgba(255,255,255,.52);
+          --glass-border: rgba(255,255,255,.82);
           --glass-blue-border: rgba(194,210,243,.62);
-          --glass-shadow: 0 24px 60px rgba(16,24,40,.12), inset 0 1px 0 rgba(255,255,255,.92);
-          --glass-shadow-soft: 0 14px 34px rgba(16,24,40,.09), inset 0 1px 0 rgba(255,255,255,.88);
-          --glass-blur: blur(28px) saturate(180%);
+          --glass-shadow: 0 24px 60px rgba(16,24,40,.11), inset 0 1px 0 rgba(255,255,255,.96), inset 0 -18px 42px rgba(255,255,255,.16);
+          --glass-shadow-soft: 0 14px 34px rgba(16,24,40,.08), inset 0 1px 0 rgba(255,255,255,.92), inset 0 -14px 32px rgba(255,255,255,.13);
+          --glass-blur: blur(34px) saturate(190%);
+          --glass-hover-shadow: 0 30px 76px rgba(16,24,40,.17), 0 10px 26px rgba(28,45,107,.10), inset 0 1px 0 rgba(255,255,255,1), inset 0 -22px 52px rgba(255,255,255,.22);
         }}
 
         html, body, [class*="css"] {{
@@ -1632,6 +1633,14 @@ def inject_css() -> None:
         div[data-testid="stVerticalBlockBorderWrapper"] {{
           position: relative;
           overflow: hidden;
+          isolation: isolate;
+          transform: translateZ(0);
+          transition:
+            transform .22s cubic-bezier(.2,.8,.2,1),
+            box-shadow .22s cubic-bezier(.2,.8,.2,1),
+            border-color .22s ease,
+            background .22s ease,
+            filter .22s ease;
         }}
 
         .home-card::before,
@@ -1647,8 +1656,44 @@ def inject_css() -> None:
           width: 100%;
           height: 44%;
           pointer-events: none;
-          background: linear-gradient(180deg, rgba(255,255,255,.46), rgba(255,255,255,0));
-          opacity: .62;
+          background:
+            radial-gradient(circle at 18% 0%, rgba(255,255,255,.84), rgba(255,255,255,0) 28%),
+            linear-gradient(112deg, rgba(255,255,255,0) 8%, rgba(255,255,255,.72) 24%, rgba(255,255,255,.16) 36%, rgba(255,255,255,0) 54%),
+            linear-gradient(180deg, rgba(255,255,255,.42), rgba(255,255,255,0));
+          opacity: .58;
+          transform: translateX(-34%) skewX(-12deg);
+          transition:
+            transform .58s cubic-bezier(.2,.8,.2,1),
+            opacity .24s ease;
+          z-index: 0;
+        }}
+
+        .home-card:hover,
+        .home-total-card:hover,
+        .kpi:hover,
+        .ranking-detail-card:hover,
+        .ranking-versus-card:hover,
+        .dominance-panel:hover,
+        div[data-testid="stVerticalBlockBorderWrapper"]:hover {{
+          background:
+            radial-gradient(circle at 20% 0%, rgba(255,255,255,.74), rgba(255,255,255,0) 34%),
+            linear-gradient(145deg, rgba(255,255,255,.58), rgba(255,255,255,.24)),
+            rgba(255,255,255,.34) !important;
+          border-color: rgba(255,255,255,.94) !important;
+          box-shadow: var(--glass-hover-shadow) !important;
+          filter: saturate(1.05);
+          transform: translateY(-3px) scale(1.006);
+        }}
+
+        .home-card:hover::before,
+        .home-total-card:hover::after,
+        .kpi:hover::after,
+        .ranking-detail-card:hover::after,
+        .ranking-versus-card:hover::after,
+        .dominance-panel:hover::after,
+        div[data-testid="stVerticalBlockBorderWrapper"]:hover::after {{
+          opacity: .92;
+          transform: translateX(44%) skewX(-12deg);
         }}
 
         .home-card > *,
