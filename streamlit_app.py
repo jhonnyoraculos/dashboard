@@ -28,7 +28,7 @@ MUTED = "#6B7280"
 CARD_BORDER = "#c2d2f3"
 LOGO_PATH = Path(__file__).parent / "static" / "logo-jr.png"
 CURRENT_YEAR = date.today().year
-APP_VERSION = "deploy-vex-km-litros-v1"
+APP_VERSION = "deploy-liquidgl-inspired-v1"
 BR_TZ = ZoneInfo("America/Sao_Paulo")
 CATEGORY_OPTIONS = ["Transporte", "Vex", "Equipamento"]
 PEDAGIO_TIPO_OPTIONS = ["Pedagio", "Extras", "Taxi", "IPVA", "Seguro", "Licenciamento", "DPVAT", "Outros"]
@@ -134,14 +134,15 @@ def inject_css() -> None:
           --muted: {MUTED};
           --card-border: {CARD_BORDER};
           --radius: 14px;
-          --glass-bg: rgba(255,255,255,.38);
-          --glass-bg-strong: rgba(255,255,255,.52);
-          --glass-border: rgba(255,255,255,.82);
-          --glass-blue-border: rgba(194,210,243,.62);
-          --glass-shadow: 0 24px 60px rgba(16,24,40,.11), inset 0 1px 0 rgba(255,255,255,.96), inset 0 -18px 42px rgba(255,255,255,.16);
-          --glass-shadow-soft: 0 14px 34px rgba(16,24,40,.08), inset 0 1px 0 rgba(255,255,255,.92), inset 0 -14px 32px rgba(255,255,255,.13);
-          --glass-blur: blur(34px) saturate(190%);
-          --glass-hover-shadow: 0 30px 76px rgba(16,24,40,.17), 0 10px 26px rgba(28,45,107,.10), inset 0 1px 0 rgba(255,255,255,1), inset 0 -22px 52px rgba(255,255,255,.22);
+          --glass-bg: rgba(255,255,255,.32);
+          --glass-bg-strong: rgba(255,255,255,.48);
+          --glass-border: rgba(255,255,255,.84);
+          --glass-blue-border: rgba(194,210,243,.58);
+          --glass-refraction: linear-gradient(135deg, rgba(255,255,255,.68), rgba(255,255,255,.20) 44%, rgba(217,228,255,.18) 72%, rgba(255,255,255,.48));
+          --glass-shadow: 0 24px 60px rgba(16,24,40,.10), inset 0 1px 0 rgba(255,255,255,.98), inset 0 -20px 46px rgba(255,255,255,.18), inset 18px 0 32px rgba(255,255,255,.10);
+          --glass-shadow-soft: 0 14px 34px rgba(16,24,40,.075), inset 0 1px 0 rgba(255,255,255,.94), inset 0 -16px 34px rgba(255,255,255,.14);
+          --glass-blur: blur(38px) saturate(205%);
+          --glass-hover-shadow: 0 32px 82px rgba(16,24,40,.17), 0 12px 30px rgba(28,45,107,.11), inset 0 1px 0 rgba(255,255,255,1), inset 0 -24px 58px rgba(255,255,255,.24), inset 22px 0 42px rgba(255,255,255,.14);
         }}
 
         html, body, [class*="css"] {{
@@ -1635,12 +1636,15 @@ def inject_css() -> None:
           overflow: hidden;
           isolation: isolate;
           transform: translateZ(0);
+          background-clip: padding-box;
+          will-change: transform, box-shadow, filter;
           transition:
-            transform .22s cubic-bezier(.2,.8,.2,1),
-            box-shadow .22s cubic-bezier(.2,.8,.2,1),
-            border-color .22s ease,
-            background .22s ease,
-            filter .22s ease;
+            transform .28s cubic-bezier(.2,.8,.2,1),
+            box-shadow .28s cubic-bezier(.2,.8,.2,1),
+            border-color .28s ease,
+            background .28s ease,
+            filter .28s ease,
+            backdrop-filter .28s ease;
         }}
 
         .home-card::before,
@@ -1652,20 +1656,31 @@ def inject_css() -> None:
         div[data-testid="stVerticalBlockBorderWrapper"]::after {{
           content: "";
           position: absolute;
-          inset: 0 auto auto 0;
+          inset: 0;
           width: 100%;
-          height: 44%;
+          height: 100%;
+          border-radius: inherit;
           pointer-events: none;
           background:
-            radial-gradient(circle at 18% 0%, rgba(255,255,255,.84), rgba(255,255,255,0) 28%),
-            linear-gradient(112deg, rgba(255,255,255,0) 8%, rgba(255,255,255,.72) 24%, rgba(255,255,255,.16) 36%, rgba(255,255,255,0) 54%),
-            linear-gradient(180deg, rgba(255,255,255,.42), rgba(255,255,255,0));
-          opacity: .58;
-          transform: translateX(-34%) skewX(-12deg);
+            radial-gradient(circle at 16% 0%, rgba(255,255,255,.92), rgba(255,255,255,0) 22%),
+            radial-gradient(circle at 92% 12%, rgba(255,255,255,.54), rgba(255,255,255,0) 18%),
+            linear-gradient(112deg, rgba(255,255,255,0) 7%, rgba(255,255,255,.78) 19%, rgba(255,255,255,.12) 32%, rgba(255,255,255,0) 48%),
+            linear-gradient(180deg, rgba(255,255,255,.46), rgba(255,255,255,.04) 42%, rgba(255,255,255,0) 72%);
+          background-size: 100% 100%, 100% 100%, 190% 100%, 100% 100%;
+          background-position: center, center, -84% 0, center;
+          box-shadow:
+            inset 0 1px 0 rgba(255,255,255,.96),
+            inset 0 0 0 1px rgba(255,255,255,.18),
+            inset 0 -18px 38px rgba(255,255,255,.12);
+          opacity: .66;
+          transform: translateX(-8%) skewX(-10deg);
           transition:
-            transform .58s cubic-bezier(.2,.8,.2,1),
-            opacity .24s ease;
+            transform .72s cubic-bezier(.2,.8,.2,1),
+            background-position .72s cubic-bezier(.2,.8,.2,1),
+            opacity .28s ease,
+            box-shadow .28s ease;
           z-index: 0;
+          mix-blend-mode: screen;
         }}
 
         .home-card:hover,
@@ -1676,11 +1691,14 @@ def inject_css() -> None:
         .dominance-panel:hover,
         div[data-testid="stVerticalBlockBorderWrapper"]:hover {{
           background:
-            radial-gradient(circle at 20% 0%, rgba(255,255,255,.74), rgba(255,255,255,0) 34%),
-            linear-gradient(145deg, rgba(255,255,255,.58), rgba(255,255,255,.24)),
+            radial-gradient(circle at 18% 0%, rgba(255,255,255,.82), rgba(255,255,255,0) 32%),
+            radial-gradient(circle at 92% 8%, rgba(255,255,255,.56), rgba(255,255,255,0) 24%),
+            var(--glass-refraction),
             rgba(255,255,255,.34) !important;
           border-color: rgba(255,255,255,.94) !important;
           box-shadow: var(--glass-hover-shadow) !important;
+          backdrop-filter: blur(44px) saturate(225%);
+          -webkit-backdrop-filter: blur(44px) saturate(225%);
           filter: saturate(1.05);
           transform: translateY(-3px) scale(1.006);
         }}
@@ -1693,7 +1711,33 @@ def inject_css() -> None:
         .dominance-panel:hover::after,
         div[data-testid="stVerticalBlockBorderWrapper"]:hover::after {{
           opacity: .92;
-          transform: translateX(44%) skewX(-12deg);
+          background-position: center, center, 118% 0, center;
+          box-shadow:
+            inset 0 1px 0 rgba(255,255,255,1),
+            inset 0 0 0 1px rgba(255,255,255,.32),
+            inset 0 -22px 48px rgba(255,255,255,.20);
+          transform: translateX(6%) skewX(-10deg);
+        }}
+
+        @media (prefers-reduced-motion: no-preference) {{
+          .home-card:hover::before,
+          .home-total-card:hover::after,
+          .kpi:hover::after,
+          .ranking-detail-card:hover::after,
+          .ranking-versus-card:hover::after,
+          .dominance-panel:hover::after,
+          div[data-testid="stVerticalBlockBorderWrapper"]:hover::after {{
+            animation: liquidSpecularSweep 1.8s ease-in-out infinite alternate;
+          }}
+
+          @keyframes liquidSpecularSweep {{
+            from {{
+              filter: brightness(1) saturate(1);
+            }}
+            to {{
+              filter: brightness(1.08) saturate(1.12);
+            }}
+          }}
         }}
 
         .home-card > *,
