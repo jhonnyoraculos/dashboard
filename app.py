@@ -1943,7 +1943,7 @@ def data_vex(params: dict | None = None) -> dict:
     km_rodados = _only_registered_category(_apply_plate_categories(load_combustivel_km()), "Vex")
 
     anos_disponiveis: set[int] = set()
-    for df_src in (df_comb, df_manu, df_hoteis, df_ped):
+    for df_src in (df_comb, df_manu, df_hoteis, df_ped, km_rodados):
         anos_disponiveis.update(_unique_years(df_src))
         anos_disponiveis.update(df_src.attrs.get("anos_sheets", []))
 
@@ -1954,12 +1954,12 @@ def data_vex(params: dict | None = None) -> dict:
         merged = pd.concat(frames, ignore_index=True)
         return _unique_sorted(merged, "Mes")
 
-    df_meses_base = [df_comb, df_manu, df_hoteis, df_ped]
+    df_meses_base = [df_comb, df_manu, df_hoteis, df_ped, km_rodados]
     if ano is not None:
         df_meses_base = [_filter_by_period(df, ano=ano) for df in df_meses_base]
     meses_disponiveis = _meses_disponiveis(*df_meses_base)
 
-    df_placas_base = [df_comb, df_manu, df_ped]
+    df_placas_base = [df_comb, df_manu, df_ped, km_rodados]
     if ano is not None:
         df_placas_base = [_filter_by_period(df, ano=ano) for df in df_placas_base]
     if meses:
@@ -1990,10 +1990,8 @@ def data_vex(params: dict | None = None) -> dict:
             km_override = km_override[km_override["Mes"].isin(meses)]
         if placa and placa != "Todos":
             km_override = km_override[km_override["PLACA"] == _normalize_plate_value(placa)]
-        if not df_comb.empty and "Mes" in df_comb.columns and "PLACA" in df_comb.columns:
-            allowed = df_comb[["Mes", "PLACA"]].dropna().drop_duplicates()
-            if not allowed.empty:
-                km_override = km_override.merge(allowed, on=["Mes", "PLACA"], how="inner")
+        if km_override.empty:
+            km_override = None
 
     total_comb = float(pd.to_numeric(df_comb.get("Custo"), errors="coerce").sum()) if "Custo" in df_comb else 0.0
     if km_override is not None and "Km Rodados" in km_override.columns:
@@ -2027,6 +2025,8 @@ def data_vex(params: dict | None = None) -> dict:
 
     placas_ordenadas = sorted(placa_totais.items(), key=lambda item: item[1], reverse=True)
     meses_sorted = sorted(monthly_map.keys())
+    km_mensal = _ranking_monthly_km(km_override if km_override is not None else _empty(_COMBUSTIVEL_KM_COLUMNS), df_comb)
+    litros_mensal = _group_sum(df_comb, "Mes", "Litros", sort_by="group")
     return {
         "anos": sorted(anos_disponiveis),
         "meses": meses_disponiveis,
@@ -2042,6 +2042,8 @@ def data_vex(params: dict | None = None) -> dict:
         "custo_por_km": round((total_comb / km_total) if km_total else 0.0, 4),
         "custo_por_litro": round((total_comb / litros_total) if litros_total else 0.0, 4),
         "mensal_total": {"Mes": meses_sorted, "Valor": [round(monthly_map[mes], 2) for mes in meses_sorted]},
+        "km_mensal": km_mensal,
+        "litros_mensal": litros_mensal,
         "por_area": {"Area": ["Combustivel", "Manutencao", "Pedagio"], "Valor": [round(total_comb, 2), round(total_manu, 2), round(total_ped, 2)]},
         "gasto_por_placa": {"PLACA": [item[0] for item in placas_ordenadas], "Valor": [round(item[1], 2) for item in placas_ordenadas]},
     }

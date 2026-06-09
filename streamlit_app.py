@@ -28,7 +28,7 @@ MUTED = "#6B7280"
 CARD_BORDER = "#c2d2f3"
 LOGO_PATH = Path(__file__).parent / "static" / "logo-jr.png"
 CURRENT_YEAR = date.today().year
-APP_VERSION = "deploy-liquid-glass-v1"
+APP_VERSION = "deploy-vex-km-litros-v1"
 BR_TZ = ZoneInfo("America/Sao_Paulo")
 CATEGORY_OPTIONS = ["Transporte", "Vex", "Equipamento"]
 PEDAGIO_TIPO_OPTIONS = ["Pedagio", "Extras", "Taxi", "IPVA", "Seguro", "Licenciamento", "DPVAT", "Outros"]
@@ -6720,15 +6720,18 @@ def render_vex() -> None:
         ("pedagio_vex", "Pedágio/Seguro Vex (R$)", fmt_brl(data.get("pedagio_total"))),
     ]
     include_year = params.get("ano") is None
-    mensal_labels, mensal_values = sorted_series(data.get("mensal_total", {}), "Mes", "Valor", include_year=include_year, fallback_year=params.get("ano"))
+    fallback_year = params.get("ano")
+    mensal_labels, mensal_values = sorted_series(data.get("mensal_total", {}), "Mes", "Valor", include_year=include_year, fallback_year=fallback_year)
+    km_labels, km_values = sorted_series(data.get("km_mensal", {}), "Mes", "Km Rodados", include_year=include_year, fallback_year=fallback_year)
+    litros_labels, litros_values = sorted_series(data.get("litros_mensal", {}), "Mes", "Litros", include_year=include_year, fallback_year=fallback_year)
     compare_selected = filter_state.get("_compare", [])
     compare_data = compare_bundle("vex", data, params, compare_selected)
     if compare_selected:
         kpis = compare_combined_kpis(compare_data) + color_kpis(kpis, "vex", section=_series_label("vex")) + compare_kpi_cards(compare_data[1:])
     monthly_fig = (
-        multi_line_chart(compare_chart_series(compare_data, "monthly"), include_year=include_year, fallback_year=params.get("ano"))
+        multi_line_chart(compare_chart_series(compare_data, "monthly"), include_year=include_year, fallback_year=fallback_year)
         if compare_selected
-        else yearly_month_line_chart(data.get("mensal_total", {}), "Mes", "Valor", fallback_year=params.get("ano"))
+        else yearly_month_line_chart(data.get("mensal_total", {}), "Mes", "Valor", fallback_year=fallback_year)
         if include_year
         else line_chart(mensal_labels, mensal_values)
     )
@@ -6739,6 +6742,20 @@ def render_vex() -> None:
     )
     charts = [
         ("gasto_mensal", "Gasto Vex mensal", monthly_fig),
+        (
+            "km_mes",
+            "KM Vex por mês",
+            yearly_month_bar_chart(data.get("km_mensal", {}), "Mes", "Km Rodados", fallback_year=fallback_year, currency=False)
+            if include_year
+            else bar_chart(km_labels, km_values, currency=False, show_text=True),
+        ),
+        (
+            "litros_mes",
+            "Litros Vex por mês",
+            yearly_month_bar_chart(data.get("litros_mensal", {}), "Mes", "Litros", fallback_year=fallback_year, currency=False)
+            if include_year
+            else bar_chart(litros_labels, litros_values, currency=False, show_text=True),
+        ),
         ("gasto_area", "Gasto Vex por área", bar_chart(data.get("por_area", {}).get("Area", []), data.get("por_area", {}).get("Valor", []))),
         ("gasto_placa", "Gasto Vex por placa", plate_fig),
     ]
