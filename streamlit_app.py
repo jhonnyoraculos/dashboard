@@ -28,7 +28,7 @@ MUTED = "#6B7280"
 CARD_BORDER = "#c2d2f3"
 LOGO_PATH = Path(__file__).parent / "static" / "logo-jr.png"
 CURRENT_YEAR = date.today().year
-APP_VERSION = "deploy-export-clean-v2"
+APP_VERSION = "deploy-export-ascii-v3"
 BR_TZ = ZoneInfo("America/Sao_Paulo")
 CATEGORY_OPTIONS = ["Transporte", "Vex", "Equipamento"]
 PEDAGIO_TIPO_OPTIONS = ["Pedagio", "Extras", "Taxi", "IPVA", "Seguro", "Licenciamento", "DPVAT", "Outros"]
@@ -2209,6 +2209,13 @@ def clean_text(text: object) -> str:
     return value.strip()
 
 
+def export_text(text: object) -> str:
+    value = clean_text(text)
+    value = unicodedata.normalize("NFKD", value)
+    value = "".join(char for char in value if not unicodedata.combining(char))
+    return value.encode("ascii", "ignore").decode("ascii")
+
+
 def selected_or_default(options: list, current: object | None = None, *, default_current_year: bool = False) -> object:
     all_options = ["Todos", *[item for item in options if item != "Todos"]]
     if current in all_options:
@@ -2943,7 +2950,7 @@ def draw_wrapped_text(
     max_width: int,
     line_gap: int = 6,
 ) -> int:
-    words = clean_text(text).split()
+    words = export_text(text).split()
     lines: list[str] = []
     current = ""
     for word in words:
@@ -2974,7 +2981,7 @@ def draw_centered_wrapped_text(
     max_width: int,
     line_gap: int = 6,
 ) -> int:
-    words = clean_text(text).split()
+    words = export_text(text).split()
     lines: list[str] = []
     current = ""
     for word in words:
@@ -3134,7 +3141,7 @@ def compose_home_export_image(
                 canvas.paste(logo, (margin, y), logo)
             except Exception:
                 logo = None
-        draw.text((margin + 84, y + 4), "Dashboards operacionais", font=report_font(36, bold=True), fill=JR_BLUE)
+        draw.text((margin + 84, y + 4), export_text("Dashboards operacionais"), font=report_font(36, bold=True), fill=JR_BLUE)
         draw_wrapped_text(
             draw,
             "Monitoramento consolidado do JR Dashboard.",
@@ -3147,7 +3154,7 @@ def compose_home_export_image(
 
     for index, (label, value, status) in enumerate(cards):
         x = margin + index * (card_width + gap)
-        label_upper = clean_text(label).upper()
+        label_upper = export_text(label).upper()
         accent = "#7C3AED" if "VEX" in label_upper else JR_RED if "GASTO" in label_upper else JR_BLUE
         draw_liquid_export_card(canvas, (x, y, x + card_width, y + card_height), radius=18, accent=accent, outline=line)
         center_x = x + card_width // 2
@@ -3161,7 +3168,7 @@ def compose_home_export_image(
             max_width=card_width - 60,
             line_gap=5,
         )
-        value_text = clean_text(value)
+        value_text = export_text(value)
         value_font = report_font(30, bold=True)
         value_bbox = draw.textbbox((0, 0), value_text, font=value_font)
         draw.text((center_x - (value_bbox[2] - value_bbox[0]) // 2, y + 95), value_text, font=value_font, fill=accent)
@@ -3241,7 +3248,7 @@ def compose_export_image(
                 draw = ImageDraw.Draw(placeholder)
                 draw.text(
                     (32, 32),
-                    f"Não foi possível renderizar: {clean_text(chart_title)}",
+                    f"Nao foi possivel renderizar: {export_text(chart_title)}",
                     font=report_font(26, bold=True),
                     fill=JR_RED,
                 )
@@ -3286,7 +3293,7 @@ def compose_export_image(
             )
             draw_wrapped_text(
                 draw,
-                clean_text(label).upper(),
+                export_text(label).upper(),
                 (x + 30, card_y + 28),
                 font=report_font(22, bold=True),
                 fill=MUTED,
@@ -3294,7 +3301,7 @@ def compose_export_image(
                 line_gap=4,
             )
             value_size = 42
-            value_text = clean_text(value)
+            value_text = export_text(value)
             if len(value_text) > 18:
                 value_size = 36
             if len(value_text) > 28:
@@ -3321,7 +3328,7 @@ def compose_export_image(
                     accent=JR_RED,
                     outline=line,
                 )
-                draw.text((x + 28, chart_y + 24), clean_text(chart_title), font=report_font(30, bold=True), fill=text)
+                draw.text((x + 28, chart_y + 24), export_text(chart_title), font=report_font(30, bold=True), fill=text)
                 canvas.paste(image, (x + 28, chart_y + 72))
             y += row_height + gap
         y -= gap
