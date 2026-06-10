@@ -17,7 +17,7 @@ os.environ.setdefault("JR_SKIP_WARM_CACHE", "1")
 import pandas as pd
 import plotly.graph_objects as go
 import streamlit as st
-from PIL import Image, ImageDraw, ImageFont
+from PIL import Image, ImageDraw, ImageFilter, ImageFont
 
 import app as backend
 
@@ -1781,6 +1781,18 @@ def inject_css() -> None:
           -webkit-backdrop-filter: blur(20px) saturate(170%);
         }}
 
+        [class*="_dashboard_controls"] [data-testid="stDownloadButton"] button,
+        .st-key-home_download_ready button {{
+          background:
+            linear-gradient(135deg, rgba(28,45,107,.96), rgba(28,45,107,.86)),
+            var(--jr-blue) !important;
+          color: #fff !important;
+          border-color: rgba(255,255,255,.26) !important;
+          box-shadow:
+            0 14px 34px rgba(28,45,107,.22),
+            inset 0 1px 0 rgba(255,255,255,.20) !important;
+        }}
+
         .stButton > button {{
           box-shadow:
             0 14px 30px rgba(190,30,45,.22),
@@ -2139,26 +2151,31 @@ def h(text: object) -> str:
 def clean_text(text: object) -> str:
     value = str(text if text is not None else "")
     if any(marker in value for marker in ("Ã", "Â", "â€", "â€¢")):
-        try:
-            value = value.encode("latin1").decode("utf-8")
-        except UnicodeError:
-            replacements = {
-                "Ã¡": "á",
-                "Ã¢": "â",
-                "Ã£": "ã",
-                "Ã©": "é",
-                "Ãª": "ê",
-                "Ã­": "í",
-                "Ã³": "ó",
-                "Ã´": "ô",
-                "Ãµ": "õ",
-                "Ãº": "ú",
-                "Ã§": "ç",
-                "Â©": "©",
-                "â€¢": "•",
-            }
-            for bad, good in replacements.items():
-                value = value.replace(bad, good)
+        for _ in range(2):
+            try:
+                decoded = value.encode("latin1").decode("utf-8")
+            except UnicodeError:
+                break
+            if decoded == value:
+                break
+            value = decoded
+        replacements = {
+            "Ã¡": "á",
+            "Ã¢": "â",
+            "Ã£": "ã",
+            "Ã©": "é",
+            "Ãª": "ê",
+            "Ã­": "í",
+            "Ã³": "ó",
+            "Ã´": "ô",
+            "Ãµ": "õ",
+            "Ãº": "ú",
+            "Ã§": "ç",
+            "Â©": "©",
+            "â€¢": "•",
+        }
+        for bad, good in replacements.items():
+            value = value.replace(bad, good)
     broken = r"[\ufffd?]"
 
     def same_case(match: re.Match, replacement: str) -> str:
@@ -2977,6 +2994,83 @@ def draw_centered_wrapped_text(
     return y
 
 
+def _hex_rgb(color: str) -> tuple[int, int, int]:
+    value = clean_text(color or "").strip().lstrip("#")
+    if len(value) != 6:
+        value = JR_RED.lstrip("#")
+    try:
+        return tuple(int(value[index : index + 2], 16) for index in (0, 2, 4))
+    except ValueError:
+        return _hex_rgb(JR_RED)
+
+
+def _paste_rgba(base: Image.Image, layer: Image.Image) -> None:
+    base.paste(layer.convert("RGB"), (0, 0), layer.getchannel("A"))
+
+
+def draw_liquid_export_card(
+    canvas: Image.Image,
+    box: tuple[int, int, int, int],
+    *,
+    radius: int = 22,
+    accent: str = JR_RED,
+    outline: str = "#cbd9ff",
+) -> None:
+    x1, y1, x2, y2 = box
+    accent_rgb = _hex_rgb(accent)
+    outline_rgb = _hex_rgb(outline)
+
+    shadow = Image.new("RGBA", canvas.size, (0, 0, 0, 0))
+    shadow_draw = ImageDraw.Draw(shadow)
+    shadow_draw.rounded_rectangle(
+        (x1 + 10, y1 + 14, x2 + 10, y2 + 16),
+        radius=radius + 2,
+        fill=(28, 45, 107, 34),
+    )
+    shadow_draw.rounded_rectangle(
+        (x1 + 4, y1 + 7, x2 + 4, y2 + 8),
+        radius=radius,
+        fill=(194, 210, 243, 72),
+    )
+    shadow = shadow.filter(ImageFilter.GaussianBlur(18))
+    _paste_rgba(canvas, shadow)
+
+    layer = Image.new("RGBA", canvas.size, (0, 0, 0, 0))
+    layer_draw = ImageDraw.Draw(layer)
+    layer_draw.rounded_rectangle(
+        box,
+        radius=radius,
+        fill=(255, 255, 255, 236),
+        outline=(*outline_rgb, 228),
+        width=2,
+    )
+    layer_draw.rounded_rectangle(
+        (x1 + 2, y1 + 2, x2 - 2, y1 + 7),
+        radius=radius,
+        fill=(*accent_rgb, 224),
+    )
+    layer_draw.rounded_rectangle(
+        (x1 + 3, y1 + 3, x2 - 3, y2 - 3),
+        radius=radius - 2,
+        outline=(255, 255, 255, 178),
+        width=1,
+    )
+    layer_draw.polygon(
+        [
+            (x1 + int((x2 - x1) * 0.52), y1 + 1),
+            (x2 - 18, y1 + 1),
+            (x1 + int((x2 - x1) * 0.35), y2 - 4),
+            (x1 + int((x2 - x1) * 0.18), y2 - 4),
+        ],
+        fill=(255, 255, 255, 44),
+    )
+    layer_draw.rectangle(
+        (x1 + 10, y1 + 8, x2 - 10, y1 + 34),
+        fill=(255, 255, 255, 26),
+    )
+    _paste_rgba(canvas, layer)
+
+
 def horizontal_bar_row_count(fig: go.Figure) -> int:
     meta = figure_meta(fig)
     if meta.get("jr_horizontal_bar"):
@@ -3066,22 +3160,13 @@ def compose_home_export_image(
 
     for index, (label, value, status) in enumerate(cards):
         x = margin + index * (card_width + gap)
-        draw.rounded_rectangle(
-            (x + 6, y + 8, x + card_width + 6, y + card_height + 8),
-            radius=18,
-            fill=shadow,
-        )
-        draw.rounded_rectangle(
-            (x, y, x + card_width, y + card_height),
-            radius=18,
-            fill=panel,
-            outline=line,
-            width=2,
-        )
+        label_upper = clean_text(label).upper()
+        accent = "#7C3AED" if "VEX" in label_upper else JR_RED if "GASTO" in label_upper else JR_BLUE
+        draw_liquid_export_card(canvas, (x, y, x + card_width, y + card_height), radius=18, accent=accent, outline=line)
         center_x = x + card_width // 2
         draw_centered_wrapped_text(
             draw,
-            clean_text(label).upper(),
+            label_upper,
             center_x,
             y + 26,
             font=report_font(20, bold=True),
@@ -3092,7 +3177,7 @@ def compose_home_export_image(
         value_text = clean_text(value)
         value_font = report_font(30, bold=True)
         value_bbox = draw.textbbox((0, 0), value_text, font=value_font)
-        draw.text((center_x - (value_bbox[2] - value_bbox[0]) // 2, y + 95), value_text, font=value_font, fill=JR_BLUE)
+        draw.text((center_x - (value_bbox[2] - value_bbox[0]) // 2, y + 95), value_text, font=value_font, fill=accent)
         draw_centered_wrapped_text(
             draw,
             status,
@@ -3198,22 +3283,19 @@ def compose_export_image(
     y = margin
 
     if include_cards and kpis:
-        for index, (label, value) in enumerate(kpis):
+        for index, item in enumerate(kpis):
+            label, value = item[0], item[1]
+            accent = item[2] if len(item) > 2 and item[2] else JR_RED
             row = index // card_cols
             col = index % card_cols
             x = margin + col * (card_width + gap)
             card_y = y + row * (card_height + gap)
-            draw.rounded_rectangle(
-                (x + 6, card_y + 8, x + card_width + 6, card_y + card_height + 8),
-                radius=20,
-                fill=shadow,
-            )
-            draw.rounded_rectangle(
+            draw_liquid_export_card(
+                canvas,
                 (x, card_y, x + card_width, card_y + card_height),
                 radius=20,
-                fill=panel,
+                accent=accent,
                 outline=line,
-                width=2,
             )
             draw_wrapped_text(
                 draw,
@@ -3233,7 +3315,7 @@ def compose_export_image(
             value_font = report_font(value_size, bold=True)
             value_bbox = draw.textbbox((0, 0), value_text, font=value_font)
             value_x = x + (card_width - (value_bbox[2] - value_bbox[0])) // 2
-            draw.text((value_x, card_y + 104), value_text, font=value_font, fill=JR_RED)
+            draw.text((value_x, card_y + 104), value_text, font=value_font, fill=accent)
         y += rows * card_height + (rows - 1) * gap
         if include_charts and chart_images:
             y += gap + 10
@@ -3245,17 +3327,12 @@ def compose_export_image(
             for col, (chart_title, image) in enumerate(row_items):
                 x = margin + col * (chart_card_width + gap)
                 chart_y = y
-                draw.rounded_rectangle(
-                    (x + 6, chart_y + 8, x + chart_card_width + 6, chart_y + row_height + 8),
-                    radius=22,
-                    fill=shadow,
-                )
-                draw.rounded_rectangle(
+                draw_liquid_export_card(
+                    canvas,
                     (x, chart_y, x + chart_card_width, chart_y + row_height),
                     radius=22,
-                    fill=panel,
+                    accent=JR_RED,
                     outline=line,
-                    width=2,
                 )
                 draw.text((x + 28, chart_y + 24), clean_text(chart_title), font=report_font(30, bold=True), fill=text)
                 canvas.paste(image, (x + 28, chart_y + 72))
@@ -3345,7 +3422,7 @@ def dashboard_controls(
                 ("page_pdf", "Página PDF", "pagina", "pdf"),
             ]
             selected_kpis_preview = [
-                (kpi_control_label(item), item[2])
+                (kpi_control_label(item), item[2], item[3] if len(item) > 3 and item[3] else JR_RED)
                 for item in kpis
                 if st.session_state.get(f"{key_prefix}_visible_{item[0]}", True)
             ]
