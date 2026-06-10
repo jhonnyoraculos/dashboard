@@ -2176,7 +2176,7 @@ def clean_text(text: object) -> str:
         }
         for bad, good in replacements.items():
             value = value.replace(bad, good)
-    broken = r"[\ufffd?]"
+    broken = r"[\ufffd\u25a1\u25af?]"
 
     def same_case(match: re.Match, replacement: str) -> str:
         original = match.group(0)
@@ -2911,16 +2911,16 @@ def multi_bar_chart(
 
 def report_font(size: int, *, bold: bool = False) -> ImageFont.ImageFont:
     candidates = [
-        "arialbd.ttf" if bold else "arial.ttf",
-        "segoeuib.ttf" if bold else "segoeui.ttf",
-        "DejaVuSans-Bold.ttf" if bold else "DejaVuSans.ttf",
-        "LiberationSans-Bold.ttf" if bold else "LiberationSans-Regular.ttf",
-        "FreeSansBold.ttf" if bold else "FreeSans.ttf",
         "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf" if bold else "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
         "/usr/share/fonts/truetype/liberation2/LiberationSans-Bold.ttf" if bold else "/usr/share/fonts/truetype/liberation2/LiberationSans-Regular.ttf",
         "/usr/share/fonts/truetype/freefont/FreeSansBold.ttf" if bold else "/usr/share/fonts/truetype/freefont/FreeSans.ttf",
+        "DejaVuSans-Bold.ttf" if bold else "DejaVuSans.ttf",
+        "LiberationSans-Bold.ttf" if bold else "LiberationSans-Regular.ttf",
+        "FreeSansBold.ttf" if bold else "FreeSans.ttf",
         "C:/Windows/Fonts/arialbd.ttf" if bold else "C:/Windows/Fonts/arial.ttf",
         "C:/Windows/Fonts/segoeuib.ttf" if bold else "C:/Windows/Fonts/segoeui.ttf",
+        "arialbd.ttf" if bold else "arial.ttf",
+        "segoeuib.ttf" if bold else "segoeui.ttf",
     ]
     for candidate in candidates:
         try:
@@ -3047,7 +3047,7 @@ def draw_liquid_export_card(
     layer_draw.rounded_rectangle(
         (x1 + 2, y1 + 2, x2 - 2, y1 + 7),
         radius=radius,
-        fill=(*accent_rgb, 224),
+        fill=(*accent_rgb, 190),
     )
     layer_draw.rounded_rectangle(
         (x1 + 3, y1 + 3, x2 - 3, y2 - 3),
@@ -3055,17 +3055,18 @@ def draw_liquid_export_card(
         outline=(255, 255, 255, 178),
         width=1,
     )
+    layer_draw.rounded_rectangle(
+        (x1 + 10, y1 + 9, x2 - 10, y1 + 28),
+        radius=max(6, radius // 2),
+        fill=(255, 255, 255, 24),
+    )
     layer_draw.polygon(
         [
-            (x1 + int((x2 - x1) * 0.52), y1 + 1),
-            (x2 - 18, y1 + 1),
-            (x1 + int((x2 - x1) * 0.35), y2 - 4),
-            (x1 + int((x2 - x1) * 0.18), y2 - 4),
+            (x1 + int((x2 - x1) * 0.70), y1 + 10),
+            (x2 - 34, y1 + 10),
+            (x2 - 78, y1 + 38),
+            (x1 + int((x2 - x1) * 0.62), y1 + 38),
         ],
-        fill=(255, 255, 255, 44),
-    )
-    layer_draw.rectangle(
-        (x1 + 10, y1 + 8, x2 - 10, y1 + 34),
         fill=(255, 255, 255, 26),
     )
     _paste_rgba(canvas, layer)
