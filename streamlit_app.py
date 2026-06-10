@@ -28,7 +28,7 @@ MUTED = "#6B7280"
 CARD_BORDER = "#c2d2f3"
 LOGO_PATH = Path(__file__).parent / "static" / "logo-jr.png"
 CURRENT_YEAR = date.today().year
-APP_VERSION = "deploy-liquidgl-inspired-v1"
+APP_VERSION = "deploy-export-clean-v2"
 BR_TZ = ZoneInfo("America/Sao_Paulo")
 CATEGORY_OPTIONS = ["Transporte", "Vex", "Equipamento"]
 PEDAGIO_TIPO_OPTIONS = ["Pedagio", "Extras", "Taxi", "IPVA", "Seguro", "Licenciamento", "DPVAT", "Outros"]
@@ -3054,20 +3054,6 @@ def draw_liquid_export_card(
         radius=radius - 2,
         outline=(255, 255, 255, 178),
         width=1,
-    )
-    layer_draw.rounded_rectangle(
-        (x1 + 10, y1 + 9, x2 - 10, y1 + 28),
-        radius=max(6, radius // 2),
-        fill=(255, 255, 255, 24),
-    )
-    layer_draw.polygon(
-        [
-            (x1 + int((x2 - x1) * 0.70), y1 + 10),
-            (x2 - 34, y1 + 10),
-            (x2 - 78, y1 + 38),
-            (x1 + int((x2 - x1) * 0.62), y1 + 38),
-        ],
-        fill=(255, 255, 255, 26),
     )
     _paste_rgba(canvas, layer)
 
