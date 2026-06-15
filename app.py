@@ -2553,10 +2553,8 @@ def compute_overview_totals(*, ano: int | None = None, mes: int | None = None, m
 def data_overview(params: dict | None = None) -> dict:
     params = params or {}
     ano = _parse_int(_param(params, "ano"))
-    mes = _parse_int(_param(params, "mes"), min_value=1, max_value=12)
     meses_lista = _parse_mes_int_list(params.get("mes"))
-    if mes is not None and mes not in meses_lista:
-        meses_lista.append(mes)
+    mes = None if meses_lista else _parse_int(_param(params, "mes"), min_value=1, max_value=12)
     return compute_overview_totals(ano=ano, mes=mes, meses_lista=meses_lista)
 
 
