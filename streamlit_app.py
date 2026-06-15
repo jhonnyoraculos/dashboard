@@ -28,7 +28,7 @@ MUTED = "#6B7280"
 CARD_BORDER = "#c2d2f3"
 LOGO_PATH = Path(__file__).parent / "static" / "logo-jr.png"
 CURRENT_YEAR = date.today().year
-APP_VERSION = "deploy-last-closed-month-v1"
+APP_VERSION = "deploy-year-to-closed-month-v1"
 BR_TZ = ZoneInfo("America/Sao_Paulo")
 CATEGORY_OPTIONS = ["Transporte", "Vex", "Equipamento"]
 PEDAGIO_TIPO_OPTIONS = ["Pedagio", "Extras", "Taxi", "IPVA", "Seguro", "Licenciamento", "DPVAT", "Outros"]
@@ -2249,18 +2249,21 @@ def default_closed_month_selection(options: list, year_value: object) -> list[ob
     closed_year, closed_month = last_closed_month()
     if year_value not in (closed_year, str(closed_year)):
         return ["Todos"]
+    selected: list[object] = []
     for option in options:
         if option == "Todos":
             continue
         key = parse_month_key(option, closed_year)
-        if key == (closed_year, closed_month):
-            return [option]
+        if key and key[0] == closed_year and 1 <= key[1] <= closed_month:
+            selected.append(option)
+            continue
         try:
-            if int(option) == closed_month:
-                return [option]
+            month_number = int(option)
         except (TypeError, ValueError):
-            pass
-    return ["Todos"]
+            continue
+        if 1 <= month_number <= closed_month:
+            selected.append(option)
+    return selected or ["Todos"]
 
 
 def month_label(value: object) -> str:
