@@ -8,7 +8,7 @@ import re
 import subprocess
 import unicodedata
 from io import BytesIO
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
@@ -28,7 +28,7 @@ MUTED = "#6B7280"
 CARD_BORDER = "#c2d2f3"
 LOGO_PATH = Path(__file__).parent / "static" / "logo-jr.png"
 CURRENT_YEAR = date.today().year
-APP_VERSION = "deploy-export-ascii-v3"
+APP_VERSION = "deploy-last-closed-month-v1"
 BR_TZ = ZoneInfo("America/Sao_Paulo")
 CATEGORY_OPTIONS = ["Transporte", "Vex", "Equipamento"]
 PEDAGIO_TIPO_OPTIONS = ["Pedagio", "Extras", "Taxi", "IPVA", "Seguro", "Licenciamento", "DPVAT", "Outros"]
@@ -2227,6 +2227,42 @@ def selected_or_default(options: list, current: object | None = None, *, default
     return "Todos"
 
 
+def last_closed_month() -> tuple[int, int]:
+    first_day = date.today().replace(day=1)
+    closed = first_day - timedelta(days=1)
+    return closed.year, closed.month
+
+
+def last_closed_year_default(options: list, current: object | None = None) -> object:
+    all_options = ["Todos", *[item for item in options if item != "Todos"]]
+    if current in all_options:
+        return current
+    year, _month = last_closed_month()
+    if year in all_options:
+        return year
+    if str(year) in all_options:
+        return str(year)
+    return selected_or_default(options, current, default_current_year=True)
+
+
+def default_closed_month_selection(options: list, year_value: object) -> list[object]:
+    closed_year, closed_month = last_closed_month()
+    if year_value not in (closed_year, str(closed_year)):
+        return ["Todos"]
+    for option in options:
+        if option == "Todos":
+            continue
+        key = parse_month_key(option, closed_year)
+        if key == (closed_year, closed_month):
+            return [option]
+        try:
+            if int(option) == closed_month:
+                return [option]
+        except (TypeError, ValueError):
+            pass
+    return ["Todos"]
+
+
 def month_label(value: object) -> str:
     if value == "Todos":
         return "Todos"
@@ -3530,7 +3566,7 @@ def filter_controls(
     all_data = all_data if all_data is not None else route_json(route, {"ano": "Todos", "mes": ["Todos"]})
     years = all_data.get("anos", []) or []
     year_options = ["Todos", *years]
-    year_default = selected_or_default(years, st.session_state.get(f"{key_prefix}_ano"), default_current_year=True)
+    year_default = last_closed_year_default(years, st.session_state.get(f"{key_prefix}_ano"))
     year_index = year_options.index(year_default) if year_default in year_options else 0
 
     with st.container(key=f"{key_prefix}_filterbar"):
@@ -3554,7 +3590,11 @@ def filter_controls(
         mes_key = f"{key_prefix}_mes"
         mes_previous_key = f"{mes_key}__previous"
         mes_state_exists = mes_key in st.session_state
-        current_meses = st.session_state.get(mes_key, ["Todos"])
+        current_meses = (
+            st.session_state.get(mes_key, ["Todos"])
+            if mes_state_exists
+            else default_closed_month_selection(mes_options, ano)
+        )
         current_meses = [item for item in current_meses if item in mes_options] or ["Todos"]
         if mes_state_exists and st.session_state.get(mes_key) != current_meses:
             st.session_state[mes_key] = current_meses
@@ -3829,7 +3869,7 @@ def compare_kpi_cards(bundle: list[tuple[str, dict]]) -> list[tuple]:
 def frota_filter_controls(seed: dict) -> dict[str, object]:
     years = seed.get("anos", []) or []
     year_options = ["Todos", *years]
-    year_default = selected_or_default(years, st.session_state.get("rank_ano"), default_current_year=True)
+    year_default = last_closed_year_default(years, st.session_state.get("rank_ano"))
     year_index = year_options.index(year_default) if year_default in year_options else 0
 
     with st.container(key="rank_filterbar"):
@@ -3850,7 +3890,11 @@ def frota_filter_controls(seed: dict) -> dict[str, object]:
         mes_key = "rank_mes"
         mes_previous_key = f"{mes_key}__previous"
         mes_state_exists = mes_key in st.session_state
-        current_meses = st.session_state.get(mes_key, ["Todos"])
+        current_meses = (
+            st.session_state.get(mes_key, ["Todos"])
+            if mes_state_exists
+            else default_closed_month_selection(mes_options, ano)
+        )
         current_meses = [item for item in current_meses if item in mes_options] or ["Todos"]
         if mes_state_exists and st.session_state.get(mes_key) != current_meses:
             st.session_state[mes_key] = current_meses
@@ -4361,14 +4405,18 @@ def render_home() -> None:
 
     overview_all = route_json("overview")
     year_options = ["Todos", *(overview_all.get("anos_disponiveis", []) or [])]
-    default_year = CURRENT_YEAR if CURRENT_YEAR in year_options else "Todos"
+    default_year = last_closed_year_default(overview_all.get("anos_disponiveis", []) or [])
     ano_state = st.session_state.get("home_ano", default_year)
     ano = ano_state if ano_state in year_options else default_year
     months_seed = overview_all if ano == "Todos" else route_json("overview", {"ano": ano})
     month_options = ["Todos", *(months_seed.get("meses_disponiveis", []) or [])]
     home_mes_exists = "home_mes" in st.session_state
     home_mes_previous_key = "home_mes__previous"
-    current_months = st.session_state.get("home_mes", ["Todos"])
+    current_months = (
+        st.session_state.get("home_mes", ["Todos"])
+        if home_mes_exists
+        else default_closed_month_selection(month_options, ano)
+    )
     current_months = [item for item in current_months if item in month_options] or ["Todos"]
     if home_mes_exists and st.session_state.get("home_mes") != current_months:
         st.session_state["home_mes"] = current_months
