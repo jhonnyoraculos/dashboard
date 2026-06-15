@@ -28,7 +28,7 @@ MUTED = "#6B7280"
 CARD_BORDER = "#c2d2f3"
 LOGO_PATH = Path(__file__).parent / "static" / "logo-jr.png"
 CURRENT_YEAR = date.today().year
-APP_VERSION = "deploy-year-to-closed-month-v1"
+APP_VERSION = "deploy-compact-month-filter-v1"
 BR_TZ = ZoneInfo("America/Sao_Paulo")
 CATEGORY_OPTIONS = ["Transporte", "Vex", "Equipamento"]
 PEDAGIO_TIPO_OPTIONS = ["Pedagio", "Extras", "Taxi", "IPVA", "Seguro", "Licenciamento", "DPVAT", "Outros"]
@@ -610,6 +610,27 @@ def inject_css() -> None:
           border: 1px solid rgba(28,45,107,0.15);
           background: #fff;
           box-shadow: 0 4px 10px rgba(0,0,0,0.05);
+        }}
+
+        .st-key-home_total_section div[data-testid="stMultiSelect"] div[data-baseweb="select"] > div {{
+          min-height: 38px;
+          padding-top: 4px;
+          padding-bottom: 4px;
+          align-items: flex-start;
+        }}
+
+        .st-key-home_total_section div[data-testid="stMultiSelect"] span[data-baseweb="tag"] {{
+          max-width: 58px;
+          min-height: 22px;
+          margin: 2px 3px 2px 0;
+          border-radius: 9px;
+        }}
+
+        .st-key-home_total_section div[data-testid="stMultiSelect"] span[data-baseweb="tag"] span {{
+          overflow: hidden;
+          text-overflow: ellipsis;
+          white-space: nowrap;
+          font-size: 11px;
         }}
 
         .st-key-home_total_section .stButton > button {{
@@ -2286,6 +2307,21 @@ def month_filter_label(value: object) -> str:
         return str(value)
     year, month = key
     return f"{MONTH_ABBR[month - 1]}/{str(year)[-2:]}"
+
+
+def compact_month_label(value: object) -> str:
+    if value == "Todos":
+        return "Todos"
+    try:
+        month = int(value)
+    except (TypeError, ValueError):
+        key = parse_month_key(value)
+        if not key:
+            return str(value)
+        _year, month = key
+    if 1 <= month <= 12:
+        return MONTH_ABBR[month - 1]
+    return str(value)
 
 
 def select_all_label(label: str):
@@ -4496,12 +4532,12 @@ def render_home() -> None:
 
         render_home_totals(home_total_cards)
         st.markdown('<div class="home-filter-row"></div>', unsafe_allow_html=True)
-        cols = st.columns([0.55, 0.55, 2.2])
+        cols = st.columns([0.55, 1.35, 1.4])
         with cols[0]:
             st.selectbox("Ano", year_options, index=year_options.index(ano), key="home_ano")
         with cols[1]:
             home_mes_kwargs = {
-                "format_func": month_label,
+                "format_func": compact_month_label,
                 "key": "home_mes",
                 "on_change": sync_multiselect_selection,
                 "args": ("home_mes",),
