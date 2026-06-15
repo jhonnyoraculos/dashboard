@@ -28,7 +28,7 @@ MUTED = "#6B7280"
 CARD_BORDER = "#c2d2f3"
 LOGO_PATH = Path(__file__).parent / "static" / "logo-jr.png"
 CURRENT_YEAR = date.today().year
-APP_VERSION = "deploy-overview-month-list-v1"
+APP_VERSION = "deploy-home-period-months-v1"
 BR_TZ = ZoneInfo("America/Sao_Paulo")
 CATEGORY_OPTIONS = ["Transporte", "Vex", "Equipamento"]
 PEDAGIO_TIPO_OPTIONS = ["Pedagio", "Extras", "Taxi", "IPVA", "Seguro", "Licenciamento", "DPVAT", "Outros"]
@@ -4467,11 +4467,12 @@ def render_home() -> None:
     if meses == ["Todos"]:
         overview = months_seed
     else:
+        overview_months = [f"{int(ano)}-{int(item):02d}" for item in meses] if ano != "Todos" else [int(item) for item in meses]
         overview = route_json(
             "overview",
             {
                 "ano": None if ano == "Todos" else ano,
-                "mes": [int(item) for item in meses],
+                "mes": overview_months,
             },
         )
     filter_text = ""

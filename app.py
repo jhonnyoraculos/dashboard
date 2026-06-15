@@ -1225,10 +1225,16 @@ def _parse_mes_int_list(raw) -> list[int]:
         if value in (None, "", "Todos"):
             continue
         for part in str(value).split(","):
+            part = part.strip()
+            if not part or part.lower() == "todos":
+                continue
             try:
                 num = int(part)
             except (TypeError, ValueError):
-                continue
+                parsed = pd.to_datetime(part, errors="coerce")
+                if pd.isna(parsed):
+                    continue
+                num = int(parsed.month)
             if 1 <= num <= 12:
                 meses.append(num)
     return meses
