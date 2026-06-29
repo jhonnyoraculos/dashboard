@@ -28,7 +28,7 @@ MUTED = "#6B7280"
 CARD_BORDER = "#c2d2f3"
 LOGO_PATH = Path(__file__).parent / "static" / "logo-jr.png"
 CURRENT_YEAR = date.today().year
-APP_VERSION = "deploy-home-period-months-v1"
+APP_VERSION = "deploy-plotly-unique-keys-v1"
 BR_TZ = ZoneInfo("America/Sao_Paulo")
 CATEGORY_OPTIONS = ["Transporte", "Vex", "Equipamento"]
 PEDAGIO_TIPO_OPTIONS = ["Pedagio", "Extras", "Taxi", "IPVA", "Seguro", "Licenciamento", "DPVAT", "Outros"]
@@ -3427,34 +3427,34 @@ def export_file_name(prefix: str, scope: str, ext: str) -> str:
     return f"{prefix}-{scope}.{ext}"
 
 
-def chart_card(title: str, fig: go.Figure) -> None:
+def chart_card(title: str, fig: go.Figure, *, key: str) -> None:
     with st.container(border=True):
         st.html(f'<div class="chart-title">{h(title)}</div>')
         scroll_height = chart_scroll_height(fig)
         if scroll_height:
             with st.container(height=scroll_height, border=False):
-                st.plotly_chart(fig, width="stretch", config=PLOTLY_CONFIG)
+                st.plotly_chart(fig, width="stretch", config=PLOTLY_CONFIG, key=key)
         else:
-            st.plotly_chart(fig, width="stretch", config=PLOTLY_CONFIG)
+            st.plotly_chart(fig, width="stretch", config=PLOTLY_CONFIG, key=key)
 
 
-def chart_grid(charts: list[tuple[str, go.Figure]]) -> None:
+def chart_grid(charts: list[tuple[str, go.Figure]], *, key_prefix: str = "chart") -> None:
     index = 0
     while index < len(charts):
         title, fig = charts[index]
         if chart_prefers_full_width(fig):
-            chart_card(title, fig)
+            chart_card(title, fig, key=f"{key_prefix}_{index}")
             index += 1
             continue
 
         if index + 1 < len(charts) and not chart_prefers_full_width(charts[index + 1][1]):
             cols = st.columns(2)
-            for col, item in zip(cols, charts[index : index + 2]):
+            for offset, (col, item) in enumerate(zip(cols, charts[index : index + 2])):
                 with col:
-                    chart_card(item[0], item[1])
+                    chart_card(item[0], item[1], key=f"{key_prefix}_{index + offset}")
             index += 2
         else:
-            chart_card(title, fig)
+            chart_card(title, fig, key=f"{key_prefix}_{index}")
             index += 1
 
 
@@ -3592,7 +3592,7 @@ def render_controlled_dashboard(
     if show_cards and visible_kpis:
         render_kpis([(item[1], item[2], item[3] if len(item) > 3 else None, item[4] if len(item) > 4 else None) for item in visible_kpis])
     if show_charts and visible_charts:
-        chart_grid([(chart_title, fig) for _, chart_title, fig in visible_charts])
+        chart_grid([(chart_title, fig) for _, chart_title, fig in visible_charts], key_prefix=f"{key_prefix}_chart")
 
 
 def filter_controls(
@@ -4393,7 +4393,7 @@ def render_frota() -> None:
         ("KM por mês", km_monthly_fig),
         ("Litros por mês", litros_monthly_fig),
         ("Peso por mês", peso_monthly_fig),
-    ])
+    ], key_prefix="rank_chart")
 
     dominancia = data.get("dominancia_peso", {}) or {}
     cidades_dominadas = dominancia.get("cidades", []) or []
