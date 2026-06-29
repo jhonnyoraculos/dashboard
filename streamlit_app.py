@@ -28,9 +28,9 @@ MUTED = "#6B7280"
 CARD_BORDER = "#c2d2f3"
 LOGO_PATH = Path(__file__).parent / "static" / "logo-jr.png"
 CURRENT_YEAR = date.today().year
-APP_VERSION = "deploy-plotly-unique-keys-v1"
+APP_VERSION = "deploy-freteiro-category-v1"
 BR_TZ = ZoneInfo("America/Sao_Paulo")
-CATEGORY_OPTIONS = ["Transporte", "Vex", "Equipamento"]
+CATEGORY_OPTIONS = ["Transporte", "Freteiro", "Vex", "Equipamento"]
 PEDAGIO_TIPO_OPTIONS = ["Pedagio", "Extras", "Taxi", "IPVA", "Seguro", "Licenciamento", "DPVAT", "Outros"]
 PEDAGIO_OPTIONAL_PLATE_TYPES = {"Extras", "Taxi"}
 
@@ -3708,6 +3708,10 @@ def compare_query_params(route: str, params: dict[str, object]) -> dict[str, obj
         query["ano"] = params.get("ano")
     if params.get("mes") is not None:
         query["mes"] = params.get("mes")
+    if params.get("categoria") is not None:
+        query["categoria"] = params.get("categoria")
+    if params.get("segmento") is not None:
+        query["segmento"] = params.get("segmento")
     if DASHBOARD_META.get(route, {}).get("supports_plate") and params.get("placa"):
         query["placa"] = params.get("placa")
     return query
@@ -4279,7 +4283,7 @@ def dominance_city_summaries(cidades: list[dict], *, limit: int = 10) -> dict[st
 
 def render_frota() -> None:
     topbar("JR DASHBOARD • Ranking de caminhões", back=False)
-    seed = route_json("frota", {"ano": "Todos", "mes": ["Todos"], "categoria": "Transporte", "ordenar_por": "total"})
+    seed = route_json("frota", {"ano": "Todos", "mes": ["Todos"], "ordenar_por": "total"})
     params = frota_filter_controls(seed)
     data = route_json("frota", params)
     totais = data.get("totais", {}) or {}
@@ -4842,6 +4846,8 @@ def _save_plate_sheet(original_map: dict[str, str], edited: pd.DataFrame) -> boo
         normalized = categoria.lower()
         if normalized == "vex":
             categoria_final = "Vex"
+        elif "fret" in normalized:
+            categoria_final = "Freteiro"
         elif normalized == "equipamento":
             categoria_final = "Equipamento"
         else:
@@ -6716,9 +6722,12 @@ def render_cadastro() -> None:
 def render_combustivel() -> None:
     topbar("JR DASHBOARD • Combustível", back=False)
     seed = route_json("combustivel", {"ano": "Todos", "mes": ["Todos"]})
+    if "comb_categoria" not in st.session_state and "Transporte" in (seed.get("segmentos", []) or []):
+        st.session_state["comb_categoria"] = "Transporte"
     params, filter_state = filter_controls(
         "combustivel",
         extra_filters=[
+            ("categoria", "Categoria", seed.get("segmentos", []) or []),
             ("placa", "Placa", seed.get("placas", []) or []),
             ("posto", "Posto", seed.get("postos", []) or []),
             ("combustivel", "Combustível", seed.get("combustiveis", []) or []),
@@ -6846,6 +6855,7 @@ def render_hoteis() -> None:
     params, filter_state = filter_controls(
         "hoteis",
         extra_filters=[
+            ("segmento", "Categoria", seed.get("segmentos", []) or []),
             ("cidade", "Cidade", seed.get("cidades", []) or []),
             ("hotel", "Hotel/Pousada", seed.get("hoteis", []) or []),
         ],

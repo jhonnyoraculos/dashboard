@@ -886,6 +886,8 @@ def _normalize_category_value(value, *, default: str = "Transporte") -> str:
     key = _normalize_ascii(raw).lower()
     if key == "vex":
         return "Vex"
+    if key in {"freteiro", "freteiros", "frete"}:
+        return "Freteiro"
     if key in {"equipamento", "equipamentos", "empilhadeira"}:
         return "Equipamento"
     return "Transporte"
@@ -1005,7 +1007,11 @@ def _derived_plate_registry() -> pd.DataFrame:
             lambda values: (
                 "Equipamento"
                 if any(_normalize_category_value(value) == "Equipamento" for value in values)
-                else ("Vex" if any(_normalize_category_value(value) == "Vex" for value in values) else "Transporte")
+                else (
+                    "Vex"
+                    if any(_normalize_category_value(value) == "Vex" for value in values)
+                    else ("Freteiro" if any(_normalize_category_value(value) == "Freteiro" for value in values) else "Transporte")
+                )
             )
         )
     )
@@ -1157,7 +1163,7 @@ def _registered_plates_for_category(categoria: str) -> set[str]:
         return set()
     if registry.empty or "PLACA" not in registry.columns or "Categoria" not in registry.columns:
         return set()
-    target = str(categoria or "").strip().lower()
+    target = _normalize_category_value(categoria).lower()
     mask = _normalize_categoria(registry["Categoria"]) == target
     return set(registry.loc[mask, "PLACA"].astype("string").dropna().tolist())
 
@@ -1176,6 +1182,16 @@ def _only_registered_category(df: pd.DataFrame, categoria: str) -> pd.DataFrame:
     filtered = df[df["PLACA"].isin(plates)].copy()
     filtered["Categoria"] = _normalize_category_value(categoria)
     return filtered
+
+
+def _filter_category_param(df: pd.DataFrame, categoria: str | None) -> pd.DataFrame:
+    if not categoria or categoria == "Todos":
+        return df.copy()
+    if df.empty or "Categoria" not in df.columns:
+        return df.iloc[0:0].copy()
+    target = _normalize_category_value(categoria).lower()
+    mask = _normalize_categoria(df["Categoria"]) == target
+    return df.loc[mask].copy()
 
 
 def _filter_by_period(
@@ -1796,14 +1812,19 @@ def agg_pedagio(df: pd.DataFrame) -> dict:
 
 def data_comb(params: dict | None = None) -> dict:
     params = params or {}
-    df = _only_registered_category(load_combustivel(), "Transporte")
-    km_rodados = _only_transporte(_apply_plate_categories(load_combustivel_km()))
+    df = _apply_plate_categories(load_combustivel())
+    km_rodados = _apply_plate_categories(load_combustivel_km())
 
     ano = _parse_int(_param(params, "ano"))
     meses = _parse_mes_list(params.get("mes"))
+    categoria = _param(params, "categoria") or _param(params, "segmento") or "Transporte"
     placa = _param(params, "placa")
     posto = _param(params, "posto")
     combustivel = _param(params, "combustivel")
+
+    segmentos_disponiveis = _unique_sorted(df, "Categoria")
+    df = _filter_category_param(df, categoria)
+    km_rodados = _filter_category_param(km_rodados, categoria)
 
     if placa and placa != "Todos":
         df = df[df["PLACA"] == _normalize_plate_value(placa)]
@@ -1836,25 +1857,26 @@ def data_comb(params: dict | None = None) -> dict:
     resultado = agg_combustivel(df, km_override=km_override)
     resultado["anos"] = anos_disponiveis
     resultado["meses"] = meses_disponiveis
+    resultado["segmentos"] = segmentos_disponiveis
     return resultado
 
 
 def data_manu(params: dict | None = None) -> dict:
     params = params or {}
     df = _exclude_vex(load_manutencao())
+    segmentos_disponiveis = _unique_sorted(df, "Categoria")
 
     ano = _parse_int(_param(params, "ano"))
     meses = _parse_mes_list(params.get("mes"))
     placa = _param(params, "placa")
     oficina = _param(params, "oficina")
-    segmento = _param(params, "segmento")
+    segmento = _param(params, "segmento") or _param(params, "categoria")
 
     if placa and placa != "Todos":
         df = df[df["PLACA"] == _normalize_plate_value(placa)]
     if oficina and oficina != "Todos":
         df = df[df["OFICINA"] == oficina]
-    if segmento and segmento != "Todos" and "Categoria" in df.columns:
-        df = df[df["Categoria"] == segmento]
+    df = _filter_category_param(df, segmento)
 
     anos_disponiveis = sorted({*_unique_years(df), *df.attrs.get("anos_sheets", [])})
     df_meses = _filter_by_period(df, ano=ano) if ano is not None else df
@@ -1868,6 +1890,7 @@ def data_manu(params: dict | None = None) -> dict:
     resultado = agg_manutencao(df)
     resultado["anos"] = anos_disponiveis
     resultado["meses"] = meses_disponiveis
+    resultado["segmentos"] = segmentos_disponiveis
     return resultado
 
 
@@ -1876,12 +1899,15 @@ def data_hoteis(params: dict | None = None) -> dict:
     df_total = _exclude_vex(load_hoteis())
     totais_gerais = agg_hoteis(df_total)
     df = df_total.copy()
+    segmentos_disponiveis = _unique_sorted(df, "Categoria")
 
     ano = _parse_int(_param(params, "ano"))
     meses = _parse_mes_list(params.get("mes"))
+    segmento = _param(params, "segmento") or _param(params, "categoria")
     cidade = _param(params, "cidade")
     hotel = _param(params, "hotel")
 
+    df = _filter_category_param(df, segmento)
     if cidade and cidade != "Todos":
         df = df[df["Cidade"] == cidade]
     if hotel and hotel != "Todos":
@@ -1901,25 +1927,26 @@ def data_hoteis(params: dict | None = None) -> dict:
     resultado["valor_nao_planejado_total"] = totais_gerais.get("valor_nao_planejado", 0.0)
     resultado["anos"] = anos_disponiveis
     resultado["meses"] = meses_disponiveis
+    resultado["segmentos"] = segmentos_disponiveis
     return resultado
 
 
 def data_pedagio(params: dict | None = None) -> dict:
     params = params or {}
     df = _exclude_vex(load_pedagio())
+    segmentos_disponiveis = _unique_sorted(df, "Categoria")
 
     ano = _parse_int(_param(params, "ano"))
     meses = _parse_mes_list(params.get("mes"))
     placa = _param(params, "placa")
     tipo = _param(params, "tipo")
-    segmento = _param(params, "segmento")
+    segmento = _param(params, "segmento") or _param(params, "categoria")
 
     if placa and placa != "Todos":
         df = df[df["PLACA"] == _normalize_plate_value(placa)]
     if tipo and tipo != "Todos":
         df = df[df["Tipo"] == _normalize_tipo_value(tipo)]
-    if segmento and segmento != "Todos" and "Categoria" in df.columns:
-        df = df[df["Categoria"] == segmento]
+    df = _filter_category_param(df, segmento)
 
     anos_disponiveis = sorted({*_unique_years(df), *df.attrs.get("anos_sheets", [])})
     df_meses = _filter_by_period(df, ano=ano) if ano is not None else df
@@ -1933,6 +1960,7 @@ def data_pedagio(params: dict | None = None) -> dict:
     resultado = agg_pedagio(df)
     resultado["anos"] = anos_disponiveis
     resultado["meses"] = meses_disponiveis
+    resultado["segmentos"] = segmentos_disponiveis
     return resultado
 
 
@@ -2060,7 +2088,7 @@ def _ranking_filter_category(df: pd.DataFrame, categoria: str | None) -> pd.Data
         return df
     if df.empty or "Categoria" not in df.columns:
         return df.iloc[0:0].copy()
-    mask = _normalize_categoria(df["Categoria"]) == str(categoria).strip().lower()
+    mask = _normalize_categoria(df["Categoria"]) == _normalize_category_value(categoria).lower()
     return df.loc[mask].copy()
 
 
