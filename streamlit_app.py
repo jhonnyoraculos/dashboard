@@ -28,7 +28,7 @@ MUTED = "#6B7280"
 CARD_BORDER = "#c2d2f3"
 LOGO_PATH = Path(__file__).parent / "static" / "logo-jr.png"
 CURRENT_YEAR = date.today().year
-APP_VERSION = "deploy-freteiro-sem-combustivel-v1"
+APP_VERSION = "deploy-freteiro-placas-display-v1"
 BR_TZ = ZoneInfo("America/Sao_Paulo")
 CATEGORY_OPTIONS = ["Transporte", "Freteiro", "Vex", "Equipamento"]
 PEDAGIO_TIPO_OPTIONS = ["Pedagio", "Extras", "Taxi", "IPVA", "Seguro", "Licenciamento", "DPVAT", "Outros"]
@@ -4697,6 +4697,8 @@ def _registered_plate_map() -> dict[str, str]:
                 mapping[placa] = "Equipamento"
             elif normalized == "vex":
                 mapping[placa] = "Vex"
+            elif "fret" in normalized:
+                mapping[placa] = "Freteiro"
             elif normalized == "equipamento":
                 mapping[placa] = "Equipamento"
             else:
