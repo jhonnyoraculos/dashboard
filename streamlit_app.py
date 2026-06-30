@@ -28,7 +28,7 @@ MUTED = "#6B7280"
 CARD_BORDER = "#c2d2f3"
 LOGO_PATH = Path(__file__).parent / "static" / "logo-jr.png"
 CURRENT_YEAR = date.today().year
-APP_VERSION = "deploy-freteiro-category-v1"
+APP_VERSION = "deploy-freteiro-sem-combustivel-v1"
 BR_TZ = ZoneInfo("America/Sao_Paulo")
 CATEGORY_OPTIONS = ["Transporte", "Freteiro", "Vex", "Equipamento"]
 PEDAGIO_TIPO_OPTIONS = ["Pedagio", "Extras", "Taxi", "IPVA", "Seguro", "Licenciamento", "DPVAT", "Outros"]
@@ -4004,10 +4004,11 @@ def frota_filter_controls(seed: dict) -> dict[str, object]:
             placas_selected = st.multiselect("Placa", plate_options, **plate_kwargs)
             placas_selected = normalize_multiselect(placas_selected, st.session_state.get(plate_previous_key, ["Todos"]))
 
-        order_options = list(RANK_ORDER_OPTIONS)
+        order_options = [key for key in RANK_ORDER_OPTIONS if not (categoria == "Freteiro" and key == "combustivel")]
         order_current = st.session_state.get("rank_ordenar_por", "total")
         if order_current not in order_options:
             order_current = "total"
+            st.session_state["rank_ordenar_por"] = order_current
         with cols[4]:
             ordenar_por = st.selectbox(
                 "Ordenar por",
@@ -4036,61 +4037,66 @@ def frota_filter_controls(seed: dict) -> dict[str, object]:
     }
 
 
-def ranking_summary_html(row: dict) -> str:
+def ranking_summary_html(row: dict, *, hide_fuel: bool = False) -> str:
     items = [
         ("Posição", f"#{int(row.get('rank') or 0):02d}"),
         ("Placa", row.get("placa") or "Sem placa"),
         ("Total", fmt_brl_big(row.get("total"))),
-        ("Combustível", fmt_brl_big(row.get("combustivel"))),
         ("Manutenção", fmt_brl_big(row.get("manutencao"))),
         ("Pedágio/Extras", fmt_brl_big(row.get("pedagio"))),
         ("Peso", fmt_peso(row.get("peso_total"))),
     ]
+    if not hide_fuel:
+        items.insert(3, ("Combustível", fmt_brl_big(row.get("combustivel"))))
     return "".join(
         f'<div class="ranking-summary-item"><p class="ranking-summary-label">{h(label)}</p><p class="ranking-summary-value">{h(value)}</p></div>'
         for label, value in items
     )
 
 
-def ranking_detail_html(row: dict) -> str:
+def ranking_detail_html(row: dict, *, hide_fuel: bool = False) -> str:
     items = [
         ("Gasto total", fmt_brl_big(row.get("total"))),
-        ("Combustível", fmt_brl_big(row.get("combustivel"))),
         ("Manutenção", fmt_brl_big(row.get("manutencao"))),
         ("Pedágio/Extras", fmt_brl_big(row.get("pedagio"))),
         ("Peso", fmt_peso(row.get("peso_total"))),
         ("Valor entregas", fmt_brl_big(row.get("valor_peso"))),
-        ("KM total", fmt_num(row.get("km_total"))),
-        ("Litros", fmt_num(row.get("litros_total"))),
-        ("Custo total por KM", fmt_brl(row.get("custo_por_km"))),
-        ("Combustível por KM", fmt_brl(row.get("combustivel_por_km"))),
-        ("Média KM/L", f"{fmt_num(row.get('km_por_litro'), 2)} km/L"),
-        ("Custo por litro", fmt_brl(row.get("custo_por_litro"))),
-        ("Abastecimentos", fmt_num(row.get("abastecimentos"))),
         ("Serviços", fmt_num(row.get("servicos"))),
         ("Pedágio/Extras", fmt_num(row.get("despesas_pedagio"))),
     ]
+    if not hide_fuel:
+        items[1:1] = [
+            ("Combustível", fmt_brl_big(row.get("combustivel"))),
+            ("KM total", fmt_num(row.get("km_total"))),
+            ("Litros", fmt_num(row.get("litros_total"))),
+            ("Custo total por KM", fmt_brl(row.get("custo_por_km"))),
+            ("Combustível por KM", fmt_brl(row.get("combustivel_por_km"))),
+            ("Média KM/L", f"{fmt_num(row.get('km_por_litro'), 2)} km/L"),
+            ("Custo por litro", fmt_brl(row.get("custo_por_litro"))),
+            ("Abastecimentos", fmt_num(row.get("abastecimentos"))),
+        ]
     cards = "".join(
         f'<div class="ranking-detail-card"><p class="ranking-detail-label">{h(label)}</p><p class="ranking-detail-value">{h(value)}</p></div>'
         for label, value in items
     )
-    return f'<div class="ranking-row-summary">{ranking_summary_html(row)}</div><div class="ranking-detail-grid">{cards}</div>'
+    return f'<div class="ranking-row-summary">{ranking_summary_html(row, hide_fuel=hide_fuel)}</div><div class="ranking-detail-grid">{cards}</div>'
 
 
-def ranking_row_label(row: dict) -> str:
+def ranking_row_label(row: dict, *, hide_fuel: bool = False) -> str:
     def money(value: object) -> str:
         return fmt_brl_big(value).replace("$", r"\$")
 
-    return (
-        f"{int(row.get('rank') or 0):02d} | {row.get('placa') or 'Sem placa'} | "
-        f"Total {money(row.get('total'))} | "
-        f"Combustivel {money(row.get('combustivel'))} | "
-        f"Manutencao {money(row.get('manutencao'))} | "
-        f"Pedagio/Extras {money(row.get('pedagio'))} | "
-        f"Peso {fmt_peso(row.get('peso_total'))} | "
-        f"KM {fmt_num(row.get('km_total'))} | "
-        f"Litros {fmt_num(row.get('litros_total'))}"
-    )
+    parts = [
+        f"{int(row.get('rank') or 0):02d} | {row.get('placa') or 'Sem placa'}",
+        f"Total {money(row.get('total'))}",
+        f"Manutencao {money(row.get('manutencao'))}",
+        f"Pedagio/Extras {money(row.get('pedagio'))}",
+        f"Peso {fmt_peso(row.get('peso_total'))}",
+    ]
+    if not hide_fuel:
+        parts.insert(2, f"Combustivel {money(row.get('combustivel'))}")
+        parts.extend([f"KM {fmt_num(row.get('km_total'))}", f"Litros {fmt_num(row.get('litros_total'))}"])
+    return " | ".join(parts)
 
 
 def _ranking_float(row: dict, key: str) -> float:
@@ -4100,20 +4106,23 @@ def _ranking_float(row: dict, key: str) -> float:
         return 0.0
 
 
-def ranking_difference_html(rows: list[dict]) -> str:
+def ranking_difference_html(rows: list[dict], *, hide_fuel: bool = False) -> str:
     if len(rows) < 2:
         return ""
     metrics = [
         ("Diferença total", "total", fmt_brl_big),
-        ("Combustível", "combustivel", fmt_brl_big),
         ("Manutenção", "manutencao", fmt_brl_big),
         ("Pedágio/Extras", "pedagio", fmt_brl_big),
         ("Peso", "peso_total", fmt_peso),
-        ("KM total", "km_total", fmt_num),
-        ("Litros", "litros_total", fmt_num),
-        ("Custo/KM", "custo_por_km", fmt_brl),
-        ("KM/L", "km_por_litro", lambda value: f"{fmt_num(value, 2)} km/L"),
     ]
+    if not hide_fuel:
+        metrics[1:1] = [
+            ("Combustível", "combustivel", fmt_brl_big),
+            ("KM total", "km_total", fmt_num),
+            ("Litros", "litros_total", fmt_num),
+            ("Custo/KM", "custo_por_km", fmt_brl),
+            ("KM/L", "km_por_litro", lambda value: f"{fmt_num(value, 2)} km/L"),
+        ]
     items = []
     for label, key, formatter in metrics:
         ordered = sorted(rows, key=lambda row: _ranking_float(row, key), reverse=True)
@@ -4133,19 +4142,22 @@ def ranking_difference_html(rows: list[dict]) -> str:
     )
 
 
-def ranking_versus_html(rows: list[dict]) -> str:
+def ranking_versus_html(rows: list[dict], *, hide_fuel: bool = False) -> str:
     metrics = [
         ("Total", "total", fmt_brl_big),
-        ("Combustível", "combustivel", fmt_brl_big),
         ("Manutenção", "manutencao", fmt_brl_big),
         ("Pedágio/Extras", "pedagio", fmt_brl_big),
         ("Peso", "peso_total", fmt_peso),
         ("Valor entregas", "valor_peso", fmt_brl_big),
-        ("KM total", "km_total", fmt_num),
-        ("Litros", "litros_total", fmt_num),
-        ("Custo/KM", "custo_por_km", fmt_brl),
-        ("KM/L", "km_por_litro", lambda value: f"{fmt_num(value, 2)} km/L"),
     ]
+    if not hide_fuel:
+        metrics[1:1] = [
+            ("Combustível", "combustivel", fmt_brl_big),
+            ("KM total", "km_total", fmt_num),
+            ("Litros", "litros_total", fmt_num),
+            ("Custo/KM", "custo_por_km", fmt_brl),
+            ("KM/L", "km_por_litro", lambda value: f"{fmt_num(value, 2)} km/L"),
+        ]
     cards = []
     for row in rows:
         body = "".join(
@@ -4288,21 +4300,24 @@ def render_frota() -> None:
     data = route_json("frota", params)
     totais = data.get("totais", {}) or {}
     order_label = RANK_ORDER_OPTIONS.get(str(data.get("ordenar_por") or params.get("ordenar_por")), "Combustível")
+    freteiro_mode = params.get("categoria") == "Freteiro"
 
-    render_kpis(
-        [
-            ("Placas no ranking", fmt_num(totais.get("placas")), JR_BLUE),
-            ("Gasto total", fmt_brl_big(totais.get("total")), JR_RED),
+    kpi_items = [
+        ("Placas no ranking", fmt_num(totais.get("placas")), JR_BLUE),
+        ("Gasto total", fmt_brl_big(totais.get("total")), JR_RED),
+        ("Manutenção", fmt_brl_big(totais.get("manutencao")), JR_RED),
+        ("Pedágio/Extras", fmt_brl_big(totais.get("pedagio")), "#D97706"),
+        ("Peso total", fmt_peso(totais.get("peso_total")), JR_BLUE),
+        ("Ordenado por", order_label, JR_BLUE),
+    ]
+    if not freteiro_mode:
+        kpi_items[2:2] = [
             ("Combustível", fmt_brl_big(totais.get("combustivel")), JR_BLUE),
-            ("Manutenção", fmt_brl_big(totais.get("manutencao")), JR_RED),
-            ("Pedágio/Extras", fmt_brl_big(totais.get("pedagio")), "#D97706"),
-            ("Peso total", fmt_peso(totais.get("peso_total")), JR_BLUE),
             ("KM total", fmt_num(totais.get("km_total")), JR_BLUE),
             ("Litros", fmt_num(totais.get("litros_total")), JR_BLUE),
             ("Média KM/L", f"{fmt_num(totais.get('km_por_litro'), 2)} km/L", JR_RED),
-            ("Ordenado por", order_label, JR_BLUE),
         ]
-    )
+    render_kpis(kpi_items)
 
     ranking = data.get("ranking", []) or []
     if not ranking:
@@ -4315,7 +4330,7 @@ def render_frota() -> None:
     if len(selected_plates) >= 2:
         selected_set = set(selected_plates)
         versus_rows = [row for row in ranking if row.get("placa") in selected_set]
-        st.html(ranking_difference_html(versus_rows) + ranking_versus_html(versus_rows))
+        st.html(ranking_difference_html(versus_rows, hide_fuel=freteiro_mode) + ranking_versus_html(versus_rows, hide_fuel=freteiro_mode))
 
     include_year = params.get("ano") is None
     fallback_year = params.get("ano")
@@ -4392,12 +4407,16 @@ def render_frota() -> None:
             if include_year
             else bar_chart(litros_labels, litros_values, currency=False, show_text=True)
         )
-    chart_grid([
+    chart_items = [
         ("Gasto total por mês", total_monthly_fig),
-        ("KM por mês", km_monthly_fig),
-        ("Litros por mês", litros_monthly_fig),
         ("Peso por mês", peso_monthly_fig),
-    ], key_prefix="rank_chart")
+    ]
+    if not freteiro_mode:
+        chart_items[1:1] = [
+            ("KM por mês", km_monthly_fig),
+            ("Litros por mês", litros_monthly_fig),
+        ]
+    chart_grid(chart_items, key_prefix="rank_chart")
 
     dominancia = data.get("dominancia_peso", {}) or {}
     cidades_dominadas = dominancia.get("cidades", []) or []
@@ -4406,18 +4425,18 @@ def render_frota() -> None:
             st.html('<div class="chart-title">Ranking de peso por cidade e placa</div>')
             st.markdown(dominance_city_ranking_html(cidades_dominadas), unsafe_allow_html=True)
 
+    header_columns = ["#", "Placa", "Total", "Manutencao", "Pedagio/Extras", "Peso"]
+    if not freteiro_mode:
+        header_columns[3:3] = ["Combustivel"]
+        header_columns.extend(["KM", "Litros"])
     st.markdown(
-        """
-        <div class="ranking-header">
-          <span>#</span><span>Placa</span><span>Total</span><span>Combustivel</span><span>Manutencao</span><span>Pedagio/Extras</span><span>Peso</span><span>KM</span><span>Litros</span>
-        </div>
-        """,
+        f'<div class="ranking-header">{"".join(f"<span>{h(column)}</span>" for column in header_columns)}</div>',
         unsafe_allow_html=True,
     )
     with st.container(key="frota_ranking_table"):
         for row in ranking:
-            with st.expander(ranking_row_label(row), expanded=False):
-                st.html(ranking_detail_html(row))
+            with st.expander(ranking_row_label(row, hide_fuel=freteiro_mode), expanded=False):
+                st.html(ranking_detail_html(row, hide_fuel=freteiro_mode))
     footer("Ranking calculado com dados de combustível, manutenção e pedágio/extras do Neon. © JR")
 
 
