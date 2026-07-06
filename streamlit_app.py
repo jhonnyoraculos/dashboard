@@ -28,7 +28,7 @@ MUTED = "#6B7280"
 CARD_BORDER = "#c2d2f3"
 LOGO_PATH = Path(__file__).parent / "static" / "logo-jr.png"
 CURRENT_YEAR = date.today().year
-APP_VERSION = "deploy-busca-placa-placeholder-v1"
+APP_VERSION = "deploy-busca-filtros-placeholder-v1"
 BR_TZ = ZoneInfo("America/Sao_Paulo")
 CATEGORY_OPTIONS = ["Transporte", "Freteiro", "Vex", "Equipamento"]
 CADASTRO_TABS = ["Placas", "Combustível", "KM mensal", "Manutenção", "Pneus", "Hotéis", "Peso", "Pedágio/Extras"]
@@ -3681,19 +3681,22 @@ def filter_controls(
 
         params: dict[str, object] = {"ano": None if ano == "Todos" else ano, "mes": query_mes(meses_selected)}
         for idx, (param_name, label, options) in enumerate(extra_filters, start=2):
-            options = ["Todos", *unique_filter_options(options)]
-            current = st.session_state.get(f"{key_prefix}_{param_name}", "Todos")
-            if current not in options:
-                current = "Todos"
+            options = unique_filter_options(options)
+            state_key = f"{key_prefix}_{param_name}"
+            current = st.session_state.get(state_key)
+            if current in ("Todos", "") or current not in options:
+                current = None
+                st.session_state[state_key] = None
             with filter_cols[idx]:
-                params[param_name] = st.selectbox(
+                selected = st.selectbox(
                     label,
                     options,
-                    index=options.index(current),
-                    key=f"{key_prefix}_{param_name}",
-                    format_func=select_all_label(label),
+                    index=None,
+                    key=state_key,
+                    placeholder=f"{label} (Todos)",
                     label_visibility="collapsed",
                 )
+                params[param_name] = "Todos" if selected is None else selected
 
         compare_key = f"{key_prefix}_compare"
         compare_state_exists = compare_key in st.session_state
