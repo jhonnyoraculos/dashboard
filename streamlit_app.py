@@ -28,7 +28,7 @@ MUTED = "#6B7280"
 CARD_BORDER = "#c2d2f3"
 LOGO_PATH = Path(__file__).parent / "static" / "logo-jr.png"
 CURRENT_YEAR = date.today().year
-APP_VERSION = "deploy-cadastro-abas-estaveis-v1"
+APP_VERSION = "deploy-busca-placa-placeholder-v1"
 BR_TZ = ZoneInfo("America/Sao_Paulo")
 CATEGORY_OPTIONS = ["Transporte", "Freteiro", "Vex", "Equipamento"]
 CADASTRO_TABS = ["Placas", "Combustível", "KM mensal", "Manutenção", "Pneus", "Hotéis", "Peso", "Pedágio/Extras"]
@@ -4811,8 +4811,14 @@ def _select_or_create_text(
 
 def _plate_fields(prefix: str, plate_map: dict[str, str] | None = None) -> tuple[str, str]:
     plate_map = plate_map if plate_map is not None else _registered_plate_map()
-    options = ["Selecione uma placa", *plate_map.keys(), "Cadastrar nova placa"]
-    selected = st.selectbox("Placa", options, key=f"{prefix}_placa_select")
+    options = [*plate_map.keys(), "Cadastrar nova placa"]
+    selected = st.selectbox(
+        "Placa",
+        options,
+        index=None,
+        placeholder="Selecione uma placa",
+        key=f"{prefix}_placa_select",
+    )
     if selected == "Cadastrar nova placa":
         placa = st.text_input("Nova placa", placeholder="ABC1D23", key=f"{prefix}_placa_manual").upper()
         categoria_key = f"{prefix}_categoria_manual"
@@ -4821,7 +4827,7 @@ def _plate_fields(prefix: str, plate_map: dict[str, str] | None = None) -> tuple
             st.session_state[categoria_key] = "Equipamento"
         categoria = st.selectbox("Categoria da placa", CATEGORY_OPTIONS, index=CATEGORY_OPTIONS.index(default_categoria), key=categoria_key)
         return placa, categoria
-    if selected == "Selecione uma placa":
+    if selected is None:
         st.text_input("Categoria da placa", value="", disabled=True, key=f"{prefix}_categoria_empty")
         return "", "Transporte"
     categoria = plate_map.get(selected, "Transporte")
