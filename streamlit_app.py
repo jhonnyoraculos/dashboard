@@ -28,9 +28,10 @@ MUTED = "#6B7280"
 CARD_BORDER = "#c2d2f3"
 LOGO_PATH = Path(__file__).parent / "static" / "logo-jr.png"
 CURRENT_YEAR = date.today().year
-APP_VERSION = "deploy-freteiro-placas-display-v1"
+APP_VERSION = "deploy-cadastro-abas-estaveis-v1"
 BR_TZ = ZoneInfo("America/Sao_Paulo")
 CATEGORY_OPTIONS = ["Transporte", "Freteiro", "Vex", "Equipamento"]
+CADASTRO_TABS = ["Placas", "Combustível", "KM mensal", "Manutenção", "Pneus", "Hotéis", "Peso", "Pedágio/Extras"]
 PEDAGIO_TIPO_OPTIONS = ["Pedagio", "Extras", "Taxi", "IPVA", "Seguro", "Licenciamento", "DPVAT", "Outros"]
 PEDAGIO_OPTIONAL_PLATE_TYPES = {"Extras", "Taxi"}
 
@@ -575,6 +576,31 @@ def inject_css() -> None:
           background: rgba(255,255,255,.82);
           padding: 22px;
           box-shadow: 0 12px 28px rgba(16,24,40,.10);
+        }}
+
+        .st-key-cadastro_tabs [role="radiogroup"] {{
+          gap: 0;
+          border-bottom: 1px solid rgba(15,23,42,.14);
+          overflow-x: auto;
+          padding-bottom: 0;
+        }}
+
+        .st-key-cadastro_tabs [role="radiogroup"] label {{
+          min-height: 42px;
+          padding: 0 12px;
+          border-radius: 0;
+          border: 0 !important;
+          border-bottom: 2px solid transparent !important;
+          background: transparent !important;
+          color: rgba(15,23,42,.78);
+          font-size: 14px;
+          white-space: nowrap;
+          box-shadow: none !important;
+        }}
+
+        .st-key-cadastro_tabs [role="radiogroup"] label:has(input:checked) {{
+          color: #ff4650 !important;
+          border-bottom-color: #ff4650 !important;
         }}
 
         .st-key-cadastro_shell .stButton > button,
@@ -6301,9 +6327,19 @@ def _render_pedagio_sheet_import(plate_map: dict[str, str]) -> None:
 def render_cadastro() -> None:
     topbar("JR DASHBOARD • Adicionar dados", back=True)
     with st.container(key="cadastro_shell"):
-        tabs = st.tabs(["Placas", "Combustível", "KM mensal", "Manutenção", "Pneus", "Hotéis", "Peso", "Pedágio/Extras"])
+        if st.session_state.get("cadastro_active_tab") not in CADASTRO_TABS:
+            st.session_state["cadastro_active_tab"] = "Placas"
+        with st.container(key="cadastro_tabs"):
+            active_tab = st.radio(
+                "Area de cadastro",
+                CADASTRO_TABS,
+                horizontal=True,
+                label_visibility="collapsed",
+                key="cadastro_active_tab",
+            )
+        plate_map = _registered_plate_map()
 
-        with tabs[0]:
+        if active_tab == "Placas":
             with st.form("form_placas", clear_on_submit=True):
                 c1, c2, c3 = st.columns([1.2, 1.0, 1.0])
                 with c1:
@@ -6361,7 +6397,7 @@ def render_cadastro() -> None:
             else:
                 st.info("Cadastre a primeira placa para liberar a edição.")
 
-        with tabs[1]:
+        if active_tab == "Combustível":
             combustivel_options = _registered_text_options(backend.load_combustiveis, "Combustivel")
             posto_options = _registered_text_options(backend.load_postos, "POSTOS")
             _render_combustivel_sheet_import(plate_map)
@@ -6454,7 +6490,7 @@ def render_cadastro() -> None:
                 ["Mes", "PLACA", "Categoria", "Combustivel", "POSTOS"],
             )
 
-        with tabs[2]:
+        if active_tab == "KM mensal":
             _render_km_sheet_import()
 
             with st.form("form_km_mensal", clear_on_submit=True):
@@ -6492,7 +6528,7 @@ def render_cadastro() -> None:
                 ["Mes", "PLACA"],
             )
 
-        with tabs[3]:
+        if active_tab == "Manutenção":
             with st.form("form_manutencao", clear_on_submit=True):
                 c1, c2, c3 = st.columns(3)
                 with c1:
@@ -6536,7 +6572,7 @@ def render_cadastro() -> None:
                 ["Mes", "PLACA", "Categoria", "OFICINA"],
             )
 
-        with tabs[4]:
+        if active_tab == "Pneus":
             with st.form("form_pneus", clear_on_submit=True):
                 c1, c2, c3 = st.columns(3)
                 with c1:
@@ -6582,7 +6618,7 @@ def render_cadastro() -> None:
                 ["Mes", "PLACA", "Categoria", "Fornecedor"],
             )
 
-        with tabs[5]:
+        if active_tab == "Hotéis":
             _render_hoteis_sheet_import()
 
             with st.form("form_hoteis", clear_on_submit=True):
@@ -6639,7 +6675,7 @@ def render_cadastro() -> None:
                 ["Mes", "Cidade", "Hotel", "Tipo", "Motorista", "Categoria"],
             )
 
-        with tabs[6]:
+        if active_tab == "Peso":
             _render_peso_sheet_import(plate_map)
             _render_peso_month_reset()
 
@@ -6688,7 +6724,7 @@ def render_cadastro() -> None:
                 ["Mes", "Cidade", "PLACA", "Categoria"],
             )
 
-        with tabs[7]:
+        if active_tab == "Pedágio/Extras":
             _render_pedagio_sheet_import(plate_map)
 
             with st.form("form_pedagio", clear_on_submit=True):
