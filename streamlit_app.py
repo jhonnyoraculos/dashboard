@@ -28,7 +28,7 @@ MUTED = "#6B7280"
 CARD_BORDER = "#c2d2f3"
 LOGO_PATH = Path(__file__).parent / "static" / "logo-jr.png"
 CURRENT_YEAR = date.today().year
-APP_VERSION = "deploy-busca-filtros-placeholder-v1"
+APP_VERSION = "deploy-contagem-seguro-v1"
 BR_TZ = ZoneInfo("America/Sao_Paulo")
 CATEGORY_OPTIONS = ["Transporte", "Freteiro", "Vex", "Equipamento"]
 CADASTRO_TABS = ["Placas", "Combustível", "KM mensal", "Manutenção", "Pneus", "Hotéis", "Peso", "Pedágio/Extras"]
@@ -3918,6 +3918,7 @@ def compare_kpi_cards(bundle: list[tuple[str, dict]]) -> list[tuple]:
                 ("pedagio", "Gasto pedágio", fmt_brl(data.get("gasto_pedagio"))),
                 ("ipva", "Gasto IPVA", fmt_brl(data.get("gasto_ipva"))),
                 ("seguro", "Gasto seguro", fmt_brl(data.get("gasto_seguro"))),
+                ("seguros", "Seguros", fmt_num(data.get("qtd_seguro"))),
                 ("media_valores", "Média de valores", fmt_brl(data.get("media_valores", data.get("ticket_medio")))),
             ]
         elif route == "vex":
@@ -6990,6 +6991,7 @@ def render_pedagio() -> None:
         ("gasto_pedagio", "Gasto pedágio", fmt_brl(data.get("gasto_pedagio"))),
         ("gasto_ipva", "Gasto IPVA", fmt_brl(data.get("gasto_ipva"))),
         ("gasto_seguro", "Gasto seguro", fmt_brl(data.get("gasto_seguro"))),
+        ("seguros", "Seguros", fmt_num(data.get("qtd_seguro"))),
         ("media_valores", "Média de valores", fmt_brl(data.get("media_valores", data.get("ticket_medio")))),
     ]
     include_year = params.get("ano") is None

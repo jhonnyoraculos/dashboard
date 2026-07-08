@@ -1784,6 +1784,7 @@ def agg_pedagio(df: pd.DataFrame) -> dict:
     media_valores = float(custo_total / registros) if registros else 0.0
 
     tipo_totais = df.groupby("Tipo", dropna=False)["Custo"].sum() if "Tipo" in df.columns and not df.empty else pd.Series(dtype="float64")
+    tipo_contagens = df.groupby("Tipo", dropna=False).size() if "Tipo" in df.columns and not df.empty else pd.Series(dtype="int64")
     resultado = {
         "custo_total": custo_total,
         "total_lancamentos": registros,
@@ -1793,6 +1794,9 @@ def agg_pedagio(df: pd.DataFrame) -> dict:
         "gasto_pedagio": float(tipo_totais.get("Pedagio", 0.0)),
         "gasto_ipva": float(tipo_totais.get("IPVA", 0.0)),
         "gasto_seguro": float(tipo_totais.get("Seguro", 0.0)),
+        "qtd_pedagio": int(tipo_contagens.get("Pedagio", 0)),
+        "qtd_ipva": int(tipo_contagens.get("IPVA", 0)),
+        "qtd_seguro": int(tipo_contagens.get("Seguro", 0)),
         "custo_mensal": _group_sum(df, "Mes", "Custo", sort_by="group"),
         "gasto_por_tipo": _group_sum(df, "Tipo", "Custo"),
         "gasto_por_placa": _group_sum(df, "PLACA", "Custo"),
