@@ -28,7 +28,7 @@ MUTED = "#6B7280"
 CARD_BORDER = "#c2d2f3"
 LOGO_PATH = Path(__file__).parent / "static" / "logo-jr.png"
 CURRENT_YEAR = date.today().year
-APP_VERSION = "deploy-ajuste-seguros-selecao-v1"
+APP_VERSION = "deploy-seguros-rateio-mensal-v1"
 BR_TZ = ZoneInfo("America/Sao_Paulo")
 CATEGORY_OPTIONS = ["Transporte", "Freteiro", "Vex", "Equipamento"]
 CADASTRO_TABS = ["Placas", "Combustível", "KM mensal", "Manutenção", "Pneus", "Hotéis", "Peso", "Pedágio/Extras"]
@@ -6376,13 +6376,13 @@ def _render_seguro_period_adjustment() -> None:
         total_value = float(pd.to_numeric(candidates.get("Custo"), errors="coerce").sum()) if total and "Custo" in candidates.columns else 0.0
         st.info(
             f"Selecao atual: {total} lancamento(s), total {fmt_brl(total_value)}. "
-            "Ao confirmar, esses lancamentos serao marcados como Seguro e redistribuidos de 2025-10 ate 2026-10."
+            "Ao confirmar, eles serao marcados como Seguro e rateados mensalmente de 2025-10 ate 2026-10."
         )
         if total:
             preview_columns = [column for column in ["Data", "Mes", "PLACA", "Categoria", "Tipo", "Custo"] if column in candidates.columns]
             st.dataframe(candidates[preview_columns].head(30), width="stretch", hide_index=True)
         confirm = st.checkbox(
-            "Confirmo que a selecao acima deve virar Seguro no periodo 2025-10 a 2026-10.",
+            "Confirmo que a selecao acima deve virar Seguro rateado de 2025-10 a 2026-10.",
             key="cad_ped_seguro_period_confirm",
         )
         if st.button(
@@ -6406,7 +6406,7 @@ def _render_seguro_period_adjustment() -> None:
             clear_cached_reads()
             _reset_dataset_editor("cad_ped_table")
             st.session_state["cad_ped_table_last_success"] = (
-                f"{result.get('updated', 0)} seguro(s) ajustado(s) de 2025-10 a 2026-10."
+                f"{result.get('deleted', 0)} lancamento(s) original(is) viraram {result.get('updated', 0)} parcela(s) mensais de seguro."
             )
             st.rerun()
 

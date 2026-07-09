@@ -802,31 +802,50 @@ def redistribute_pedagio_seguros_period(
             )
         )
 
-        updated = 0
+        deleted = 0
+        inserted = 0
         month_counts = {mes: 0 for mes in months}
-        for index, row in enumerate(seguros):
-            mes = months[index % len(months)]
-            year, month = (int(part) for part in mes.split("-"))
+        for row in seguros:
             result = conn.execute(
                 text(
                     f"""
-                    UPDATE {table}
-                    SET "Data" = :data, "Mes" = :mes, "Tipo" = :tipo
+                    DELETE FROM {table}
                     WHERE ctid::text = :row_id
                     """
                 ),
-                {"data": datetime(year, month, 1), "mes": mes, "tipo": "Seguro", "row_id": row["row_id"]},
+                {"row_id": row["row_id"]},
             )
-            changed = max(result.rowcount or 0, 0)
-            updated += changed
-            if changed:
-                month_counts[mes] += changed
+            if not max(result.rowcount or 0, 0):
+                continue
+
+            deleted += 1
+            custo_mensal = float(row.get("Custo") or 0.0) / len(months)
+            for mes in months:
+                year, month = (int(part) for part in mes.split("-"))
+                conn.execute(
+                    text(
+                        f"""
+                        INSERT INTO {table} ("PLACA", "Tipo", "Custo", "Mes", "Data", "Categoria")
+                        VALUES (:placa, :tipo, :custo, :mes, :data, :categoria)
+                        """
+                    ),
+                    {
+                        "placa": row.get("PLACA"),
+                        "tipo": "Seguro",
+                        "custo": custo_mensal,
+                        "mes": mes,
+                        "data": datetime(year, month, 1),
+                        "categoria": row.get("Categoria"),
+                    },
+                )
+                inserted += 1
+                month_counts[mes] += 1
 
         _write_metadata(conn, "pedagio.version", version)
         _write_metadata(conn, "import.version", version)
 
     _clear_dataset_cache("pedagio")
-    return {"updated": updated, "total": len(seguros), "months": months, "month_counts": month_counts}
+    return {"updated": inserted, "deleted": deleted, "total": len(seguros), "months": months, "month_counts": month_counts}
 
 
 def rename_plate(old_plate, new_plate, categoria: str) -> str:
