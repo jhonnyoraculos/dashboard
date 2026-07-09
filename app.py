@@ -822,16 +822,30 @@ def redistribute_pedagio_seguros_period(
             deleted += 1
             deleted_rows.append(row)
 
-        grouped_by_plate: dict[tuple[str | None, str], float] = {}
+        grouped_by_plate: dict[tuple[str | None, str], list[dict]] = {}
         for row in deleted_rows:
             placa = _normalize_plate_value(row.get("PLACA"))
             if pd.isna(placa):
                 placa = None
             categoria = _normalize_category_value(row.get("Categoria") or "Transporte")
             key = (placa, categoria)
-            grouped_by_plate[key] = grouped_by_plate.get(key, 0.0) + float(row.get("Custo") or 0.0)
+            grouped_by_plate.setdefault(key, []).append(row)
 
-        for (placa, categoria), custo_mensal in grouped_by_plate.items():
+        repaired_groups = 0
+        for (placa, categoria), plate_rows in grouped_by_plate.items():
+            monthly_totals: dict[str, float] = {}
+            for row in plate_rows:
+                mes = str(row.get("Mes") or "").strip()
+                if mes in month_counts:
+                    monthly_totals[mes] = monthly_totals.get(mes, 0.0) + float(row.get("Custo") or 0.0)
+
+            if len(monthly_totals) > 1:
+                custo_base = sum(monthly_totals.values()) / len(monthly_totals)
+                repaired_groups += 1
+            else:
+                custo_base = sum(float(row.get("Custo") or 0.0) for row in plate_rows)
+
+            custo_mensal = custo_base / len(months)
             for mes in months:
                 year, month = (int(part) for part in mes.split("-"))
                 conn.execute(
@@ -842,7 +856,7 @@ def redistribute_pedagio_seguros_period(
                         """
                     ),
                     {
-                        "placa": row.get("PLACA"),
+                        "placa": placa,
                         "tipo": "Seguro",
                         "custo": custo_mensal,
                         "mes": mes,
@@ -857,7 +871,7 @@ def redistribute_pedagio_seguros_period(
         _write_metadata(conn, "import.version", version)
 
     _clear_dataset_cache("pedagio")
-    return {"updated": inserted, "deleted": deleted, "plates": len(grouped_by_plate), "total": len(seguros), "months": months, "month_counts": month_counts}
+    return {"updated": inserted, "deleted": deleted, "plates": len(grouped_by_plate), "repaired": repaired_groups, "total": len(seguros), "months": months, "month_counts": month_counts}
 
 
 def rename_plate(old_plate, new_plate, categoria: str) -> str:
