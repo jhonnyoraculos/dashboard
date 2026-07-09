@@ -874,6 +874,86 @@ def redistribute_pedagio_seguros_period(
     return {"updated": inserted, "deleted": deleted, "plates": len(grouped_by_plate), "repaired": repaired_groups, "total": len(seguros), "months": months, "month_counts": month_counts}
 
 
+def replace_pedagio_seguros_por_placa(
+    records: list[dict],
+    start_mes: str = "2025-10",
+    end_mes: str = "2026-10",
+) -> dict:
+    months = _month_sequence(start_mes, end_mes)
+    if not months:
+        raise ValueError("Periodo sem meses para aplicar.")
+
+    normalized: dict[tuple[str, str], float] = {}
+    for record in records or []:
+        placa = _normalize_plate_value(record.get("PLACA"))
+        if pd.isna(placa) or not _is_plate_or_asset_identifier(placa):
+            continue
+        categoria = _normalize_category_value(record.get("Categoria") or "Transporte")
+        custo = float(record.get("Custo") or 0.0)
+        if custo <= 0:
+            continue
+        key = (str(placa), categoria)
+        normalized[key] = normalized.get(key, 0.0) + custo
+
+    from sqlalchemy import text
+
+    table = _quote_identifier(DB_TABLES["pedagio"])
+    version = datetime.now(timezone.utc).isoformat()
+    deleted = 0
+    inserted = 0
+    with _db_engine().begin() as conn:
+        _ensure_dataset_table(conn, "pedagio")
+        rows = conn.execute(
+            text(
+                f"""
+                SELECT ctid::text AS row_id, "Tipo", "Mes"
+                FROM {table}
+                """
+            )
+        ).mappings().all()
+        for row in rows:
+            if _normalize_tipo_value(row.get("Tipo")) != "Seguro":
+                continue
+            if str(row.get("Mes") or "").strip() not in months:
+                continue
+            result = conn.execute(
+                text(
+                    f"""
+                    DELETE FROM {table}
+                    WHERE ctid::text = :row_id
+                    """
+                ),
+                {"row_id": row["row_id"]},
+            )
+            deleted += max(result.rowcount or 0, 0)
+
+        for (placa, categoria), custo in normalized.items():
+            for mes in months:
+                year, month = (int(part) for part in mes.split("-"))
+                conn.execute(
+                    text(
+                        f"""
+                        INSERT INTO {table} ("PLACA", "Tipo", "Custo", "Mes", "Data", "Categoria")
+                        VALUES (:placa, :tipo, :custo, :mes, :data, :categoria)
+                        """
+                    ),
+                    {
+                        "placa": placa,
+                        "tipo": "Seguro",
+                        "custo": custo,
+                        "mes": mes,
+                        "data": datetime(year, month, 1),
+                        "categoria": categoria,
+                    },
+                )
+                inserted += 1
+        _write_metadata(conn, "pedagio.version", version)
+        _write_metadata(conn, "import.version", version)
+
+    _clear_dataset_cache("pedagio")
+    return {"deleted": deleted, "inserted": inserted, "plates": len(normalized), "months": months}
+
+
 def rename_plate(old_plate, new_plate, categoria: str) -> str:
     old_value = _normalize_plate_value(old_plate)
     new_value = _normalize_plate_value(new_plate)

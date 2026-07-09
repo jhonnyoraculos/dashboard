@@ -28,7 +28,7 @@ MUTED = "#6B7280"
 CARD_BORDER = "#c2d2f3"
 LOGO_PATH = Path(__file__).parent / "static" / "logo-jr.png"
 CURRENT_YEAR = date.today().year
-APP_VERSION = "deploy-seguros-dedup-por-placa-v1"
+APP_VERSION = "deploy-seguros-editor-por-placa-v1"
 BR_TZ = ZoneInfo("America/Sao_Paulo")
 CATEGORY_OPTIONS = ["Transporte", "Freteiro", "Vex", "Equipamento"]
 CADASTRO_TABS = ["Placas", "Combustível", "KM mensal", "Manutenção", "Pneus", "Hotéis", "Peso", "Pedágio/Extras"]
@@ -6346,6 +6346,85 @@ def _render_seguro_period_adjustment() -> None:
         if df.empty or "Tipo" not in df.columns:
             st.info("Nenhum lancamento de pedagio/extra encontrado.")
             return
+
+        with st.expander("Definir valor de seguro por placa", expanded=False):
+            plate_map = _registered_plate_map()
+            seguro_df = df[df["Tipo"].astype("string").fillna("").map(clean_text).eq("Seguro")].copy()
+            current_values: dict[tuple[str, str], float] = {}
+            if not seguro_df.empty and "PLACA" in seguro_df.columns and "Custo" in seguro_df.columns:
+                group_columns = ["PLACA"]
+                if "Categoria" in seguro_df.columns:
+                    group_columns.append("Categoria")
+                for keys, group in seguro_df.groupby(group_columns, dropna=False):
+                    if not isinstance(keys, tuple):
+                        keys = (keys,)
+                    key_map = dict(zip(group_columns, keys))
+                    placa = clean_text(key_map.get("PLACA")).strip().upper()
+                    categoria = clean_text(key_map.get("Categoria") or plate_map.get(placa, "Transporte")).strip() or "Transporte"
+                    if not placa:
+                        continue
+                    if "Mes" in group.columns:
+                        monthly = pd.to_numeric(group.get("Custo"), errors="coerce").groupby(group["Mes"].astype("string").fillna("")).sum()
+                        value = float(monthly.mean()) if len(monthly) > 1 else float(monthly.sum())
+                    else:
+                        value = float(pd.to_numeric(group.get("Custo"), errors="coerce").sum())
+                    current_values[(placa, categoria)] = value
+
+            editor_rows = []
+            used_keys = set()
+            for placa, categoria in plate_map.items():
+                key = (placa, categoria)
+                used_keys.add(key)
+                editor_rows.append({"PLACA": placa, "Categoria": categoria, "Valor seguro": round(current_values.get(key, 0.0), 2)})
+            for (placa, categoria), value in sorted(current_values.items()):
+                if (placa, categoria) not in used_keys:
+                    editor_rows.append({"PLACA": placa, "Categoria": categoria, "Valor seguro": round(value, 2)})
+
+            if not editor_rows:
+                st.info("Cadastre placas antes de definir os seguros.")
+            else:
+                st.caption("Preencha o valor de seguro de cada placa. Ao salvar, os seguros antigos de 10/2025 a 10/2026 serao substituidos por estes valores.")
+                edited = st.data_editor(
+                    pd.DataFrame(editor_rows),
+                    width="stretch",
+                    hide_index=True,
+                    disabled=["PLACA", "Categoria"],
+                    column_config={
+                        "Valor seguro": st.column_config.NumberColumn("Valor seguro", min_value=0.0, step=1.0, format="R$ %.2f"),
+                    },
+                    key="cad_ped_seguro_placa_editor",
+                )
+                total_editor = float(pd.to_numeric(edited.get("Valor seguro"), errors="coerce").fillna(0).sum())
+                st.info(f"Total informado por placa: {fmt_brl(total_editor)}.")
+                confirm_values = st.checkbox(
+                    "Confirmo que quero substituir os seguros do periodo pelos valores acima, por placa.",
+                    key="cad_ped_seguro_placa_confirm",
+                )
+                if st.button(
+                    "Salvar seguros por placa",
+                    type="primary",
+                    width="stretch",
+                    disabled=not confirm_values,
+                    key="cad_ped_seguro_placa_save",
+                ):
+                    records = []
+                    for row in edited.to_dict("records"):
+                        value = float(pd.to_numeric(pd.Series([row.get("Valor seguro")]), errors="coerce").fillna(0).iloc[0])
+                        if value <= 0:
+                            continue
+                        records.append({"PLACA": row.get("PLACA"), "Categoria": row.get("Categoria"), "Custo": value})
+                    try:
+                        result = backend.replace_pedagio_seguros_por_placa(records, "2025-10", "2026-10")
+                    except Exception as exc:
+                        st.error("Nao foi possivel salvar os seguros por placa no Neon.")
+                        st.exception(exc)
+                        return
+                    clear_cached_reads()
+                    _reset_dataset_editor("cad_ped_table")
+                    st.session_state["cad_ped_table_last_success"] = (
+                        f"Seguros recriados por placa: {result.get('plates', 0)} placa(s), {result.get('inserted', 0)} lancamento(s)."
+                    )
+                    st.rerun()
 
         type_options = unique_filter_options(df["Tipo"].astype("string").fillna("").map(clean_text).tolist())
         month_options = unique_filter_options(df["Mes"].astype("string").fillna("").tolist()) if "Mes" in df.columns else []
