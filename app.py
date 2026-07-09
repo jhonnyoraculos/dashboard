@@ -845,7 +845,7 @@ def redistribute_pedagio_seguros_period(
             else:
                 custo_base = sum(float(row.get("Custo") or 0.0) for row in plate_rows)
 
-            custo_mensal = custo_base / len(months)
+            custo_mensal = custo_base
             for mes in months:
                 year, month = (int(part) for part in mes.split("-"))
                 conn.execute(
@@ -1913,13 +1913,61 @@ def agg_peso(df: pd.DataFrame) -> dict:
 
 def agg_pedagio(df: pd.DataFrame) -> dict:
     registros = df.shape[0]
-    custo_total = float(pd.to_numeric(df.get("Custo"), errors="coerce").sum()) if "Custo" in df else 0.0
+    if df.empty or "Custo" not in df:
+        seguro_df = pd.DataFrame()
+        other_df = df
+        seguro_total = 0.0
+        seguro_por_placa: dict[str, float] = {}
+        seguro_por_categoria: dict[str, float] = {}
+    else:
+        tipo_series = df["Tipo"].astype("string").fillna("") if "Tipo" in df.columns else pd.Series("", index=df.index)
+        seguro_mask = tipo_series == "Seguro"
+        seguro_df = df[seguro_mask].copy()
+        other_df = df[~seguro_mask].copy()
+        seguro_total = 0.0
+        seguro_por_placa = {}
+        seguro_por_categoria = {}
+        if not seguro_df.empty:
+            group_columns = [column for column in ["PLACA", "Categoria"] if column in seguro_df.columns]
+            if not group_columns:
+                group_columns = ["Tipo"]
+            for keys, group in seguro_df.groupby(group_columns, dropna=False):
+                if not isinstance(keys, tuple):
+                    keys = (keys,)
+                monthly_totals = (
+                    pd.to_numeric(group.get("Custo"), errors="coerce")
+                    .groupby(group["Mes"].astype("string").fillna("") if "Mes" in group.columns else pd.Series("", index=group.index))
+                    .sum()
+                )
+                value = float(monthly_totals.mean()) if len(monthly_totals) > 1 else float(monthly_totals.sum())
+                seguro_total += value
+                key_map = dict(zip(group_columns, keys))
+                placa = str(key_map.get("PLACA") or "").strip()
+                categoria = str(key_map.get("Categoria") or "").strip()
+                if placa:
+                    seguro_por_placa[placa] = seguro_por_placa.get(placa, 0.0) + value
+                if categoria:
+                    seguro_por_categoria[categoria] = seguro_por_categoria.get(categoria, 0.0) + value
+
+    other_total = float(pd.to_numeric(other_df.get("Custo"), errors="coerce").sum()) if "Custo" in other_df else 0.0
+    custo_total = other_total + seguro_total
     meses_distintos = df["Mes"].dropna().unique() if "Mes" in df else []
     media_mensal = float(custo_total / len(meses_distintos)) if len(meses_distintos) else 0.0
     media_valores = float(custo_total / registros) if registros else 0.0
 
-    tipo_totais = df.groupby("Tipo", dropna=False)["Custo"].sum() if "Tipo" in df.columns and not df.empty else pd.Series(dtype="float64")
+    tipo_totais = other_df.groupby("Tipo", dropna=False)["Custo"].sum() if "Tipo" in other_df.columns and not other_df.empty else pd.Series(dtype="float64")
+    if not seguro_df.empty:
+        tipo_totais.loc["Seguro"] = seguro_total
     tipo_contagens = df.groupby("Tipo", dropna=False).size() if "Tipo" in df.columns and not df.empty else pd.Series(dtype="int64")
+    gasto_por_placa = _group_sum(other_df, "PLACA", "Custo") if not other_df.empty else {"PLACA": [], "Custo": []}
+    if seguro_por_placa:
+        placa_totals = dict(zip(gasto_por_placa.get("PLACA", []), gasto_por_placa.get("Custo", [])))
+        for placa, value in seguro_por_placa.items():
+            placa_totals[placa] = placa_totals.get(placa, 0.0) + value
+        placa_items = sorted(placa_totals.items(), key=lambda item: item[1], reverse=True)
+        gasto_por_placa = {"PLACA": [item[0] for item in placa_items], "Custo": [item[1] for item in placa_items]}
+
+    tipo_items = sorted(tipo_totais.to_dict().items(), key=lambda item: item[1], reverse=True)
     resultado = {
         "custo_total": custo_total,
         "total_lancamentos": registros,
@@ -1932,17 +1980,24 @@ def agg_pedagio(df: pd.DataFrame) -> dict:
         "qtd_pedagio": int(tipo_contagens.get("Pedagio", 0)),
         "qtd_ipva": int(tipo_contagens.get("IPVA", 0)),
         "qtd_seguro": int(tipo_contagens.get("Seguro", 0)),
-        "custo_mensal": _group_sum(df, "Mes", "Custo", sort_by="group"),
-        "gasto_por_tipo": _group_sum(df, "Tipo", "Custo"),
-        "gasto_por_placa": _group_sum(df, "PLACA", "Custo"),
+        "custo_mensal": _group_sum(other_df, "Mes", "Custo", sort_by="group"),
+        "gasto_por_tipo": {"Tipo": [item[0] for item in tipo_items], "Custo": [item[1] for item in tipo_items]},
+        "gasto_por_placa": gasto_por_placa,
         "meses": _unique_sorted(df, "Mes"),
         "tipos": _unique_sorted(df, "Tipo"),
         "placas": _unique_sorted(df, "PLACA"),
-        "custo_semana": _weekly_series(df, "Data", "Custo", "Custo"),
+        "custo_semana": _weekly_series(other_df, "Data", "Custo", "Custo"),
     }
     if "Categoria" in df.columns:
+        gasto_por_categoria = _group_sum(other_df, "Categoria", "Custo") if not other_df.empty else {"Categoria": [], "Custo": []}
+        if seguro_por_categoria:
+            category_totals = dict(zip(gasto_por_categoria.get("Categoria", []), gasto_por_categoria.get("Custo", [])))
+            for categoria, value in seguro_por_categoria.items():
+                category_totals[categoria] = category_totals.get(categoria, 0.0) + value
+            category_items = sorted(category_totals.items(), key=lambda item: item[1], reverse=True)
+            gasto_por_categoria = {"Categoria": [item[0] for item in category_items], "Custo": [item[1] for item in category_items]}
         resultado["segmentos"] = _unique_sorted(df, "Categoria")
-        resultado["gasto_por_categoria"] = _group_sum(df, "Categoria", "Custo")
+        resultado["gasto_por_categoria"] = gasto_por_categoria
     else:
         resultado["segmentos"] = []
         resultado["gasto_por_categoria"] = {"Categoria": [], "Custo": []}
