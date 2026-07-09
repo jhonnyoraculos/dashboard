@@ -756,12 +756,23 @@ def _month_sequence(start_mes: str, end_mes: str) -> list[str]:
     return months
 
 
-def redistribute_pedagio_seguros_period(start_mes: str = "2025-10", end_mes: str = "2026-10") -> dict:
+def redistribute_pedagio_seguros_period(
+    start_mes: str = "2025-10",
+    end_mes: str = "2026-10",
+    *,
+    source_tipos: list[str] | None = None,
+    source_meses: list[str] | None = None,
+) -> dict:
     months = _month_sequence(start_mes, end_mes)
     if not months:
         raise ValueError("Periodo sem meses para aplicar.")
 
     from sqlalchemy import text
+
+    normalized_source_tipos = {_normalize_tipo_value(tipo) for tipo in (source_tipos or ["Seguro"]) if str(tipo or "").strip()}
+    if not normalized_source_tipos:
+        raise ValueError("Selecione pelo menos um tipo atual para ajustar.")
+    normalized_source_meses = {str(mes).strip() for mes in (source_meses or []) if str(mes or "").strip()}
 
     table = _quote_identifier(DB_TABLES["pedagio"])
     version = datetime.now(timezone.utc).isoformat()
@@ -775,7 +786,12 @@ def redistribute_pedagio_seguros_period(start_mes: str = "2025-10", end_mes: str
                 """
             )
         ).mappings().all()
-        seguros = [dict(row) for row in rows if _normalize_tipo_value(row.get("Tipo")) == "Seguro"]
+        seguros = [
+            dict(row)
+            for row in rows
+            if _normalize_tipo_value(row.get("Tipo")) in normalized_source_tipos
+            and (not normalized_source_meses or str(row.get("Mes") or "").strip() in normalized_source_meses)
+        ]
         seguros.sort(
             key=lambda row: (
                 str(row.get("Mes") or ""),

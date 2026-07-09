@@ -28,7 +28,7 @@ MUTED = "#6B7280"
 CARD_BORDER = "#c2d2f3"
 LOGO_PATH = Path(__file__).parent / "static" / "logo-jr.png"
 CURRENT_YEAR = date.today().year
-APP_VERSION = "deploy-ajuste-seguros-periodo-v1"
+APP_VERSION = "deploy-ajuste-seguros-selecao-v1"
 BR_TZ = ZoneInfo("America/Sao_Paulo")
 CATEGORY_OPTIONS = ["Transporte", "Freteiro", "Vex", "Equipamento"]
 CADASTRO_TABS = ["Placas", "Combustível", "KM mensal", "Manutenção", "Pneus", "Hotéis", "Peso", "Pedágio/Extras"]
@@ -6344,20 +6344,45 @@ def _render_seguro_period_adjustment() -> None:
             return
 
         if df.empty or "Tipo" not in df.columns:
-            st.info("Nenhum lancamento de seguro encontrado.")
+            st.info("Nenhum lancamento de pedagio/extra encontrado.")
             return
 
-        seguros = df[df["Tipo"].astype("string").fillna("").map(clean_text).str.lower() == "seguro"].copy()
-        total = int(seguros.shape[0])
+        type_options = unique_filter_options(df["Tipo"].astype("string").fillna("").map(clean_text).tolist())
+        month_options = unique_filter_options(df["Mes"].astype("string").fillna("").tolist()) if "Mes" in df.columns else []
+        default_types = ["Seguro"] if "Seguro" in type_options else []
+        selected_types = st.multiselect(
+            "Tipo atual dos lancamentos que devem virar Seguro",
+            type_options,
+            default=default_types,
+            key="cad_ped_seguro_period_source_types",
+        )
+        selected_months = st.multiselect(
+            "Meses atuais desses lancamentos",
+            month_options,
+            default=[],
+            placeholder="Todos os meses",
+            key="cad_ped_seguro_period_source_months",
+        )
+
+        candidates = df.copy()
+        if selected_types:
+            candidates = candidates[candidates["Tipo"].astype("string").fillna("").map(clean_text).isin(selected_types)]
+        else:
+            candidates = candidates.iloc[0:0]
+        if selected_months and "Mes" in candidates.columns:
+            candidates = candidates[candidates["Mes"].astype("string").fillna("").isin(selected_months)]
+
+        total = int(candidates.shape[0])
+        total_value = float(pd.to_numeric(candidates.get("Custo"), errors="coerce").sum()) if total and "Custo" in candidates.columns else 0.0
         st.info(
-            f"Foram encontrados {total} lancamento(s) do tipo Seguro. "
-            "Ao confirmar, somente esses lancamentos serao redistribuidos de 2025-10 ate 2026-10."
+            f"Selecao atual: {total} lancamento(s), total {fmt_brl(total_value)}. "
+            "Ao confirmar, esses lancamentos serao marcados como Seguro e redistribuidos de 2025-10 ate 2026-10."
         )
         if total:
-            preview_columns = [column for column in ["Data", "Mes", "PLACA", "Categoria", "Tipo", "Custo"] if column in seguros.columns]
-            st.dataframe(seguros[preview_columns].head(20), width="stretch", hide_index=True)
+            preview_columns = [column for column in ["Data", "Mes", "PLACA", "Categoria", "Tipo", "Custo"] if column in candidates.columns]
+            st.dataframe(candidates[preview_columns].head(30), width="stretch", hide_index=True)
         confirm = st.checkbox(
-            "Confirmo que quero ajustar todos os seguros para o periodo 2025-10 a 2026-10.",
+            "Confirmo que a selecao acima deve virar Seguro no periodo 2025-10 a 2026-10.",
             key="cad_ped_seguro_period_confirm",
         )
         if st.button(
@@ -6368,7 +6393,12 @@ def _render_seguro_period_adjustment() -> None:
             key="cad_ped_seguro_period_apply",
         ):
             try:
-                result = backend.redistribute_pedagio_seguros_period("2025-10", "2026-10")
+                result = backend.redistribute_pedagio_seguros_period(
+                    "2025-10",
+                    "2026-10",
+                    source_tipos=selected_types,
+                    source_meses=selected_months,
+                )
             except Exception as exc:
                 st.error("Nao foi possivel ajustar os seguros no Neon.")
                 st.exception(exc)
