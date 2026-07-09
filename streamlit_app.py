@@ -28,7 +28,7 @@ MUTED = "#6B7280"
 CARD_BORDER = "#c2d2f3"
 LOGO_PATH = Path(__file__).parent / "static" / "logo-jr.png"
 CURRENT_YEAR = date.today().year
-APP_VERSION = "deploy-seguros-placa-visivel-v1"
+APP_VERSION = "deploy-zerar-pedagio-v1"
 BR_TZ = ZoneInfo("America/Sao_Paulo")
 CATEGORY_OPTIONS = ["Transporte", "Freteiro", "Vex", "Equipamento"]
 CADASTRO_TABS = ["Placas", "Combustível", "KM mensal", "Manutenção", "Pneus", "Hotéis", "Peso", "Pedágio/Extras"]
@@ -6495,6 +6495,32 @@ def _render_seguro_period_adjustment() -> None:
             st.rerun()
 
 
+def _render_pedagio_reset_all() -> None:
+    with st.expander("Zerar todo Pedagio/Extras", expanded=False):
+        st.warning("Essa acao apaga todos os lancamentos de pedagio, extras, taxi, IPVA e seguros. Use somente se for recadastrar tudo manualmente.")
+        count = None
+        try:
+            df_preview = backend.load_pedagio()
+            count = int(df_preview.shape[0])
+        except Exception as exc:
+            st.caption(f"Nao foi possivel contar os lancamentos antes de apagar: {exc}")
+        if count is not None:
+            st.caption(f"Total atual: {count} lancamento(s).")
+        confirmar = st.checkbox("Confirmo que quero apagar toda a tabela de Pedagio/Extras.", key="cad_ped_reset_all_confirm")
+        if st.button("Zerar todo Pedagio/Extras", type="primary", width="stretch", disabled=not confirmar, key="cad_ped_reset_all_button"):
+            try:
+                deleted = backend.delete_dashboard_all("pedagio")
+            except Exception as exc:
+                st.error("Nao foi possivel zerar Pedagio/Extras no Neon.")
+                st.exception(exc)
+                return
+            _clear_pedagio_last_import()
+            _reset_dataset_editor("cad_ped_table")
+            clear_cached_reads()
+            st.success(f"{deleted} lancamento(s) de Pedagio/Extras apagado(s).")
+            st.rerun()
+
+
 def render_cadastro() -> None:
     topbar("JR DASHBOARD • Adicionar dados", back=True)
     with st.container(key="cadastro_shell"):
@@ -6896,6 +6922,7 @@ def render_cadastro() -> None:
 
         if active_tab == "Pedágio/Extras":
             _render_pedagio_sheet_import(plate_map)
+            _render_pedagio_reset_all()
 
             with st.form("form_pedagio", clear_on_submit=True):
                 c1, c2, c3 = st.columns(3)

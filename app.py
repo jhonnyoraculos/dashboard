@@ -739,6 +739,31 @@ def delete_dashboard_month(dataset: str, mes: str) -> int:
     return deleted
 
 
+def delete_dashboard_all(dataset: str) -> int:
+    if dataset not in DB_TABLES or dataset not in _DATASET_COLUMNS:
+        raise ValueError(f"Dataset invalido: {dataset}")
+
+    from sqlalchemy import text
+
+    table = _quote_identifier(DB_TABLES[dataset])
+    version = datetime.now(timezone.utc).isoformat()
+
+    with _db_engine().begin() as conn:
+        _ensure_dataset_table(conn, dataset)
+        result = conn.execute(text(f"DELETE FROM {table}"))
+        deleted = max(result.rowcount or 0, 0)
+
+        if dataset in {"combustivel", "manutencao", "pneus", "pedagio", "peso"}:
+            _write_metadata(conn, "placas.version", version)
+        _write_metadata(conn, f"{dataset}.version", version)
+        _write_metadata(conn, "import.version", version)
+
+    if dataset in {"combustivel", "manutencao", "pneus", "pedagio", "peso"}:
+        _clear_dataset_cache("placas")
+    _clear_dataset_cache(dataset)
+    return deleted
+
+
 def _month_sequence(start_mes: str, end_mes: str) -> list[str]:
     if not re.fullmatch(r"\d{4}-\d{2}", str(start_mes or "")) or not re.fullmatch(r"\d{4}-\d{2}", str(end_mes or "")):
         raise ValueError("Periodo invalido. Use o formato YYYY-MM.")
