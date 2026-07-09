@@ -28,7 +28,7 @@ MUTED = "#6B7280"
 CARD_BORDER = "#c2d2f3"
 LOGO_PATH = Path(__file__).parent / "static" / "logo-jr.png"
 CURRENT_YEAR = date.today().year
-APP_VERSION = "deploy-seguros-editor-por-placa-v1"
+APP_VERSION = "deploy-seguros-placa-visivel-v1"
 BR_TZ = ZoneInfo("America/Sao_Paulo")
 CATEGORY_OPTIONS = ["Transporte", "Freteiro", "Vex", "Equipamento"]
 CADASTRO_TABS = ["Placas", "Combustível", "KM mensal", "Manutenção", "Pneus", "Hotéis", "Peso", "Pedágio/Extras"]
@@ -7182,6 +7182,7 @@ def render_pedagio() -> None:
         ("gasto_mensal", "Gasto mensal", monthly_fig),
         ("gasto_semana", "Gasto semanal (últimos 7 dias)", weekly_fig),
         ("gasto_tipo", "Gasto por tipo", pie_chart(data.get("gasto_por_tipo", {}).get("Tipo", []), data.get("gasto_por_tipo", {}).get("Custo", []))),
+        ("seguro_placa", "Seguro por placa", bar_chart(data.get("seguro_por_placa", {}).get("PLACA", []), data.get("seguro_por_placa", {}).get("Custo", []), horizontal=True, sort_desc=True, show_text=True)),
         ("gasto_placa", "Gasto por placa", plate_fig),
         ("gasto_segmento", "Gasto por segmento", bar_chart(data.get("gasto_por_categoria", {}).get("Categoria", []), data.get("gasto_por_categoria", {}).get("Custo", []))),
     ]

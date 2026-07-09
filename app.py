@@ -1480,6 +1480,16 @@ def _param(params: dict | None, key: str):
     return value
 
 
+def _filter_plate_param(df: pd.DataFrame, placa: object) -> pd.DataFrame:
+    if not placa or placa == "Todos" or df.empty or "PLACA" not in df.columns:
+        return df
+    target = _normalize_plate_value(placa)
+    if pd.isna(target):
+        return df.iloc[0:0].copy()
+    normalized = _normalize_plate_series(df["PLACA"])
+    return df.loc[normalized == str(target)].copy()
+
+
 def _weekly_series(df: pd.DataFrame, date_col: str, value_col: str, label: str) -> dict:
     today = pd.Timestamp.today().normalize()
     start_default = today - pd.Timedelta(days=6)
@@ -2046,6 +2056,7 @@ def agg_pedagio(df: pd.DataFrame) -> dict:
             placa_totals[placa] = placa_totals.get(placa, 0.0) + value
         placa_items = sorted(placa_totals.items(), key=lambda item: item[1], reverse=True)
         gasto_por_placa = {"PLACA": [item[0] for item in placa_items], "Custo": [item[1] for item in placa_items]}
+    seguro_placa_items = sorted(seguro_por_placa.items(), key=lambda item: item[1], reverse=True)
 
     tipo_items = sorted(tipo_totais.to_dict().items(), key=lambda item: item[1], reverse=True)
     resultado = {
@@ -2063,6 +2074,7 @@ def agg_pedagio(df: pd.DataFrame) -> dict:
         "custo_mensal": _group_sum(other_df, "Mes", "Custo", sort_by="group"),
         "gasto_por_tipo": {"Tipo": [item[0] for item in tipo_items], "Custo": [item[1] for item in tipo_items]},
         "gasto_por_placa": gasto_por_placa,
+        "seguro_por_placa": {"PLACA": [item[0] for item in seguro_placa_items], "Custo": [item[1] for item in seguro_placa_items]},
         "meses": _unique_sorted(df, "Mes"),
         "tipos": _unique_sorted(df, "Tipo"),
         "placas": _unique_sorted(df, "PLACA"),
@@ -2100,8 +2112,7 @@ def data_comb(params: dict | None = None) -> dict:
     df = _filter_category_param(df, categoria)
     km_rodados = _filter_category_param(km_rodados, categoria)
 
-    if placa and placa != "Todos":
-        df = df[df["PLACA"] == _normalize_plate_value(placa)]
+    df = _filter_plate_param(df, placa)
     if posto and posto != "Todos":
         df = df[df["POSTOS"] == posto]
     if combustivel and combustivel != "Todos":
@@ -2146,8 +2157,7 @@ def data_manu(params: dict | None = None) -> dict:
     oficina = _param(params, "oficina")
     segmento = _param(params, "segmento") or _param(params, "categoria")
 
-    if placa and placa != "Todos":
-        df = df[df["PLACA"] == _normalize_plate_value(placa)]
+    df = _filter_plate_param(df, placa)
     if oficina and oficina != "Todos":
         df = df[df["OFICINA"] == oficina]
     df = _filter_category_param(df, segmento)
@@ -2216,8 +2226,7 @@ def data_pedagio(params: dict | None = None) -> dict:
     tipo = _param(params, "tipo")
     segmento = _param(params, "segmento") or _param(params, "categoria")
 
-    if placa and placa != "Todos":
-        df = df[df["PLACA"] == _normalize_plate_value(placa)]
+    df = _filter_plate_param(df, placa)
     if tipo and tipo != "Todos":
         df = df[df["Tipo"] == _normalize_tipo_value(tipo)]
     df = _filter_category_param(df, segmento)
