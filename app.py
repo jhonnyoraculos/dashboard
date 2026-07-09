@@ -804,6 +804,7 @@ def redistribute_pedagio_seguros_period(
 
         deleted = 0
         inserted = 0
+        deleted_rows = []
         month_counts = {mes: 0 for mes in months}
         for row in seguros:
             result = conn.execute(
@@ -819,7 +820,19 @@ def redistribute_pedagio_seguros_period(
                 continue
 
             deleted += 1
-            custo_mensal = float(row.get("Custo") or 0.0) / len(months)
+            deleted_rows.append(row)
+
+        grouped_by_plate: dict[tuple[str | None, str], float] = {}
+        for row in deleted_rows:
+            placa = _normalize_plate_value(row.get("PLACA"))
+            if pd.isna(placa):
+                placa = None
+            categoria = _normalize_category_value(row.get("Categoria") or "Transporte")
+            key = (placa, categoria)
+            grouped_by_plate[key] = grouped_by_plate.get(key, 0.0) + float(row.get("Custo") or 0.0)
+
+        for (placa, categoria), custo_total in grouped_by_plate.items():
+            custo_mensal = custo_total / len(months)
             for mes in months:
                 year, month = (int(part) for part in mes.split("-"))
                 conn.execute(
@@ -835,7 +848,7 @@ def redistribute_pedagio_seguros_period(
                         "custo": custo_mensal,
                         "mes": mes,
                         "data": datetime(year, month, 1),
-                        "categoria": row.get("Categoria"),
+                        "categoria": categoria,
                     },
                 )
                 inserted += 1
@@ -845,7 +858,7 @@ def redistribute_pedagio_seguros_period(
         _write_metadata(conn, "import.version", version)
 
     _clear_dataset_cache("pedagio")
-    return {"updated": inserted, "deleted": deleted, "total": len(seguros), "months": months, "month_counts": month_counts}
+    return {"updated": inserted, "deleted": deleted, "plates": len(grouped_by_plate), "total": len(seguros), "months": months, "month_counts": month_counts}
 
 
 def rename_plate(old_plate, new_plate, categoria: str) -> str:
