@@ -739,6 +739,80 @@ def delete_dashboard_month(dataset: str, mes: str) -> int:
     return deleted
 
 
+def _month_sequence(start_mes: str, end_mes: str) -> list[str]:
+    if not re.fullmatch(r"\d{4}-\d{2}", str(start_mes or "")) or not re.fullmatch(r"\d{4}-\d{2}", str(end_mes or "")):
+        raise ValueError("Periodo invalido. Use o formato YYYY-MM.")
+    start_year, start_month = (int(part) for part in start_mes.split("-"))
+    end_year, end_month = (int(part) for part in end_mes.split("-"))
+    cursor = datetime(start_year, start_month, 1)
+    end = datetime(end_year, end_month, 1)
+    if cursor > end:
+        raise ValueError("Periodo inicial maior que o final.")
+
+    months = []
+    while cursor <= end:
+        months.append(cursor.strftime("%Y-%m"))
+        cursor = datetime(cursor.year + (1 if cursor.month == 12 else 0), 1 if cursor.month == 12 else cursor.month + 1, 1)
+    return months
+
+
+def redistribute_pedagio_seguros_period(start_mes: str = "2025-10", end_mes: str = "2026-10") -> dict:
+    months = _month_sequence(start_mes, end_mes)
+    if not months:
+        raise ValueError("Periodo sem meses para aplicar.")
+
+    from sqlalchemy import text
+
+    table = _quote_identifier(DB_TABLES["pedagio"])
+    version = datetime.now(timezone.utc).isoformat()
+    with _db_engine().begin() as conn:
+        _ensure_dataset_table(conn, "pedagio")
+        rows = conn.execute(
+            text(
+                f"""
+                SELECT ctid::text AS row_id, "Tipo", "Data", "Mes", "PLACA", "Categoria", "Custo"
+                FROM {table}
+                """
+            )
+        ).mappings().all()
+        seguros = [dict(row) for row in rows if _normalize_tipo_value(row.get("Tipo")) == "Seguro"]
+        seguros.sort(
+            key=lambda row: (
+                str(row.get("Mes") or ""),
+                str(row.get("Data") or ""),
+                str(row.get("PLACA") or ""),
+                float(row.get("Custo") or 0),
+                str(row.get("row_id") or ""),
+            )
+        )
+
+        updated = 0
+        month_counts = {mes: 0 for mes in months}
+        for index, row in enumerate(seguros):
+            mes = months[index % len(months)]
+            year, month = (int(part) for part in mes.split("-"))
+            result = conn.execute(
+                text(
+                    f"""
+                    UPDATE {table}
+                    SET "Data" = :data, "Mes" = :mes, "Tipo" = :tipo
+                    WHERE ctid::text = :row_id
+                    """
+                ),
+                {"data": datetime(year, month, 1), "mes": mes, "tipo": "Seguro", "row_id": row["row_id"]},
+            )
+            changed = max(result.rowcount or 0, 0)
+            updated += changed
+            if changed:
+                month_counts[mes] += changed
+
+        _write_metadata(conn, "pedagio.version", version)
+        _write_metadata(conn, "import.version", version)
+
+    _clear_dataset_cache("pedagio")
+    return {"updated": updated, "total": len(seguros), "months": months, "month_counts": month_counts}
+
+
 def rename_plate(old_plate, new_plate, categoria: str) -> str:
     old_value = _normalize_plate_value(old_plate)
     new_value = _normalize_plate_value(new_plate)

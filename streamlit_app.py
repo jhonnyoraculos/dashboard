@@ -28,7 +28,7 @@ MUTED = "#6B7280"
 CARD_BORDER = "#c2d2f3"
 LOGO_PATH = Path(__file__).parent / "static" / "logo-jr.png"
 CURRENT_YEAR = date.today().year
-APP_VERSION = "deploy-contagem-seguro-v1"
+APP_VERSION = "deploy-ajuste-seguros-periodo-v1"
 BR_TZ = ZoneInfo("America/Sao_Paulo")
 CATEGORY_OPTIONS = ["Transporte", "Freteiro", "Vex", "Equipamento"]
 CADASTRO_TABS = ["Placas", "Combustível", "KM mensal", "Manutenção", "Pneus", "Hotéis", "Peso", "Pedágio/Extras"]
@@ -6334,6 +6334,53 @@ def _render_pedagio_sheet_import(plate_map: dict[str, str]) -> None:
             st.rerun()
 
 
+def _render_seguro_period_adjustment() -> None:
+    with st.expander("Ajustar seguros para 10/2025 a 10/2026", expanded=False):
+        try:
+            df = backend.load_pedagio()
+        except Exception as exc:
+            st.error("Nao foi possivel carregar os seguros para prever a alteracao.")
+            st.exception(exc)
+            return
+
+        if df.empty or "Tipo" not in df.columns:
+            st.info("Nenhum lancamento de seguro encontrado.")
+            return
+
+        seguros = df[df["Tipo"].astype("string").fillna("").map(clean_text).str.lower() == "seguro"].copy()
+        total = int(seguros.shape[0])
+        st.info(
+            f"Foram encontrados {total} lancamento(s) do tipo Seguro. "
+            "Ao confirmar, somente esses lancamentos serao redistribuidos de 2025-10 ate 2026-10."
+        )
+        if total:
+            preview_columns = [column for column in ["Data", "Mes", "PLACA", "Categoria", "Tipo", "Custo"] if column in seguros.columns]
+            st.dataframe(seguros[preview_columns].head(20), width="stretch", hide_index=True)
+        confirm = st.checkbox(
+            "Confirmo que quero ajustar todos os seguros para o periodo 2025-10 a 2026-10.",
+            key="cad_ped_seguro_period_confirm",
+        )
+        if st.button(
+            "Ajustar seguros",
+            type="primary",
+            width="stretch",
+            disabled=not confirm or total == 0,
+            key="cad_ped_seguro_period_apply",
+        ):
+            try:
+                result = backend.redistribute_pedagio_seguros_period("2025-10", "2026-10")
+            except Exception as exc:
+                st.error("Nao foi possivel ajustar os seguros no Neon.")
+                st.exception(exc)
+                return
+            clear_cached_reads()
+            _reset_dataset_editor("cad_ped_table")
+            st.session_state["cad_ped_table_last_success"] = (
+                f"{result.get('updated', 0)} seguro(s) ajustado(s) de 2025-10 a 2026-10."
+            )
+            st.rerun()
+
+
 def render_cadastro() -> None:
     topbar("JR DASHBOARD • Adicionar dados", back=True)
     with st.container(key="cadastro_shell"):
@@ -6480,7 +6527,6 @@ def render_cadastro() -> None:
                         required=["Data", "PLACA", "Combustivel", "POSTOS"],
                         success="Lançamento de combustível salvo.",
                     )
-
             _render_dataset_editor(
                 "combustivel",
                 backend.load_combustivel,
@@ -6768,6 +6814,7 @@ def render_cadastro() -> None:
                         required=required,
                         success="Lançamento de pedágio/extra salvo.",
                     )
+            _render_seguro_period_adjustment()
             _render_dataset_editor(
                 "pedagio",
                 backend.load_pedagio,
