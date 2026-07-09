@@ -831,8 +831,7 @@ def redistribute_pedagio_seguros_period(
             key = (placa, categoria)
             grouped_by_plate[key] = grouped_by_plate.get(key, 0.0) + float(row.get("Custo") or 0.0)
 
-        for (placa, categoria), custo_total in grouped_by_plate.items():
-            custo_mensal = custo_total / len(months)
+        for (placa, categoria), custo_mensal in grouped_by_plate.items():
             for mes in months:
                 year, month = (int(part) for part in mes.split("-"))
                 conn.execute(
