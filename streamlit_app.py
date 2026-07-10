@@ -28,7 +28,7 @@ MUTED = "#6B7280"
 CARD_BORDER = "#c2d2f3"
 LOGO_PATH = Path(__file__).parent / "static" / "logo-jr.png"
 CURRENT_YEAR = date.today().year
-APP_VERSION = "deploy-empilhadeiras-v1"
+APP_VERSION = "deploy-empilhadeiras-horas-v1"
 BR_TZ = ZoneInfo("America/Sao_Paulo")
 CATEGORY_OPTIONS = ["Transporte", "Freteiro", "Empilhadeira", "Vex", "Equipamento"]
 CADASTRO_TABS = ["Placas", "Empilhadeiras", "Combustível", "KM mensal", "Manutenção", "Pneus", "Hotéis", "Peso", "Pedágio/Extras"]
@@ -6602,7 +6602,7 @@ def render_cadastro() -> None:
             with st.form("form_empilhadeiras", clear_on_submit=True):
                 c1, c2, c3 = st.columns([1.2, 1.0, 1.0])
                 with c1:
-                    empilhadeira = st.text_input("Empilhadeira", placeholder="EMPILHADEIRA 01", key="cad_empilhadeira_nome").upper()
+                    empilhadeira = st.text_input("Nome da empilhadeira", placeholder="EMPILHADEIRA 01", key="cad_empilhadeira_nome").upper()
                 with c2:
                     st.text_input("Categoria", value="Empilhadeira", disabled=True, key="cad_empilhadeira_categoria")
                 with c3:
@@ -6617,15 +6617,110 @@ def render_cadastro() -> None:
                         success="Empilhadeira cadastrada/atualizada.",
                     )
 
-            empilhadeiras = [
-                {"Empilhadeira": placa, "Categoria": categoria}
-                for placa, categoria in _registered_plate_map().items()
-                if categoria == "Empilhadeira"
-            ]
-            if empilhadeiras:
-                st.dataframe(pd.DataFrame(empilhadeiras), width="stretch", hide_index=True)
+            plate_map = _registered_plate_map()
+            empilhadeira_options = [placa for placa, categoria in plate_map.items() if categoria == "Empilhadeira"]
+            if not empilhadeira_options:
+                st.info("Cadastre a primeira empilhadeira para liberar manutenção e marcador de horas.")
             else:
-                st.info("Nenhuma empilhadeira cadastrada ainda.")
+                st.markdown("#### Manutenção da empilhadeira")
+                with st.form("form_empilhadeira_manutencao", clear_on_submit=True):
+                    c1, c2, c3 = st.columns(3)
+                    with c1:
+                        data = st.date_input("Data", value=date.today(), key="cad_emp_manu_data")
+                        placa = st.selectbox(
+                            "Empilhadeira",
+                            empilhadeira_options,
+                            index=None,
+                            placeholder="Selecione uma empilhadeira",
+                            key="cad_emp_manu_placa",
+                        )
+                    with c2:
+                        oficina = st.text_input("Oficina/serviço", key="cad_emp_manu_oficina")
+                        st.text_input("Categoria", value="Empilhadeira", disabled=True, key="cad_emp_manu_categoria")
+                    with c3:
+                        custo = st.number_input("Custo", min_value=0.0, step=10.0, format="%.2f", key="cad_emp_manu_custo")
+                        submitted = st.form_submit_button("Salvar manutenção", type="primary", width="stretch")
+                    if submitted:
+                        _save_entry(
+                            "manutencao",
+                            {
+                                "Data": data,
+                                "Mes": _entry_month(data),
+                                "Custo": custo,
+                                "PLACA": placa,
+                                "OFICINA": oficina,
+                                "Categoria": "Empilhadeira",
+                            },
+                            required=["Data", "PLACA", "OFICINA"],
+                            success="Manutenção de empilhadeira salva.",
+                        )
+
+                st.markdown("#### Marcador de horas")
+                with st.form("form_empilhadeira_horas", clear_on_submit=True):
+                    c1, c2, c3 = st.columns(3)
+                    with c1:
+                        ano = st.number_input("Ano", min_value=2020, max_value=2100, value=CURRENT_YEAR, step=1, key="cad_emp_horas_ano")
+                        mes = st.selectbox("Mês", list(range(1, 13)), index=date.today().month - 1, format_func=month_label, key="cad_emp_horas_mes")
+                    with c2:
+                        placa = st.selectbox(
+                            "Empilhadeira",
+                            empilhadeira_options,
+                            index=None,
+                            placeholder="Selecione uma empilhadeira",
+                            key="cad_emp_horas_placa",
+                        )
+                    with c3:
+                        horas = st.number_input("Horas do mês", min_value=0.0, step=1.0, format="%.1f", key="cad_emp_horas_total")
+                        substituir = st.checkbox("Substituir se já existir", value=True, key="cad_emp_horas_replace")
+                        submitted = st.form_submit_button("Salvar horas", type="primary", width="stretch")
+                    if submitted:
+                        _save_entry(
+                            "empilhadeira_horas",
+                            {"Mes": f"{int(ano)}-{int(mes):02d}", "PLACA": placa, "Horas": horas},
+                            required=["Mes", "PLACA"],
+                            replace_keys=["Mes", "PLACA"] if substituir else None,
+                            success="Horas da empilhadeira salvas.",
+                        )
+
+                st.markdown("#### Empilhadeiras cadastradas")
+                st.dataframe(
+                    pd.DataFrame({"Empilhadeira": empilhadeira_options, "Categoria": ["Empilhadeira"] * len(empilhadeira_options)}),
+                    width="stretch",
+                    hide_index=True,
+                )
+
+                try:
+                    manutencoes_emp = backend.load_manutencao()
+                except Exception as exc:
+                    st.error("Não foi possível carregar as manutenções de empilhadeiras.")
+                    st.exception(exc)
+                    manutencoes_emp = pd.DataFrame()
+                if not manutencoes_emp.empty and "Categoria" in manutencoes_emp.columns:
+                    manutencoes_emp = manutencoes_emp[
+                        manutencoes_emp["Categoria"].astype("string").str.lower().fillna("") == "empilhadeira"
+                    ].copy()
+                st.markdown("#### Manutenções de empilhadeiras")
+                st.dataframe(
+                    manutencoes_emp[["Data", "Mes", "PLACA", "OFICINA", "Custo"]]
+                    if not manutencoes_emp.empty
+                    else pd.DataFrame(columns=["Data", "Mes", "PLACA", "OFICINA", "Custo"]),
+                    width="stretch",
+                    hide_index=True,
+                )
+
+                _render_dataset_editor(
+                    "empilhadeira_horas",
+                    backend.load_empilhadeira_horas,
+                    ["Mes", "PLACA", "Horas"],
+                    ["Mes", "PLACA"],
+                    "cad_emp_horas_table",
+                    {
+                        "Mes": st.column_config.TextColumn("Mes"),
+                        "PLACA": st.column_config.TextColumn("Empilhadeira"),
+                        "Horas": _number_col("Horas"),
+                    },
+                    ["Mes", "PLACA"],
+                )
 
         if active_tab == "Combustível":
             combustivel_options = _registered_text_options(backend.load_combustiveis, "Combustivel")

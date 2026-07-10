@@ -38,6 +38,7 @@ if _running_as_streamlit_entrypoint():
 DB_TABLES = {
     "combustivel": "dashboard_combustivel",
     "combustivel_km": "dashboard_combustivel_km",
+    "empilhadeira_horas": "dashboard_empilhadeira_horas",
     "combustiveis": "dashboard_combustiveis",
     "postos": "dashboard_postos",
     "manutencao": "dashboard_manutencao",
@@ -55,6 +56,7 @@ _METADATA_CACHE = {"loaded": False, "loaded_at": 0.0, "values": {}, "lock": thre
 _PEDAGIO_CACHE = {"mtime": None, "df": None, "lock": threading.Lock()}
 _COMBUSTIVEL_CACHE = {"mtime": None, "df": None, "lock": threading.Lock()}
 _COMBUSTIVEL_KM_CACHE = {"mtime": None, "df": None, "lock": threading.Lock()}
+_EMPILHADEIRA_HORAS_CACHE = {"mtime": None, "df": None, "lock": threading.Lock()}
 _MANUTENCAO_CACHE = {"mtime": None, "df": None, "lock": threading.Lock()}
 _PNEUS_CACHE = {"mtime": None, "df": None, "lock": threading.Lock()}
 _HOTEIS_CACHE = {"mtime": None, "df": None, "lock": threading.Lock()}
@@ -69,6 +71,7 @@ _TEXT_REGISTRY_CACHES = {
 _CACHE_MAP = {
     "combustivel": _COMBUSTIVEL_CACHE,
     "combustivel_km": _COMBUSTIVEL_KM_CACHE,
+    "empilhadeira_horas": _EMPILHADEIRA_HORAS_CACHE,
     "manutencao": _MANUTENCAO_CACHE,
     "pneus": _PNEUS_CACHE,
     "hoteis": _HOTEIS_CACHE,
@@ -88,6 +91,7 @@ _COMBUSTIVEL_COLUMNS = [
     "Categoria",
 ]
 _COMBUSTIVEL_KM_COLUMNS = ["Mes", "PLACA", "Km Rodados"]
+_EMPILHADEIRA_HORAS_COLUMNS = ["Mes", "PLACA", "Horas"]
 _COMBUSTIVEIS_COLUMNS = ["Combustivel"]
 _POSTOS_COLUMNS = ["POSTOS"]
 _MANUTENCAO_COLUMNS = ["Data", "Mes", "Custo", "PLACA", "OFICINA", "Categoria"]
@@ -113,6 +117,7 @@ _PLATE_ALIASES = {
 _DATASET_COLUMNS = {
     "combustivel": _COMBUSTIVEL_COLUMNS,
     "combustivel_km": _COMBUSTIVEL_KM_COLUMNS,
+    "empilhadeira_horas": _EMPILHADEIRA_HORAS_COLUMNS,
     "combustiveis": _COMBUSTIVEIS_COLUMNS,
     "postos": _POSTOS_COLUMNS,
     "manutencao": _MANUTENCAO_COLUMNS,
@@ -126,6 +131,7 @@ _COLUMN_SQL_TYPES = {
     "Data": "TIMESTAMP",
     "Mes": "TEXT",
     "Km Rodados": "DOUBLE PRECISION",
+    "Horas": "DOUBLE PRECISION",
     "Litros": "DOUBLE PRECISION",
     "Custo": "DOUBLE PRECISION",
     "Combustivel": "TEXT",
@@ -333,10 +339,12 @@ def _clear_dataset_cache(dataset: str) -> None:
 
     if dataset == "combustivel_km":
         targets = ["combustivel", "combustivel_km"]
+    elif dataset == "empilhadeira_horas":
+        targets = ["empilhadeira_horas"]
     elif dataset == "manutencao":
         targets = ["manutencao", "pneus"]
     elif dataset == "placas":
-        targets = ["combustivel", "manutencao", "pneus", "pedagio", "peso"]
+        targets = ["combustivel", "combustivel_km", "empilhadeira_horas", "manutencao", "pneus", "pedagio", "peso"]
     elif dataset in {"combustiveis", "postos"}:
         targets = ["combustivel"]
     else:
@@ -996,14 +1004,14 @@ def rename_plate(old_plate, new_plate, categoria: str) -> str:
 
     with _db_engine().begin() as conn:
         _ensure_dataset_table(conn, "placas")
-        for dataset in ("combustivel", "combustivel_km", "manutencao", "pneus", "pedagio", "peso"):
+        for dataset in ("combustivel", "combustivel_km", "empilhadeira_horas", "manutencao", "pneus", "pedagio", "peso"):
             _ensure_dataset_table(conn, dataset)
             table = _quote_identifier(DB_TABLES[dataset])
             conn.execute(
                 text(f"UPDATE {table} SET \"PLACA\" = :new_plate WHERE \"PLACA\" = :old_plate"),
                 {"new_plate": new_value, "old_plate": old_value},
             )
-            if dataset != "combustivel_km":
+            if "Categoria" in _DATASET_COLUMNS[dataset]:
                 conn.execute(
                     text(f"UPDATE {table} SET \"Categoria\" = :categoria WHERE \"PLACA\" = :new_plate"),
                     {"new_plate": new_value, "categoria": categoria_value},
@@ -1652,6 +1660,25 @@ def load_combustivel_km() -> pd.DataFrame:
         cache["mtime"] = version
         cache["df"] = km.copy()
         return km.copy()
+
+
+def load_empilhadeira_horas() -> pd.DataFrame:
+    cache = _EMPILHADEIRA_HORAS_CACHE
+    with cache["lock"]:
+        version = _db_version("empilhadeira_horas")
+        cached = cache.get("df")
+        if cached is not None and cache.get("mtime") == version:
+            return cached.copy()
+        try:
+            horas = _read_database_table("empilhadeira_horas", _EMPILHADEIRA_HORAS_COLUMNS)
+            horas = _finalize_common(horas, numeric_columns=["Horas"], plate_columns=["PLACA"])
+            horas = horas.dropna(subset=["Mes", "PLACA"])
+        except Exception:
+            horas = _empty(_EMPILHADEIRA_HORAS_COLUMNS)
+        horas = horas[_EMPILHADEIRA_HORAS_COLUMNS].copy()
+        cache["mtime"] = version
+        cache["df"] = horas.copy()
+        return horas.copy()
 
 
 def _load_text_registry(dataset: str, columns: list[str], column: str) -> pd.DataFrame:
