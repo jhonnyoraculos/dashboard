@@ -385,7 +385,9 @@ def _prepare_insert_row(dataset: str, row: dict) -> dict:
         prepared["Combustivel"] = _normalize_combustivel_value(prepared["Combustivel"])
     if "Categoria" in prepared:
         prepared["Categoria"] = _normalize_category_value(prepared["Categoria"])
-    if prepared.get("PLACA") and _is_equipment_identifier(prepared["PLACA"]):
+    if prepared.get("PLACA") and _is_forklift_identifier(prepared["PLACA"]):
+        prepared["Categoria"] = "Empilhadeira"
+    elif prepared.get("PLACA") and _is_equipment_identifier(prepared["PLACA"]):
         prepared["Categoria"] = "Equipamento"
 
     for column, value in list(prepared.items()):
@@ -1062,11 +1064,18 @@ def _is_plate_or_asset_identifier(value) -> bool:
     return bool(re.fullmatch(r"[A-Z0-9][A-Z0-9 ]{1,39}", text))
 
 
-def _is_equipment_identifier(value) -> bool:
+def _is_forklift_identifier(value) -> bool:
     if pd.isna(value):
         return False
     text = _normalize_ascii(value).upper().strip()
     return "EMPILHADEIRA" in text
+
+
+def _is_equipment_identifier(value) -> bool:
+    if pd.isna(value):
+        return False
+    text = _normalize_ascii(value).upper().strip()
+    return "EQUIPAMENTO" in text
 
 
 def _normalize_plate_series(series: pd.Series) -> pd.Series:
@@ -1128,7 +1137,9 @@ def _normalize_category_value(value, *, default: str = "Transporte") -> str:
         return "Vex"
     if key in {"freteiro", "freteiros", "frete"}:
         return "Freteiro"
-    if key in {"equipamento", "equipamentos", "empilhadeira"}:
+    if key in {"empilhadeira", "empilhadeiras"}:
+        return "Empilhadeira"
+    if key in {"equipamento", "equipamentos"}:
         return "Equipamento"
     return "Transporte"
 
@@ -1146,6 +1157,9 @@ def _normalize_category_column(df: pd.DataFrame, *, default: str = "Transporte")
 def _force_equipment_category(df: pd.DataFrame) -> None:
     if df.empty or "PLACA" not in df.columns or "Categoria" not in df.columns:
         return
+    forklift_mask = df["PLACA"].apply(_is_forklift_identifier)
+    if forklift_mask.any():
+        df.loc[forklift_mask, "Categoria"] = "Empilhadeira"
     mask = df["PLACA"].apply(_is_equipment_identifier)
     if mask.any():
         df.loc[mask, "Categoria"] = "Equipamento"
@@ -1245,12 +1259,16 @@ def _derived_plate_registry() -> pd.DataFrame:
         df.groupby("PLACA", as_index=False)["Categoria"]
         .agg(
             lambda values: (
-                "Equipamento"
-                if any(_normalize_category_value(value) == "Equipamento" for value in values)
+                "Empilhadeira"
+                if any(_normalize_category_value(value) == "Empilhadeira" for value in values)
                 else (
-                    "Vex"
-                    if any(_normalize_category_value(value) == "Vex" for value in values)
-                    else ("Freteiro" if any(_normalize_category_value(value) == "Freteiro" for value in values) else "Transporte")
+                    "Equipamento"
+                    if any(_normalize_category_value(value) == "Equipamento" for value in values)
+                    else (
+                        "Vex"
+                        if any(_normalize_category_value(value) == "Vex" for value in values)
+                        else ("Freteiro" if any(_normalize_category_value(value) == "Freteiro" for value in values) else "Transporte")
+                    )
                 )
             )
         )

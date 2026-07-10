@@ -28,10 +28,10 @@ MUTED = "#6B7280"
 CARD_BORDER = "#c2d2f3"
 LOGO_PATH = Path(__file__).parent / "static" / "logo-jr.png"
 CURRENT_YEAR = date.today().year
-APP_VERSION = "deploy-zerar-pedagio-v1"
+APP_VERSION = "deploy-empilhadeiras-v1"
 BR_TZ = ZoneInfo("America/Sao_Paulo")
-CATEGORY_OPTIONS = ["Transporte", "Freteiro", "Vex", "Equipamento"]
-CADASTRO_TABS = ["Placas", "Combustível", "KM mensal", "Manutenção", "Pneus", "Hotéis", "Peso", "Pedágio/Extras"]
+CATEGORY_OPTIONS = ["Transporte", "Freteiro", "Empilhadeira", "Vex", "Equipamento"]
+CADASTRO_TABS = ["Placas", "Empilhadeiras", "Combustível", "KM mensal", "Manutenção", "Pneus", "Hotéis", "Peso", "Pedágio/Extras"]
 PEDAGIO_TIPO_OPTIONS = ["Pedagio", "Extras", "Taxi", "IPVA", "Seguro", "Licenciamento", "DPVAT", "Outros"]
 PEDAGIO_OPTIONAL_PLATE_TYPES = {"Extras", "Taxi"}
 
@@ -4724,7 +4724,9 @@ def _registered_plate_map() -> dict[str, str]:
         if placa:
             normalized = categoria.lower()
             if "EMPILHADEIRA" in placa:
-                mapping[placa] = "Equipamento"
+                mapping[placa] = "Empilhadeira"
+            elif normalized == "empilhadeira":
+                mapping[placa] = "Empilhadeira"
             elif normalized == "vex":
                 mapping[placa] = "Vex"
             elif "fret" in normalized:
@@ -4826,9 +4828,9 @@ def _plate_fields(prefix: str, plate_map: dict[str, str] | None = None) -> tuple
     if selected == "Cadastrar nova placa":
         placa = st.text_input("Nova placa", placeholder="ABC1D23", key=f"{prefix}_placa_manual").upper()
         categoria_key = f"{prefix}_categoria_manual"
-        default_categoria = "Equipamento" if "EMPILHADEIRA" in clean_text(placa).upper() else "Transporte"
-        if default_categoria == "Equipamento" and st.session_state.get(categoria_key, "Transporte") == "Transporte":
-            st.session_state[categoria_key] = "Equipamento"
+        default_categoria = "Empilhadeira" if "EMPILHADEIRA" in clean_text(placa).upper() else "Transporte"
+        if default_categoria == "Empilhadeira" and st.session_state.get(categoria_key, "Transporte") == "Transporte":
+            st.session_state[categoria_key] = "Empilhadeira"
         categoria = st.selectbox("Categoria da placa", CATEGORY_OPTIONS, index=CATEGORY_OPTIONS.index(default_categoria), key=categoria_key)
         return placa, categoria
     if selected is None:
@@ -4905,6 +4907,8 @@ def _save_plate_sheet(original_map: dict[str, str], edited: pd.DataFrame) -> boo
             categoria_final = "Vex"
         elif "fret" in normalized:
             categoria_final = "Freteiro"
+        elif normalized == "empilhadeira":
+            categoria_final = "Empilhadeira"
         elif normalized == "equipamento":
             categoria_final = "Equipamento"
         else:
@@ -6542,9 +6546,9 @@ def render_cadastro() -> None:
                 with c1:
                     placa = st.text_input("Placa", placeholder="ABC1D23", key="cad_placa_nome").upper()
                 with c2:
-                    default_categoria = "Equipamento" if "EMPILHADEIRA" in clean_text(placa).upper() else "Transporte"
-                    if default_categoria == "Equipamento" and st.session_state.get("cad_placa_categoria", "Transporte") == "Transporte":
-                        st.session_state["cad_placa_categoria"] = "Equipamento"
+                    default_categoria = "Empilhadeira" if "EMPILHADEIRA" in clean_text(placa).upper() else "Transporte"
+                    if default_categoria == "Empilhadeira" and st.session_state.get("cad_placa_categoria", "Transporte") == "Transporte":
+                        st.session_state["cad_placa_categoria"] = "Empilhadeira"
                     categoria = st.selectbox("Categoria", CATEGORY_OPTIONS, index=CATEGORY_OPTIONS.index(default_categoria), key="cad_placa_categoria")
                 with c3:
                     st.write("")
@@ -6593,6 +6597,35 @@ def render_cadastro() -> None:
                     _save_plate_sheet(plate_map, edited_plates)
             else:
                 st.info("Cadastre a primeira placa para liberar a edição.")
+
+        if active_tab == "Empilhadeiras":
+            with st.form("form_empilhadeiras", clear_on_submit=True):
+                c1, c2, c3 = st.columns([1.2, 1.0, 1.0])
+                with c1:
+                    empilhadeira = st.text_input("Empilhadeira", placeholder="EMPILHADEIRA 01", key="cad_empilhadeira_nome").upper()
+                with c2:
+                    st.text_input("Categoria", value="Empilhadeira", disabled=True, key="cad_empilhadeira_categoria")
+                with c3:
+                    st.write("")
+                    submitted = st.form_submit_button("Cadastrar empilhadeira", type="primary", width="stretch")
+                if submitted:
+                    _save_entry(
+                        "placas",
+                        {"PLACA": empilhadeira, "Categoria": "Empilhadeira"},
+                        required=["PLACA"],
+                        replace_keys=["PLACA"],
+                        success="Empilhadeira cadastrada/atualizada.",
+                    )
+
+            empilhadeiras = [
+                {"Empilhadeira": placa, "Categoria": categoria}
+                for placa, categoria in _registered_plate_map().items()
+                if categoria == "Empilhadeira"
+            ]
+            if empilhadeiras:
+                st.dataframe(pd.DataFrame(empilhadeiras), width="stretch", hide_index=True)
+            else:
+                st.info("Nenhuma empilhadeira cadastrada ainda.")
 
         if active_tab == "Combustível":
             combustivel_options = _registered_text_options(backend.load_combustiveis, "Combustivel")
