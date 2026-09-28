@@ -2795,7 +2795,12 @@ def clear_cached_reads() -> None:
 
 
 def route_json(route: str, params: dict[str, object] | None = None) -> dict:
-    database_version = backend.dashboard_data_version(force=True)
+    try:
+        database_version = backend.dashboard_data_version(force=True)
+    except TypeError:
+        # Compatibilidade durante o hot reload do Streamlit, quando o frontend
+        # novo pode conviver por alguns instantes com o backend antigo em memoria.
+        database_version = backend.dashboard_data_version()
     version = f"{APP_VERSION}:{database_version!r}"
     return _route_json_cached(route, _freeze_route_params(params), version)
 
