@@ -2795,7 +2795,9 @@ def clear_cached_reads() -> None:
 
 
 def route_json(route: str, params: dict[str, object] | None = None) -> dict:
-    return _route_json_cached(route, _freeze_route_params(params), APP_VERSION)
+    database_version = backend.dashboard_data_version(force=True)
+    version = f"{APP_VERSION}:{database_version!r}"
+    return _route_json_cached(route, _freeze_route_params(params), version)
 
 
 def route_json_uncached(route: str, params: dict[str, object] | None = None) -> dict:
@@ -10165,7 +10167,7 @@ def render_cadastro() -> None:
 
             _render_dataset_editor(
                 "hoteis",
-                backend.load_hoteis,
+                backend.load_hoteis_manual,
                 ["Data", "Mes", "Cidade", "Hotel", "Tipo", "Motorista", "Ajudante", "Dias", "Valor", "Categoria"],
                 ["Data", "Cidade", "Hotel"],
                 "cad_hotel_table",

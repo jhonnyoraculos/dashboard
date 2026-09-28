@@ -123,6 +123,12 @@ _HOTEIS_COLUMNS = [
     "Hotel",
     "Tipo",
     "Categoria",
+    "Reserva ID",
+    "Reserva Origem ID",
+    "Nao Planejada",
+    "Observacao",
+    "Origem",
+    "Atualizado Em",
 ]
 _PEDAGIO_COLUMNS = ["PLACA", "Tipo", "Custo", "Mes", "Data", "Categoria"]
 _ALUGUEL_VEICULOS_COLUMNS = [
@@ -175,6 +181,10 @@ _COLUMN_SQL_TYPES = {
     "POSTOS": "TEXT",
     "PLACA": "TEXT",
     "Categoria": "TEXT",
+    "Reserva ID": "UUID",
+    "Reserva Origem ID": "BIGINT",
+    "Nao Planejada": "BOOLEAN",
+    "Atualizado Em": "TIMESTAMPTZ",
     "Diaria": "DOUBLE PRECISION",
     "Valor": "DOUBLE PRECISION",
     "Dias": "DOUBLE PRECISION",
@@ -290,8 +300,12 @@ def _db_version(dataset: str):
     return metadata.get(f"{dataset}.version", metadata.get("import.version", "database"))
 
 
-def dashboard_data_version(datasets: list[str] | tuple[str, ...] | None = None) -> tuple[tuple[str, str], ...]:
-    metadata = _metadata_table_values()
+def dashboard_data_version(
+    datasets: list[str] | tuple[str, ...] | None = None,
+    *,
+    force: bool = False,
+) -> tuple[tuple[str, str], ...]:
+    metadata = _metadata_table_values(force=force)
     selected = tuple(datasets or DB_TABLES.keys())
     fallback = metadata.get("import.version", "database")
     return tuple(
@@ -529,6 +543,13 @@ def _ensure_dataset_table(conn, dataset: str) -> None:
     for column in _DATASET_COLUMNS[dataset]:
         sql_type = _COLUMN_SQL_TYPES.get(column, "TEXT")
         conn.execute(text(f"ALTER TABLE {table} ADD COLUMN IF NOT EXISTS {_quote_identifier(column)} {sql_type}"))
+    if dataset == "hoteis":
+        conn.execute(
+            text(
+                f"CREATE UNIQUE INDEX IF NOT EXISTS uq_dashboard_hoteis_reserva_id "
+                f"ON {table} ({_quote_identifier('Reserva ID')})"
+            )
+        )
     if dataset == "aluguel_veiculos":
         conn.execute(
             text(
@@ -647,7 +668,12 @@ def replace_dashboard_records(dataset: str, rows: list[dict]) -> str:
 
     with _db_engine().begin() as conn:
         _ensure_dataset_table(conn, dataset)
-        conn.execute(text(f"DELETE FROM {table}"))
+        if dataset == "hoteis":
+            # Registros sincronizados pertencem ao sistema de reservas. O editor
+            # manual so regrava as linhas historicas que nao possuem UUID.
+            conn.execute(text(f"DELETE FROM {table} WHERE {_quote_identifier('Reserva ID')} IS NULL"))
+        else:
+            conn.execute(text(f"DELETE FROM {table}"))
         for prepared in prepared_rows:
             value_refs, value_params = _bind_columns(columns, prepared, "value")
             value_sql = ", ".join(value_refs[column] for column in columns)
@@ -2556,10 +2582,22 @@ def load_hoteis() -> pd.DataFrame:
             numeric_columns=["Valor", "Dias"],
             text_columns=["Motorista", "Ajudante", "Cidade", "Hotel", "Tipo"],
         )
-        df["Categoria"] = "Transporte"
+        if "Categoria" not in df.columns:
+            df["Categoria"] = "Transporte"
+        else:
+            empty_category = df["Categoria"].isna() | df["Categoria"].astype("string").str.strip().eq("")
+            df.loc[empty_category, "Categoria"] = "Transporte"
         cache["mtime"] = version
         cache["df"] = df.copy()
         return df.copy()
+
+
+def load_hoteis_manual() -> pd.DataFrame:
+    """Retorna somente as linhas que podem ser editadas diretamente no dashboard."""
+    df = load_hoteis()
+    if "Reserva ID" not in df.columns:
+        return df
+    return df.loc[df["Reserva ID"].isna()].copy()
 
 
 def _load_alertas_vex_seed() -> pd.DataFrame:

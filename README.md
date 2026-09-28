@@ -42,3 +42,11 @@ set JR_DATA_SOURCE=database
 ```
 
 Os arquivos de dados antigos nao fazem parte do deploy do Streamlit.
+
+## Reservas de hoteis
+
+O sistema de Reservas envia somente registros criados depois da implantacao para
+`dashboard_hoteis`, usando o UUID permanente da reserva e `INSERT ... ON CONFLICT DO UPDATE`.
+As linhas historicas do dashboard permanecem sem UUID e nao sao alteradas. Reservas
+sincronizadas sao somente leitura no editor manual do dashboard; novas edicoes devem
+ser feitas no sistema de Reservas, que atualiza o mesmo registro automaticamente.
