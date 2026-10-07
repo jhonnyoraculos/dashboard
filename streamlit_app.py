@@ -10840,7 +10840,11 @@ def render_cadastro() -> None:
                     data = st.date_input("Data", value=date.today(), key="cad_pneu_data")
                     placa, categoria = _plate_fields("cad_pneu", plate_map)
                 with c2:
-                    fornecedor = st.text_input("Fornecedor", placeholder="PNEUSMAX", key="cad_pneu_fornecedor")
+                    fornecedor = st.text_input(
+                        "Fornecedor",
+                        placeholder="Digite o nome do fornecedor",
+                        key="cad_pneu_fornecedor",
+                    )
                     observacao = st.text_input("Observação", key="cad_pneu_observacao")
                 with c3:
                     custo = st.number_input("Custo", min_value=0.0, step=10.0, format="%.2f", key="cad_pneu_custo")
