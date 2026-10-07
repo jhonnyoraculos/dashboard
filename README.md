@@ -50,3 +50,13 @@ O sistema de Reservas envia somente registros criados depois da implantacao para
 As linhas historicas do dashboard permanecem sem UUID e nao sao alteradas. Reservas
 sincronizadas sao somente leitura no editor manual do dashboard; novas edicoes devem
 ser feitas no sistema de Reservas, que atualiza o mesmo registro automaticamente.
+
+## Velocidade
+
+O dashboard de Velocidade usa uma linha por viagem para calcular velocidade media
+ponderada, duracao, tempo parado, SLA e eventos de excesso. Os dados podem ser
+incluidos manualmente ou em lote em `Adicionar dados > Velocidade`.
+
+Nessa aba tambem estao disponiveis modelos de importacao em Excel e CSV. O modelo
+Excel inclui as abas `Importacao`, `Exemplo` e `Instrucoes`; preencha a aba
+`Importacao` antes de enviar o arquivo.

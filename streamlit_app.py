@@ -12,7 +12,7 @@ import subprocess
 import unicodedata
 import zipfile
 from io import BytesIO
-from datetime import date, datetime, timedelta, timezone
+from datetime import date, datetime, time as datetime_time, timedelta, timezone
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
@@ -37,6 +37,7 @@ _backend_features_ready = all(
         "upsert_dashboard_records",
         "append_missing_dashboard_records",
         "load_alertas_vex",
+        "load_velocidade",
     )
 )
 _backend_aluguel_period_ready = {"Inicio", "Fim"}.issubset(
@@ -53,7 +54,7 @@ MUTED = "#6B7280"
 CARD_BORDER = "#c2d2f3"
 LOGO_PATH = Path(__file__).parent / "static" / "logo-jr.png"
 CURRENT_YEAR = date.today().year
-APP_VERSION = "deploy-vex-custo-total-km-v9"
+APP_VERSION = "deploy-cadastro-rapido-velocidade-v1"
 RANK_ROUTES_ENABLED = False
 ROUTE_CACHE_TTL_SECONDS = max(int(os.environ.get("JR_ROUTE_CACHE_TTL_SECONDS", "180") or 180), 30)
 DATA_EDITOR_PAGE_SIZE = 100
@@ -61,7 +62,7 @@ DATA_EDITOR_ALL_PAGES = "__todos_os_registros__"
 TABLE_FILTER_EMPTY_LABEL = "Sem informação"
 BR_TZ = ZoneInfo("America/Sao_Paulo")
 CATEGORY_OPTIONS = ["Transporte", "Freteiro", "Empilhadeira", "Estoque", "Vex", "Equipamento"]
-CADASTRO_TABS = ["Placas", "Empilhadeiras", "Combustível", "KM mensal", "Manutenção", "Pneus", "Hotéis", "Peso", "Pedágio/Extras", "Aluguel de veículos"]
+CADASTRO_TABS = ["Placas", "Empilhadeiras", "Combustível", "KM mensal", "Manutenção", "Pneus", "Hotéis", "Peso", "Velocidade", "Pedágio/Extras", "Aluguel de veículos"]
 PEDAGIO_TIPO_OPTIONS = ["Pedágio", "Extras", "Táxi", "IPVA", "Seguro", "Licenciamento", "DPVAT", "Outros"]
 PEDAGIO_OPTIONAL_PLATE_TYPES = {"Extras", "Táxi"}
 BACKUP_INTERVAL_DAYS = 7
@@ -86,6 +87,7 @@ BACKUP_TABLES = [
     ("pedagio", "Pedágio e Extras", "pedagio_extras", backend.load_pedagio),
     ("aluguel_veiculos", "Aluguel de Veículos Vex", "aluguel_veiculos_vex", backend.load_aluguel_veiculos),
     ("alertas_vex", "Alertas Vex", "alertas_vex", backend.load_alertas_vex),
+    ("velocidade", "Velocidade", "velocidade", backend.load_velocidade),
 ]
 
 PLOTLY_CONFIG = {
@@ -126,6 +128,7 @@ ROUTES = {
     "vex": backend.data_vex,
     "frota": backend.data_frota,
     "alertas": backend.data_alertas_vex,
+    "velocidade": backend.data_velocidade,
     "overview": backend.data_overview,
     "overview_options": backend.data_overview_options,
 }
@@ -137,6 +140,7 @@ DASHBOARD_META = {
     "pedagio": {"label": "Pedágio/Extras", "color": "#D97706", "supports_plate": True},
     "vex": {"label": "Vex", "color": "#7C3AED", "supports_plate": True},
     "frota": {"label": "Ranking da frota", "color": JR_BLUE, "supports_plate": True},
+    "velocidade": {"label": "Velocidade", "color": "#0F766E", "supports_plate": True},
 }
 COMPARE_ALLOWED_ROUTES = {"combustivel", "manutencao", "pedagio"}
 
@@ -450,6 +454,7 @@ def inject_css() -> None:
         .st-key-hotel_filterbar,
         .st-key-ped_filterbar,
         .st-key-vex_filterbar,
+        .st-key-vel_filterbar,
         .st-key-rank_filterbar {{
           background: var(--jr-blue);
           margin: -2px calc(50% - 50vw) 58px;
@@ -472,6 +477,7 @@ def inject_css() -> None:
         .st-key-hotel_filterbar > div,
         .st-key-ped_filterbar > div,
         .st-key-vex_filterbar > div,
+        .st-key-vel_filterbar > div,
         .st-key-rank_filterbar > div {{
           position: relative;
           z-index: 1;
@@ -482,6 +488,7 @@ def inject_css() -> None:
         .st-key-hotel_filterbar label,
         .st-key-ped_filterbar label,
         .st-key-vex_filterbar label,
+        .st-key-vel_filterbar label,
         .st-key-rank_filterbar label {{
           display: none !important;
         }}
@@ -625,6 +632,7 @@ def inject_css() -> None:
         .st-key-hotel_filterbar div[data-baseweb="select"] > div,
         .st-key-ped_filterbar div[data-baseweb="select"] > div,
         .st-key-vex_filterbar div[data-baseweb="select"] > div,
+        .st-key-vel_filterbar div[data-baseweb="select"] > div,
         .st-key-rank_filterbar div[data-baseweb="select"] > div {{
           min-height: 38px;
           border-radius: 8px;
@@ -638,6 +646,7 @@ def inject_css() -> None:
         .st-key-hotel_filterbar [data-testid="stHorizontalBlock"],
         .st-key-ped_filterbar [data-testid="stHorizontalBlock"],
         .st-key-vex_filterbar [data-testid="stHorizontalBlock"],
+        .st-key-vel_filterbar [data-testid="stHorizontalBlock"],
         .st-key-rank_filterbar [data-testid="stHorizontalBlock"] {{
           gap: 12px;
           align-items: stretch;
@@ -649,6 +658,7 @@ def inject_css() -> None:
         .st-key-hotel_filterbar :is([data-testid="column"], [data-testid="stColumn"]),
         .st-key-ped_filterbar :is([data-testid="column"], [data-testid="stColumn"]),
         .st-key-vex_filterbar :is([data-testid="column"], [data-testid="stColumn"]),
+        .st-key-vel_filterbar :is([data-testid="column"], [data-testid="stColumn"]),
         .st-key-rank_filterbar :is([data-testid="column"], [data-testid="stColumn"]) {{
           flex: 1 1 150px !important;
           min-width: 145px !important;
@@ -2144,6 +2154,7 @@ def inject_css() -> None:
         .st-key-hotel_filterbar,
         .st-key-ped_filterbar,
         .st-key-vex_filterbar,
+        .st-key-vel_filterbar,
         .st-key-rank_filterbar {{
           background:
             linear-gradient(135deg, rgba(28,45,107,.95), rgba(28,45,107,.82)),
@@ -2450,6 +2461,7 @@ def inject_css() -> None:
         .st-key-hotel_filterbar,
         .st-key-ped_filterbar,
         .st-key-vex_filterbar,
+        .st-key-vel_filterbar,
         .st-key-rank_filterbar {{
           box-shadow: 0 3px 10px rgba(7,15,40,.16) !important;
         }}
@@ -2519,6 +2531,7 @@ def inject_css() -> None:
           .st-key-hotel_filterbar,
           .st-key-ped_filterbar,
           .st-key-vex_filterbar,
+          .st-key-vel_filterbar,
           .st-key-rank_filterbar {{
             margin: 0 calc(50% - 50vw) 18px;
             width: 100vw;
@@ -2533,6 +2546,7 @@ def inject_css() -> None:
           .st-key-hotel_filterbar [data-testid="stHorizontalBlock"],
           .st-key-ped_filterbar [data-testid="stHorizontalBlock"],
           .st-key-vex_filterbar [data-testid="stHorizontalBlock"],
+          .st-key-vel_filterbar [data-testid="stHorizontalBlock"],
           .st-key-rank_filterbar [data-testid="stHorizontalBlock"] {{
             flex-wrap: nowrap !important;
             align-items: stretch;
@@ -2550,6 +2564,7 @@ def inject_css() -> None:
           .st-key-hotel_filterbar :is([data-testid="column"], [data-testid="stColumn"]),
           .st-key-ped_filterbar :is([data-testid="column"], [data-testid="stColumn"]),
           .st-key-vex_filterbar :is([data-testid="column"], [data-testid="stColumn"]),
+          .st-key-vel_filterbar :is([data-testid="column"], [data-testid="stColumn"]),
           .st-key-rank_filterbar :is([data-testid="column"], [data-testid="stColumn"]) {{
             flex: 0 0 clamp(132px, 43vw, 190px) !important;
             min-width: clamp(132px, 43vw, 190px) !important;
@@ -2562,6 +2577,7 @@ def inject_css() -> None:
           .st-key-hotel_filterbar div[data-baseweb="select"] > div,
           .st-key-ped_filterbar div[data-baseweb="select"] > div,
           .st-key-vex_filterbar div[data-baseweb="select"] > div,
+          .st-key-vel_filterbar div[data-baseweb="select"] > div,
           .st-key-rank_filterbar div[data-baseweb="select"] > div {{
             min-height: 36px;
           }}
@@ -2571,6 +2587,7 @@ def inject_css() -> None:
           .st-key-hotel_filterbar span[data-baseweb="tag"],
           .st-key-ped_filterbar span[data-baseweb="tag"],
           .st-key-vex_filterbar span[data-baseweb="tag"],
+          .st-key-vel_filterbar span[data-baseweb="tag"],
           .st-key-rank_filterbar span[data-baseweb="tag"] {{
             max-width: 74px;
             min-height: 22px;
@@ -2581,6 +2598,7 @@ def inject_css() -> None:
           .st-key-hotel_filterbar span[data-baseweb="tag"] span,
           .st-key-ped_filterbar span[data-baseweb="tag"] span,
           .st-key-vex_filterbar span[data-baseweb="tag"] span,
+          .st-key-vel_filterbar span[data-baseweb="tag"] span,
           .st-key-rank_filterbar span[data-baseweb="tag"] span {{
             overflow: hidden;
             text-overflow: ellipsis;
@@ -2730,6 +2748,7 @@ def inject_css() -> None:
           .st-key-hotel_filterbar :is([data-testid="column"], [data-testid="stColumn"]),
           .st-key-ped_filterbar :is([data-testid="column"], [data-testid="stColumn"]),
           .st-key-vex_filterbar :is([data-testid="column"], [data-testid="stColumn"]),
+          .st-key-vel_filterbar :is([data-testid="column"], [data-testid="stColumn"]),
           .st-key-rank_filterbar :is([data-testid="column"], [data-testid="stColumn"]) {{
             flex-basis: 150px !important;
             min-width: 150px !important;
@@ -2742,6 +2761,7 @@ def inject_css() -> None:
           .st-key-hotel_filterbar .stButton > button,
           .st-key-ped_filterbar .stButton > button,
           .st-key-vex_filterbar .stButton > button,
+          .st-key-vel_filterbar .stButton > button,
           .st-key-rank_filterbar .stButton > button {{
             min-height: 36px;
             padding-left: 8px;
@@ -2757,6 +2777,48 @@ def inject_css() -> None:
         </style>
         """,
         unsafe_allow_html=True,
+    )
+
+
+def enable_numeric_input_overwrite() -> None:
+    """Faz o primeiro numero digitado substituir o valor atual do campo."""
+    components.html(
+        """
+        <script>
+        (() => {
+          const parentWindow = window.parent;
+          const parentDocument = parentWindow.document;
+          const marker = "__jrNumericOverwriteEnabled";
+          if (parentDocument[marker]) return;
+
+          const numberInput = (target) => {
+            if (!(target instanceof parentWindow.HTMLInputElement)) return null;
+            return target.closest('[data-testid="stNumberInput"]') ? target : null;
+          };
+          const arm = (input) => {
+            if (!input || input.disabled || input.readOnly) return;
+            input.dataset.jrReplaceOnType = "1";
+            parentWindow.setTimeout(() => {
+              try { input.select(); } catch (_) {}
+            }, 0);
+          };
+
+          parentDocument.addEventListener("focusin", (event) => arm(numberInput(event.target)), true);
+          parentDocument.addEventListener("pointerdown", (event) => arm(numberInput(event.target)), true);
+          parentDocument.addEventListener("keydown", (event) => {
+            const input = numberInput(event.target);
+            if (!input || input.dataset.jrReplaceOnType !== "1") return;
+            if (event.ctrlKey || event.metaKey || event.altKey || !/^[0-9.,-]$/.test(event.key)) return;
+            input.dataset.jrReplaceOnType = "0";
+            input.value = "";
+          }, true);
+
+          parentDocument[marker] = true;
+        })();
+        </script>
+        """,
+        height=0,
+        scrolling=False,
     )
 
 
@@ -2795,12 +2857,9 @@ def clear_cached_reads() -> None:
 
 
 def route_json(route: str, params: dict[str, object] | None = None) -> dict:
-    try:
-        database_version = backend.dashboard_data_version(force=True)
-    except TypeError:
-        # Compatibilidade durante o hot reload do Streamlit, quando o frontend
-        # novo pode conviver por alguns instantes com o backend antigo em memoria.
-        database_version = backend.dashboard_data_version()
+    # A escrita local atualiza esse cache imediatamente; nas leituras comuns,
+    # reutiliza-lo evita uma consulta extra ao Neon para cada bloco da pagina.
+    database_version = backend.dashboard_data_version()
     version = f"{APP_VERSION}:{database_version!r}"
     return _route_json_cached(route, _freeze_route_params(params), version)
 
@@ -2870,6 +2929,23 @@ def fmt_percent(value: object, decimals: int = 2) -> str:
     except (TypeError, ValueError):
         return "—"
     return f"{fmt_num(number, decimals)}%"
+
+
+def fmt_duration_minutes(value: object) -> str:
+    if value is None:
+        return "—"
+    try:
+        minutes = max(float(value), 0.0)
+    except (TypeError, ValueError):
+        return "—"
+    if minutes < 60:
+        return f"{fmt_num(minutes, 1)} min"
+    hours = int(minutes // 60)
+    remaining = int(round(minutes - hours * 60))
+    if remaining == 60:
+        hours += 1
+        remaining = 0
+    return f"{hours}h {remaining:02d}min"
 
 
 def fmt_peso(value: object) -> str:
@@ -3496,6 +3572,108 @@ def pie_chart(labels: list, values: list, *, hole: float = 0.45, show_values: bo
     )
     fig.update_layout(showlegend=True, legend={"orientation": "h", "x": 0.5, "xanchor": "center", "y": -0.2})
     return apply_theme(fig, height=360, margin={"l": 16, "r": 16, "t": 30, "b": 90})
+
+
+def metric_line_chart(
+    labels: list,
+    values: list,
+    *,
+    unit: str,
+    decimals: int = 1,
+    color: str = JR_BLUE,
+) -> go.Figure:
+    labels_clean = [clean_text(label) for label in labels or []]
+    values_clean = [float(value or 0) for value in values or []]
+    value_text = [f"{fmt_num(value, decimals)} {unit}".strip() for value in values_clean]
+    max_value = max(values_clean) if values_clean else 0.0
+    fig = go.Figure(
+        go.Scatter(
+            x=labels_clean,
+            y=values_clean,
+            mode="lines+markers+text",
+            line={"color": color, "width": 3},
+            marker={"color": JR_RED, "size": 7},
+            text=value_text,
+            textposition="top center",
+            textfont={"size": 10, "color": JR_BLUE},
+            cliponaxis=False,
+            hovertemplate=f"<b>%{{x}}</b><br>%{{y:.{decimals}f}} {unit}<extra></extra>",
+        )
+    )
+    fig.update_xaxes(tickangle=-30, type="category")
+    fig.update_yaxes(
+        ticksuffix=f" {unit}" if unit else "",
+        range=[0, max_value * 1.2] if max_value else None,
+        rangemode="tozero",
+        automargin=True,
+    )
+    return apply_theme(fig, height=370, margin={"l": 70, "r": 70, "t": 60, "b": 65})
+
+
+def metric_bar_chart(
+    labels: list,
+    values: list,
+    *,
+    unit: str,
+    decimals: int = 1,
+    horizontal: bool = False,
+    sort_desc: bool = False,
+    color: str = JR_BLUE,
+) -> go.Figure:
+    rows = [(clean_text(label), float(value or 0)) for label, value in zip(labels or [], values or [])]
+    if sort_desc:
+        rows.sort(key=lambda item: item[1], reverse=True)
+    labels_clean = [item[0] for item in rows]
+    values_clean = [item[1] for item in rows]
+    value_text = [f"{fmt_num(value, decimals)} {unit}".strip() for value in values_clean]
+    max_value = max(values_clean) if values_clean else 0.0
+
+    if horizontal:
+        fig = go.Figure(
+            go.Bar(
+                x=values_clean,
+                y=labels_clean,
+                orientation="h",
+                marker={"color": color},
+                text=value_text,
+                textposition="outside",
+                textfont={"size": 11, "color": JR_BLUE},
+                cliponaxis=False,
+                hovertemplate=f"<b>%{{y}}</b><br>%{{x:.{decimals}f}} {unit}<extra></extra>",
+            )
+        )
+        fig.update_xaxes(
+            ticksuffix=f" {unit}" if unit else "",
+            range=[0, max_value * 1.34] if max_value else None,
+            rangemode="tozero",
+        )
+        fig.update_yaxes(autorange="reversed", automargin=True, tickfont={"size": 11})
+        fig = apply_theme(
+            fig,
+            height=max(340, 100 + len(labels_clean) * 34),
+            margin={"l": 150, "r": 110, "t": 25, "b": 50},
+        )
+        return update_figure_meta(fig, jr_horizontal_bar=True, jr_row_count=len(labels_clean))
+
+    fig = go.Figure(
+        go.Bar(
+            x=labels_clean,
+            y=values_clean,
+            marker={"color": color},
+            text=value_text,
+            textposition="outside",
+            textfont={"size": 10, "color": JR_BLUE},
+            cliponaxis=False,
+            hovertemplate=f"<b>%{{x}}</b><br>%{{y:.{decimals}f}} {unit}<extra></extra>",
+        )
+    )
+    fig.update_xaxes(tickangle=-30, type="category", automargin=True)
+    fig.update_yaxes(
+        ticksuffix=f" {unit}" if unit else "",
+        range=[0, max_value * 1.2] if max_value else None,
+        rangemode="tozero",
+    )
+    return apply_theme(fig, height=360, margin={"l": 70, "r": 55, "t": 60, "b": 70})
 
 
 def peso_pie_chart(labels: list, values: list, city_counts: list | None = None, city_summaries: dict | None = None) -> go.Figure:
@@ -4527,6 +4705,7 @@ def filter_controls(
     extra_filters: list[tuple[str, str, list]],
     key_prefix: str,
     all_data: dict | None = None,
+    allow_compare: bool = True,
 ) -> tuple[dict[str, object], dict]:
     all_data = all_data if all_data is not None else route_json(route, {"ano": "Todos", "mes": ["Todos"]})
     years = all_data.get("anos", []) or []
@@ -4536,8 +4715,15 @@ def filter_controls(
 
     with st.container(key=f"{key_prefix}_filterbar"):
         filter_widths = [1.1 if len(label) > 10 else 1.0 for _, label, _ in extra_filters]
-        compare_options = [key for key in DASHBOARD_META if key in COMPARE_ALLOWED_ROUTES and key != route]
-        widths = [0.85, 1.25, *filter_widths, 1.35, 1.05, 0.8]
+        compare_options = (
+            [key for key in DASHBOARD_META if key in COMPARE_ALLOWED_ROUTES and key != route]
+            if allow_compare
+            else []
+        )
+        widths = [0.85, 1.25, *filter_widths]
+        if allow_compare:
+            widths.append(1.35)
+        widths.extend([1.05, 0.8])
         filter_cols = st.columns(widths)
         with filter_cols[0]:
             ano = st.selectbox(
@@ -4598,21 +4784,23 @@ def filter_controls(
                 )
                 params[param_name] = "Todos" if selected is None else selected
 
-        compare_key = f"{key_prefix}_compare"
-        compare_state_exists = compare_key in st.session_state
-        compare_current = [item for item in st.session_state.get(compare_key, []) if item in compare_options]
-        if compare_state_exists and st.session_state.get(compare_key) != compare_current:
-            st.session_state[compare_key] = compare_current
-        compare_kwargs = {
-            "key": compare_key,
-            "format_func": lambda value: DASHBOARD_META.get(value, {}).get("label", value),
-            "label_visibility": "collapsed",
-            "placeholder": "Comparar",
-        }
-        if not compare_state_exists:
-            compare_kwargs["default"] = []
-        with filter_cols[-3]:
-            compare_selected = st.multiselect("Comparar", compare_options, **compare_kwargs)
+        compare_selected = []
+        if allow_compare:
+            compare_key = f"{key_prefix}_compare"
+            compare_state_exists = compare_key in st.session_state
+            compare_current = [item for item in st.session_state.get(compare_key, []) if item in compare_options]
+            if compare_state_exists and st.session_state.get(compare_key) != compare_current:
+                st.session_state[compare_key] = compare_current
+            compare_kwargs = {
+                "key": compare_key,
+                "format_func": lambda value: DASHBOARD_META.get(value, {}).get("label", value),
+                "label_visibility": "collapsed",
+                "placeholder": "Comparar",
+            }
+            if not compare_state_exists:
+                compare_kwargs["default"] = []
+            with filter_cols[-3]:
+                compare_selected = st.multiselect("Comparar", compare_options, **compare_kwargs)
 
         with filter_cols[-2]:
             if st.button("Limpar filtros", key=f"{key_prefix}_clear", width="stretch"):
@@ -6137,7 +6325,7 @@ def render_home() -> None:
             <div>
               <p class="home-eyebrow">JR Ferragens &amp; Madeiras</p>
               <h1>Dashboards operacionais</h1>
-              <p class="home-subtitle">Monitore combustível, manutenção, hospedagens e despesas de pedágio/extras em tempo real, com dados centralizados no Neon.</p>
+              <p class="home-subtitle">Monitore velocidade, combustível, manutenção, hospedagens e despesas de pedágio/extras em tempo real, com dados centralizados no Neon.</p>
             </div>
           </div>
           <a class="home-cta" href="#dashboards">Explorar dashboards</a>
@@ -6273,6 +6461,12 @@ def render_home() -> None:
             <ul class="home-list"><li>Ordenação por combustível, manutenção, pedágio/extras ou total</li><li>Métricas individuais dentro da própria linha</li><li>Filtros por ano, mês e categoria</li></ul>
             <span class="home-link">Abrir dashboard &rarr;</span>
           </a>
+          <a class="home-card" href="?page=velocidade" target="_self" aria-label="Abrir dashboard Velocidade">
+            <div><span class="home-chip">Velocidade</span><h2>Ritmo, duração e cumprimento de metas</h2></div>
+            <p class="home-card-text">Acompanhe cada viagem por placa, motorista e rota, com velocidade média ponderada e indicadores de tempo.</p>
+            <ul class="home-list"><li>Velocidade média, máxima e distância percorrida</li><li>Tempo em rota, paradas e atrasos</li><li>SLA e eventos de excesso por período</li></ul>
+            <span class="home-link">Abrir dashboard &rarr;</span>
+          </a>
           <a class="home-card" href="?page=combustivel" target="_self" aria-label="Abrir dashboard Combustível">
             <div><span class="home-chip">Combustível</span><h2>Consumo, custo e eficiência da frota</h2></div>
             <p class="home-card-text">Filtros por mês, placa, posto e tipo de combustível com KPIs e gráficos de desempenho.</p>
@@ -6402,8 +6596,6 @@ def _save_entry(
     if reset_table_key:
         _clear_table_filter_state(reset_table_key)
         _reset_dataset_editor(reset_table_key)
-        st.session_state[f"{reset_table_key}_last_success"] = success
-        st.rerun()
     st.success(success)
     return True
 
@@ -6792,6 +6984,30 @@ def _reset_dataset_editor(key_prefix: str) -> None:
     st.session_state[key] = st.session_state.get(key, 0) + 1
 
 
+def _validate_velocity_editor_rows(rows: list[dict]) -> bool:
+    for index, row in enumerate(rows, start=1):
+        saida = pd.to_datetime(row.get("Saida"), errors="coerce")
+        chegada = pd.to_datetime(row.get("Chegada"), errors="coerce")
+        distancia = _parse_brl_number(row.get("Distancia Km"))
+        tempo_parado = _parse_brl_number(row.get("Tempo Parado Min")) or 0.0
+        eventos = _parse_brl_number(row.get("Eventos Excesso"))
+
+        if pd.isna(saida) or pd.isna(chegada) or chegada <= saida:
+            st.warning(f"Linha {index}: a chegada deve ser posterior a saida.")
+            return False
+        if distancia is None or distancia <= 0:
+            st.warning(f"Linha {index}: a distancia deve ser maior que zero.")
+            return False
+        duration_minutes = (chegada - saida).total_seconds() / 60.0
+        if tempo_parado < 0 or tempo_parado >= duration_minutes:
+            st.warning(f"Linha {index}: o tempo parado deve ser menor que a duracao total da viagem.")
+            return False
+        if eventos is not None and (eventos < 0 or not float(eventos).is_integer()):
+            st.warning(f"Linha {index}: eventos de excesso deve ser um numero inteiro nao negativo.")
+            return False
+    return True
+
+
 def _save_dataset_editor(
     dataset: str,
     edited: pd.DataFrame,
@@ -6815,6 +7031,8 @@ def _save_dataset_editor(
                     visible_original.append({column: original_reset.iloc[idx].get(column) for column in columns})
 
             rows = [item for _row_id, item in records]
+            if dataset == "velocidade" and not _validate_velocity_editor_rows(rows):
+                return False
             if visible_original:
                 backend.delete_matching_dashboard_records(dataset, visible_original)
             if rows:
@@ -6822,6 +7040,8 @@ def _save_dataset_editor(
         else:
             rows = _merge_filtered_editor_rows(original_table, edited, columns, required, visible_row_ids)
             if rows is None:
+                return False
+            if dataset == "velocidade" and not _validate_velocity_editor_rows(rows):
                 return False
             backend.replace_dashboard_records(dataset, rows)
     except Exception as exc:
@@ -7235,6 +7455,10 @@ def _date_col(label: str = "Data"):
     return st.column_config.DateColumn(label, format="DD/MM/YYYY")
 
 
+def _datetime_col(label: str):
+    return st.column_config.DatetimeColumn(label, format="DD/MM/YYYY HH:mm")
+
+
 def _money_col(label: str):
     return st.column_config.NumberColumn(label, min_value=0.0, step=0.01, format="R$ %.2f")
 
@@ -7277,6 +7501,41 @@ def _parse_sheet_date(value: object) -> tuple[date, str] | None:
         return parsed_date, f"{parsed_date.year}-{parsed_date.month:02d}"
 
     return None
+
+
+def _parse_sheet_datetime(value: object, base_date: date) -> datetime | None:
+    if _editor_empty_value(value):
+        return None
+    if isinstance(value, pd.Timestamp):
+        return value.to_pydatetime().replace(tzinfo=None)
+    if isinstance(value, datetime):
+        return value.replace(tzinfo=None)
+    if isinstance(value, datetime_time):
+        return datetime.combine(base_date, value)
+    if isinstance(value, date):
+        return datetime.combine(value, datetime_time.min)
+
+    text = clean_text(value).strip()
+    time_match = re.fullmatch(r"(\d{1,2}):(\d{2})(?::(\d{2}))?", text)
+    if time_match:
+        hour, minute, second = (int(part or 0) for part in time_match.groups())
+        try:
+            return datetime.combine(base_date, datetime_time(hour, minute, second))
+        except ValueError:
+            return None
+
+    parsed = pd.to_datetime(value, dayfirst=True, errors="coerce")
+    if pd.isna(parsed):
+        return None
+    return parsed.to_pydatetime().replace(tzinfo=None)
+
+
+def _sheet_datetime_is_time_only(value: object) -> bool:
+    if isinstance(value, datetime_time):
+        return True
+    if isinstance(value, (datetime, pd.Timestamp, date)):
+        return False
+    return bool(re.fullmatch(r"\s*\d{1,2}:\d{2}(?::\d{2})?\s*", clean_text(value)))
 
 
 def _parse_sheet_month(value: object) -> tuple[str, date] | None:
@@ -7402,6 +7661,33 @@ RODAGEM_ROTA_SHEET_ALIASES = {
     "PLACA": ["PLACA", "PLACAS"],
 }
 
+VELOCIDADE_SHEET_ALIASES = {
+    "DATA": ["DATA", "DT"],
+    "PLACA": ["PLACA", "PLACAS"],
+    "SAIDA": ["SAIDA", "INICIO", "HORASAIDA", "DATAHORASAIDA"],
+    "CHEGADA": ["CHEGADA", "FIM", "HORACHEGADA", "DATAHORACHEGADA"],
+    "DISTANCIAKM": ["DISTANCIAKM", "DISTANCIA", "KMVIAGEM", "KM"],
+}
+
+VELOCIDADE_EXPORT_COLUMNS = [
+    ("Data", "DATA"),
+    ("Identificador", "IDENTIFICADOR"),
+    ("PLACA", "PLACA"),
+    ("Motorista", "MOTORISTA"),
+    ("Rota", "ROTA"),
+    ("Origem", "ORIGEM"),
+    ("Destino", "DESTINO"),
+    ("Saida", "SAIDA"),
+    ("Chegada", "CHEGADA"),
+    ("Distancia Km", "DISTANCIA_KM"),
+    ("Tempo Parado Min", "TEMPO_PARADO_MIN"),
+    ("Meta Minutos", "META_MINUTOS"),
+    ("Velocidade Maxima", "VELOCIDADE_MAXIMA"),
+    ("Limite KmH", "LIMITE_KMH"),
+    ("Eventos Excesso", "EVENTOS_EXCESSO"),
+    ("Observacao", "OBSERVACAO"),
+]
+
 
 @st.cache_data(show_spinner=False, max_entries=64)
 def _sheet_xlsx_bytes(df: pd.DataFrame, sheet_name: str) -> bytes:
@@ -7409,9 +7695,13 @@ def _sheet_xlsx_bytes(df: pd.DataFrame, sheet_name: str) -> bytes:
 
     export_df = df.copy()
     for column in export_df.columns:
-        if _normalize_sheet_header(column) == "DATA":
+        normalized_column = _normalize_sheet_header(column)
+        if normalized_column == "DATA":
             parsed = pd.to_datetime(export_df[column], errors="coerce")
             export_df[column] = parsed.map(lambda value: value.date() if pd.notna(value) else None)
+        elif normalized_column in {"SAIDA", "CHEGADA"}:
+            parsed = pd.to_datetime(export_df[column], errors="coerce")
+            export_df[column] = parsed.map(lambda value: value.to_pydatetime() if pd.notna(value) else None)
 
     output = BytesIO()
     with pd.ExcelWriter(output, engine="openpyxl") as writer:
@@ -7427,9 +7717,13 @@ def _sheet_xlsx_bytes(df: pd.DataFrame, sheet_name: str) -> bytes:
             cell.alignment = Alignment(horizontal="center")
 
         for position, column in enumerate(export_df.columns, start=1):
-            if _normalize_sheet_header(column) == "DATA":
+            normalized_column = _normalize_sheet_header(column)
+            if normalized_column == "DATA":
                 for row in worksheet.iter_rows(min_row=2, min_col=position, max_col=position):
                     row[0].number_format = "DD/MM/YYYY"
+            elif normalized_column in {"SAIDA", "CHEGADA"}:
+                for row in worksheet.iter_rows(min_row=2, min_col=position, max_col=position):
+                    row[0].number_format = "DD/MM/YYYY HH:MM"
 
         for column_cells in worksheet.columns:
             values = [str(cell.value) if cell.value is not None else "" for cell in column_cells]
@@ -7468,6 +7762,81 @@ def _peso_workbook_bytes(entregas: pd.DataFrame, rodagem_rota: pd.DataFrame) -> 
                 values = [str(cell.value) if cell.value is not None else "" for cell in column_cells]
                 width = min(max((len(value) for value in values), default=10) + 2, 42)
                 worksheet.column_dimensions[column_cells[0].column_letter].width = max(width, 12)
+@st.cache_data(show_spinner=False, max_entries=2)
+def _velocity_model_xlsx_bytes() -> bytes:
+    from openpyxl.styles import Alignment, Font, PatternFill
+
+    columns = [target for _source, target in VELOCIDADE_EXPORT_COLUMNS]
+    example = pd.DataFrame(
+        [
+            {
+                "DATA": date.today(),
+                "IDENTIFICADOR": "VIAGEM-001",
+                "PLACA": "ABC1D23",
+                "MOTORISTA": "MOTORISTA EXEMPLO",
+                "ROTA": "ROTA EXEMPLO",
+                "ORIGEM": "ORIGEM EXEMPLO",
+                "DESTINO": "DESTINO EXEMPLO",
+                "SAIDA": datetime.combine(date.today(), datetime_time(8, 0)),
+                "CHEGADA": datetime.combine(date.today(), datetime_time(10, 0)),
+                "DISTANCIA_KM": 120.0,
+                "TEMPO_PARADO_MIN": 15.0,
+                "META_MINUTOS": 135.0,
+                "VELOCIDADE_MAXIMA": 82.0,
+                "LIMITE_KMH": 80.0,
+                "EVENTOS_EXCESSO": 1,
+                "OBSERVACAO": "Linha apenas demonstrativa",
+            }
+        ],
+        columns=columns,
+    )
+    instructions = pd.DataFrame(
+        [
+            ("DATA", "Obrigatorio", "Data de referencia da viagem (DD/MM/AAAA)."),
+            ("IDENTIFICADOR", "Opcional", "Codigo unico do pedido, entrega ou viagem."),
+            ("PLACA", "Obrigatorio", "Placa do veiculo."),
+            ("MOTORISTA", "Opcional", "Nome do motorista."),
+            ("ROTA", "Opcional", "Nome ou codigo da rota."),
+            ("ORIGEM / DESTINO", "Opcional", "Pontos inicial e final."),
+            ("SAIDA / CHEGADA", "Obrigatorio", "Data e hora no formato DD/MM/AAAA HH:MM."),
+            ("DISTANCIA_KM", "Obrigatorio", "Distancia positiva percorrida na viagem."),
+            ("TEMPO_PARADO_MIN", "Opcional", "Minutos parados durante a viagem; use zero quando nao houver."),
+            ("META_MINUTOS", "Opcional", "Duracao maxima planejada para calcular o SLA."),
+            ("VELOCIDADE_MAXIMA", "Opcional", "Maior velocidade registrada na viagem, em km/h."),
+            ("LIMITE_KMH", "Opcional", "Limite de velocidade usado no acompanhamento."),
+            ("EVENTOS_EXCESSO", "Opcional", "Quantidade de eventos acima do limite."),
+            ("OBSERVACAO", "Opcional", "Comentario livre."),
+        ],
+        columns=["CAMPO", "PREENCHIMENTO", "ORIENTACAO"],
+    )
+
+    output = BytesIO()
+    with pd.ExcelWriter(output, engine="openpyxl") as writer:
+        pd.DataFrame(columns=columns).to_excel(writer, sheet_name="Importacao", index=False)
+        example.to_excel(writer, sheet_name="Exemplo", index=False)
+        instructions.to_excel(writer, sheet_name="Instrucoes", index=False)
+        header_fill = PatternFill("solid", fgColor="1C2D6B")
+        for worksheet in writer.book.worksheets:
+            worksheet.freeze_panes = "A2"
+            worksheet.auto_filter.ref = worksheet.dimensions
+            for cell in worksheet[1]:
+                cell.fill = header_fill
+                cell.font = Font(color="FFFFFF", bold=True)
+                cell.alignment = Alignment(horizontal="center")
+            for column_cells in worksheet.columns:
+                values = [str(cell.value) if cell.value is not None else "" for cell in column_cells]
+                width = min(max((len(value) for value in values), default=10) + 2, 52)
+                worksheet.column_dimensions[column_cells[0].column_letter].width = max(width, 13)
+        for sheet_name in ("Importacao", "Exemplo"):
+            worksheet = writer.sheets[sheet_name]
+            for position, column in enumerate(columns, start=1):
+                normalized_column = _normalize_sheet_header(column)
+                if normalized_column == "DATA":
+                    for row in worksheet.iter_rows(min_row=2, min_col=position, max_col=position):
+                        row[0].number_format = "DD/MM/YYYY"
+                elif normalized_column in {"SAIDA", "CHEGADA"}:
+                    for row in worksheet.iter_rows(min_row=2, min_col=position, max_col=position):
+                        row[0].number_format = "DD/MM/YYYY HH:MM"
     return output.getvalue()
 
 
@@ -7671,6 +8040,7 @@ def _read_uploaded_sheet(
     *,
     sheet_names: list[str] | None = None,
     fallback_to_active: bool = True,
+    preferred_sheet: str | None = None,
 ) -> pd.DataFrame:
     name = clean_text(getattr(uploaded_file, "name", "")).lower()
     if name.endswith(".csv"):
@@ -7681,6 +8051,7 @@ def _read_uploaded_sheet(
         aliases,
         sheet_names=sheet_names,
         fallback_to_active=fallback_to_active,
+        preferred_sheet=preferred_sheet,
     )
     if raw.empty:
         return pd.DataFrame()
@@ -7693,6 +8064,7 @@ def _read_uploaded_excel_rows(
     *,
     sheet_names: list[str] | None = None,
     fallback_to_active: bool = True,
+    preferred_sheet: str | None = None,
 ) -> pd.DataFrame:
     from openpyxl import load_workbook
 
@@ -7703,7 +8075,9 @@ def _read_uploaded_excel_rows(
 
     workbook = load_workbook(uploaded_file, read_only=True, data_only=True)
     worksheet = None
-    if sheet_names:
+    if preferred_sheet and preferred_sheet in workbook.sheetnames:
+        worksheet = workbook[preferred_sheet]
+    elif sheet_names:
         accepted = {_normalize_sheet_header(name) for name in sheet_names}
         worksheet = next(
             (item for item in workbook.worksheets if _normalize_sheet_header(item.title) in accepted),
@@ -8119,6 +8493,140 @@ def _sheet_text(row: pd.Series, column: str | None, *, upper: bool = False) -> s
         return ""
     text = clean_text(value).strip()
     return text.upper() if upper else text
+
+
+def _velocity_rows_from_sheet(df: pd.DataFrame, plate_map: dict[str, str]) -> tuple[list[dict], list[str]]:
+    header_map = {_normalize_sheet_header(column): column for column in df.columns}
+    aliases = {
+        **VELOCIDADE_SHEET_ALIASES,
+        "IDENTIFICADOR": ["IDENTIFICADOR", "VIAGEM", "VIAGEMID", "PEDIDO", "PEDIDOID"],
+        "MOTORISTA": ["MOTORISTA", "CONDUTOR"],
+        "ROTA": ["ROTA"],
+        "ORIGEM": ["ORIGEM"],
+        "DESTINO": ["DESTINO", "CIDADE"],
+        "TEMPOPARADOMIN": ["TEMPOPARADOMIN", "PARADOMIN", "MINUTOSPARADO"],
+        "METAMINUTOS": ["METAMINUTOS", "METAMIN", "PRAZOMINUTOS", "PRAZOMIN"],
+        "VELOCIDADEMAXIMA": ["VELOCIDADEMAXIMA", "VELOCIDADEMAX", "MAXIMAKMH", "VMAX"],
+        "LIMITEKMH": ["LIMITEKMH", "LIMITEVELOCIDADE", "LIMITE"],
+        "EVENTOSEXCESSO": ["EVENTOSEXCESSO", "EXCESSOS", "QTDExCESSOS".upper()],
+        "OBSERVACAO": ["OBSERVACAO", "OBS", "COMENTARIO"],
+    }
+    resolved = {
+        field: next((header_map[key] for key in field_aliases if key in header_map), None)
+        for field, field_aliases in aliases.items()
+    }
+    required_labels = {
+        "DATA": "DATA",
+        "PLACA": "PLACA",
+        "SAIDA": "SAIDA",
+        "CHEGADA": "CHEGADA",
+        "DISTANCIAKM": "DISTANCIA_KM",
+    }
+    missing = [label for field, label in required_labels.items() if resolved.get(field) is None]
+    if missing:
+        return [], [f"Colunas faltando: {', '.join(missing)}."]
+
+    rows: list[dict] = []
+    errors: list[str] = []
+    for idx, row in df.iterrows():
+        data_info = _parse_sheet_date(row.get(resolved["DATA"]))
+        placa_raw = _sheet_text(row, resolved.get("PLACA"), upper=True)
+        placa_normalizada = backend._normalize_plate_value(placa_raw)
+        placa = "" if pd.isna(placa_normalizada) else str(placa_normalizada)
+        distancia = _parse_brl_number(row.get(resolved["DISTANCIAKM"]))
+        identificador = _sheet_text(row, resolved.get("IDENTIFICADOR"), upper=True)
+        motorista = _sheet_text(row, resolved.get("MOTORISTA"), upper=True)
+        rota = _sheet_text(row, resolved.get("ROTA"), upper=True)
+        origem = _sheet_text(row, resolved.get("ORIGEM"), upper=True)
+        destino = _sheet_text(row, resolved.get("DESTINO"), upper=True)
+        observacao = _sheet_text(row, resolved.get("OBSERVACAO"))
+        tempo_parado = _parse_brl_number(row.get(resolved.get("TEMPOPARADOMIN"))) if resolved.get("TEMPOPARADOMIN") else 0.0
+        meta_minutos = _parse_brl_number(row.get(resolved.get("METAMINUTOS"))) if resolved.get("METAMINUTOS") else None
+        velocidade_maxima = _parse_brl_number(row.get(resolved.get("VELOCIDADEMAXIMA"))) if resolved.get("VELOCIDADEMAXIMA") else None
+        limite_kmh = _parse_brl_number(row.get(resolved.get("LIMITEKMH"))) if resolved.get("LIMITEKMH") else None
+        eventos_excesso = _parse_brl_number(row.get(resolved.get("EVENTOSEXCESSO"))) if resolved.get("EVENTOSEXCESSO") else None
+
+        if not any([data_info, placa_raw, distancia is not None, identificador, motorista, rota, origem, destino]):
+            continue
+
+        missing_row = []
+        if data_info is None:
+            missing_row.append("DATA")
+        if not placa:
+            missing_row.append("PLACA")
+        if distancia is None or distancia <= 0:
+            missing_row.append("DISTANCIA_KM positiva")
+        if missing_row:
+            errors.append(f"Linha {idx + 2}: preencher {', '.join(missing_row)}.")
+            continue
+
+        data_value, mes = data_info
+        saida_raw = row.get(resolved["SAIDA"])
+        chegada_raw = row.get(resolved["CHEGADA"])
+        saida = _parse_sheet_datetime(saida_raw, data_value)
+        chegada = _parse_sheet_datetime(chegada_raw, data_value)
+        if saida is None or chegada is None:
+            invalid_fields = []
+            if saida is None:
+                invalid_fields.append("SAIDA")
+            if chegada is None:
+                invalid_fields.append("CHEGADA")
+            errors.append(f"Linha {idx + 2}: data/hora invalida em {', '.join(invalid_fields)}.")
+            continue
+        if (
+            chegada <= saida
+            and _sheet_datetime_is_time_only(saida_raw)
+            and _sheet_datetime_is_time_only(chegada_raw)
+        ):
+            chegada += timedelta(days=1)
+        duration_minutes = (chegada - saida).total_seconds() / 60.0
+        if duration_minutes <= 0:
+            errors.append(f"Linha {idx + 2}: CHEGADA deve ser posterior a SAIDA.")
+            continue
+
+        tempo_parado = float(tempo_parado or 0.0)
+        if tempo_parado < 0 or tempo_parado >= duration_minutes:
+            errors.append(f"Linha {idx + 2}: TEMPO_PARADO_MIN deve ser menor que a duracao da viagem.")
+            continue
+        if meta_minutos is not None and meta_minutos <= 0:
+            errors.append(f"Linha {idx + 2}: META_MINUTOS deve ser positiva.")
+            continue
+        if velocidade_maxima is not None and velocidade_maxima < 0:
+            errors.append(f"Linha {idx + 2}: VELOCIDADE_MAXIMA nao pode ser negativa.")
+            continue
+        if limite_kmh is not None and limite_kmh <= 0:
+            errors.append(f"Linha {idx + 2}: LIMITE_KMH deve ser positivo.")
+            continue
+        if eventos_excesso is not None and eventos_excesso < 0:
+            errors.append(f"Linha {idx + 2}: EVENTOS_EXCESSO nao pode ser negativo.")
+            continue
+        if eventos_excesso is not None and not float(eventos_excesso).is_integer():
+            errors.append(f"Linha {idx + 2}: EVENTOS_EXCESSO deve ser um numero inteiro.")
+            continue
+
+        rows.append(
+            {
+                "Data": data_value,
+                "Mes": mes,
+                "Identificador": identificador,
+                "PLACA": placa,
+                "Categoria": plate_map.get(placa, "Transporte"),
+                "Motorista": motorista,
+                "Rota": rota,
+                "Origem": origem,
+                "Destino": destino,
+                "Saida": saida,
+                "Chegada": chegada,
+                "Distancia Km": float(distancia),
+                "Tempo Parado Min": tempo_parado,
+                "Meta Minutos": float(meta_minutos) if meta_minutos is not None else None,
+                "Velocidade Maxima": float(velocidade_maxima) if velocidade_maxima is not None else None,
+                "Limite KmH": float(limite_kmh) if limite_kmh is not None else None,
+                "Eventos Excesso": int(eventos_excesso) if eventos_excesso is not None else None,
+                "Observacao": observacao,
+            }
+        )
+    return rows, errors
 
 
 def _hoteis_rows_from_sheet(df: pd.DataFrame) -> tuple[list[dict], list[str]]:
@@ -9127,6 +9635,242 @@ def _undo_pedagio_last_import() -> None:
     st.rerun()
 
 
+def _append_records_in_batches(dataset: str, rows: list[dict], *, batch_size: int = 100) -> list[dict]:
+    imported: list[dict] = []
+    total = len(rows)
+    progress = st.progress(0, text="Preparando envio...")
+    status = st.empty()
+
+    for start in range(0, total, batch_size):
+        batch = rows[start : start + batch_size]
+        batch_number = (start // batch_size) + 1
+        batch_total = (total + batch_size - 1) // batch_size
+        status.info(f"Enviando lote {batch_number}/{batch_total} ({start + 1}-{min(start + len(batch), total)} de {total})...")
+        backend.append_dashboard_records(dataset, batch, update_plate_registry=False)
+        imported.extend(batch)
+        progress.progress(min(len(imported) / total, 1.0), text=f"{len(imported)} de {total} lancamentos enviados")
+
+    status.empty()
+    progress.empty()
+    clear_cached_reads()
+    return imported
+
+
+def _save_records_with_replace_in_batches(dataset: str, rows: list[dict], replace_keys: list[str], *, batch_size: int = 100) -> list[dict]:
+    imported: list[dict] = []
+    total = len(rows)
+    progress = st.progress(0, text="Preparando envio...")
+    status = st.empty()
+
+    for start in range(0, total, batch_size):
+        batch = rows[start : start + batch_size]
+        batch_number = (start // batch_size) + 1
+        batch_total = (total + batch_size - 1) // batch_size
+        status.info(f"Enviando lote {batch_number}/{batch_total} ({start + 1}-{min(start + len(batch), total)} de {total})...")
+        for row in batch:
+            backend.save_dashboard_record(dataset, row, replace_keys=replace_keys)
+        imported.extend(batch)
+        progress.progress(min(len(imported) / total, 1.0), text=f"{len(imported)} de {total} registros enviados")
+
+    status.empty()
+    progress.empty()
+    clear_cached_reads()
+    return imported
+
+
+def _clear_velocity_last_import() -> None:
+    st.session_state.pop("cad_vel_last_import_rows", None)
+    st.session_state.pop("cad_vel_last_import_count", None)
+
+
+def _undo_velocity_last_import() -> None:
+    rows = st.session_state.get("cad_vel_last_import_rows") or []
+    if not rows:
+        st.warning("Nao ha importacao recente para apagar.")
+        return
+    try:
+        deleted = backend.delete_matching_dashboard_records("velocidade", rows)
+    except Exception as exc:
+        st.error("Nao foi possivel apagar a ultima importacao de velocidade.")
+        st.exception(exc)
+        return
+    _clear_velocity_last_import()
+    _reset_dataset_editor("cad_vel_table")
+    clear_cached_reads()
+    st.success(f"{deleted} viagem(ns) apagada(s).")
+    st.rerun()
+
+
+def _velocity_export_frame(df: pd.DataFrame) -> pd.DataFrame:
+    return _sheet_export_frame(df, VELOCIDADE_EXPORT_COLUMNS)
+
+
+def _velocity_preview_metrics(rows: list[dict]) -> tuple[float, float, float | None]:
+    distance_total = 0.0
+    movement_minutes = 0.0
+    sla_values: list[bool] = []
+    for row in rows:
+        saida = pd.to_datetime(row.get("Saida"), errors="coerce")
+        chegada = pd.to_datetime(row.get("Chegada"), errors="coerce")
+        distance = float(row.get("Distancia Km") or 0.0)
+        stopped = float(row.get("Tempo Parado Min") or 0.0)
+        if pd.notna(saida) and pd.notna(chegada) and chegada > saida:
+            duration = (chegada - saida).total_seconds() / 60.0
+            movement = max(duration - stopped, 0.0)
+            if distance > 0 and movement > 0:
+                distance_total += distance
+                movement_minutes += movement
+            target = row.get("Meta Minutos")
+            if target is not None and float(target) > 0:
+                sla_values.append(duration <= float(target))
+    average_speed = distance_total / (movement_minutes / 60.0) if movement_minutes > 0 else 0.0
+    sla = (sum(sla_values) / len(sla_values) * 100.0) if sla_values else None
+    return distance_total, average_speed, sla
+
+
+@st.fragment
+def _render_velocity_sheet_import(plate_map: dict[str, str]) -> None:
+    last_rows = st.session_state.get("cad_vel_last_import_rows") or []
+    if last_rows:
+        last_count = st.session_state.get("cad_vel_last_import_count", len(last_rows))
+        st.warning(f"Ultima importacao por planilha: {last_count} viagem(ns).")
+        undo_col, keep_col = st.columns(2)
+        with undo_col:
+            if st.button("Apagar ultima importacao", type="primary", width="stretch", key="cad_vel_undo_import"):
+                _undo_velocity_last_import()
+        with keep_col:
+            if st.button("Manter importacao", width="stretch", key="cad_vel_keep_import"):
+                _clear_velocity_last_import()
+                st.rerun()
+
+    with st.expander("Importar viagens e exportar modelos", expanded=True):
+        st.caption(
+            "Cada linha representa uma viagem. SAIDA e CHEGADA aceitam data e hora; "
+            "quando forem informadas apenas horas e a chegada for menor, o sistema considera o dia seguinte."
+        )
+        model_columns = [target for _source, target in VELOCIDADE_EXPORT_COLUMNS]
+        empty_model = pd.DataFrame(columns=model_columns)
+        model_downloads = st.columns(2)
+        with model_downloads[0]:
+            st.download_button(
+                "Baixar modelo Excel",
+                data=_velocity_model_xlsx_bytes,
+                file_name="modelo_velocidade.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                key="cad_vel_model_xlsx",
+                on_click="ignore",
+                width="stretch",
+            )
+        with model_downloads[1]:
+            st.download_button(
+                "Baixar modelo CSV",
+                data=empty_model.to_csv(index=False).encode("utf-8-sig"),
+                file_name="modelo_velocidade.csv",
+                mime="text/csv",
+                key="cad_vel_model_csv",
+                on_click="ignore",
+                width="stretch",
+            )
+        st.caption("O Excel inclui abas de importacao, exemplo preenchido e instrucoes de cada campo.")
+
+        try:
+            current_df = backend.load_velocidade()
+        except Exception as exc:
+            current_df = pd.DataFrame()
+            st.caption(f"Os modelos estao disponiveis, mas os dados cadastrados nao puderam ser carregados: {clean_text(exc)}")
+        export_df = _velocity_export_frame(current_df)
+        data_downloads = st.columns(2)
+        with data_downloads[0]:
+            st.download_button(
+                "Exportar dados cadastrados (Excel)",
+                data=lambda frame=export_df: _sheet_xlsx_bytes(frame, "Velocidade"),
+                file_name="velocidade_dados.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                key="cad_vel_data_xlsx",
+                on_click="ignore",
+                width="stretch",
+            )
+        with data_downloads[1]:
+            st.download_button(
+                "Exportar dados cadastrados (CSV)",
+                data=export_df.to_csv(index=False).encode("utf-8-sig"),
+                file_name="velocidade_dados.csv",
+                mime="text/csv",
+                key="cad_vel_data_csv",
+                on_click="ignore",
+                width="stretch",
+            )
+
+        uploaded = st.file_uploader("Enviar planilha preenchida", type=["xlsx", "csv"], key="cad_vel_upload")
+        if uploaded is None:
+            return
+        try:
+            raw_df = _read_uploaded_sheet(
+                uploaded,
+                VELOCIDADE_SHEET_ALIASES,
+                preferred_sheet="Importacao",
+            )
+        except Exception as exc:
+            st.error("Nao foi possivel ler a planilha. Envie o modelo em .xlsx ou .csv.")
+            st.exception(exc)
+            return
+
+        rows, errors = _velocity_rows_from_sheet(raw_df, plate_map)
+        if errors:
+            st.warning("Revise a planilha antes de importar. Nenhum dado foi salvo.")
+            for error in errors[:12]:
+                st.write(error)
+            if len(errors) > 12:
+                st.write(f"...mais {len(errors) - 12} erro(s).")
+            return
+        if not rows:
+            st.warning("Nenhuma viagem valida encontrada na planilha.")
+            return
+
+        preview = pd.DataFrame(rows)
+        distance_total, average_speed, sla = _velocity_preview_metrics(rows)
+        sla_text = fmt_percent(sla, 1) if sla is not None else "sem meta"
+        st.success(
+            f"{len(rows)} viagem(ns) pronta(s): {fmt_num(distance_total, 1)} km, "
+            f"velocidade media ponderada de {fmt_num(average_speed, 1)} km/h e SLA {sla_text}."
+        )
+        preview_columns = [
+            "Data",
+            "Identificador",
+            "PLACA",
+            "Motorista",
+            "Rota",
+            "Saida",
+            "Chegada",
+            "Distancia Km",
+            "Tempo Parado Min",
+            "Meta Minutos",
+        ]
+        st.dataframe(preview[preview_columns].head(100), width="stretch", hide_index=True)
+        if len(preview) > 100:
+            st.caption(f"Previa limitada às primeiras 100 de {len(preview)} linhas.")
+        if st.button(f"Importar {len(rows)} viagem(ns)", type="primary", width="stretch", key="cad_vel_import_confirm"):
+            try:
+                with st.spinner(f"Importando {len(rows)} viagem(ns) em uma unica transacao..."):
+                    backend.append_dashboard_records(
+                        "velocidade",
+                        rows,
+                        update_plate_registry=True,
+                    )
+                clear_cached_reads()
+                imported_rows = rows
+            except Exception as exc:
+                st.error("Nao foi possivel importar as viagens para o Neon.")
+                st.caption("Nenhuma linha desta importacao foi salva; corrija o problema e tente novamente.")
+                st.exception(exc)
+                return
+            st.session_state["cad_vel_last_import_rows"] = imported_rows
+            st.session_state["cad_vel_last_import_count"] = len(imported_rows)
+            _reset_dataset_editor("cad_vel_table")
+            st.success(f"{len(imported_rows)} viagem(ns) importada(s).")
+            st.rerun()
+
+
 @st.fragment
 def _render_km_sheet_import() -> None:
     with st.expander("Adicionar KM mensal por planilha", expanded=False):
@@ -9633,6 +10377,7 @@ def _render_pedagio_reset_all() -> None:
 
 def render_cadastro() -> None:
     topbar("JR DASHBOARD • Adicionar dados", back=True)
+    enable_numeric_input_overwrite()
     with st.container(key="cadastro_shell"):
         _render_backup_panel()
         if st.session_state.get("cadastro_active_tab") not in CADASTRO_TABS:
@@ -10243,6 +10988,146 @@ def render_cadastro() -> None:
                     "Valor": _money_col("Valor"),
                 },
                 ["Mes", "Cidade", "Rota", "PLACA", "Categoria"],
+            )
+
+        if active_tab == "Velocidade":
+            st.info(
+                "Uma linha representa uma viagem. A velocidade media usa distancia dividida pelo tempo em movimento "
+                "(duracao total menos o tempo parado). A meta em minutos alimenta o indicador de SLA."
+            )
+            _render_velocity_sheet_import(plate_map)
+
+            with st.form("form_velocidade", clear_on_submit=True):
+                c1, c2, c3, c4 = st.columns(4)
+                with c1:
+                    data = st.date_input("Data", value=date.today(), key="cad_vel_data")
+                    identificador = st.text_input("Identificador da viagem", key="cad_vel_identificador")
+                    placa, categoria = _plate_fields("cad_vel", plate_map)
+                with c2:
+                    motorista = st.text_input("Motorista", key="cad_vel_motorista")
+                    rota = st.text_input("Rota", key="cad_vel_rota")
+                    origem = st.text_input("Origem", key="cad_vel_origem")
+                with c3:
+                    destino = st.text_input("Destino", key="cad_vel_destino")
+                    hora_saida = st.time_input("Hora de saida", value=datetime_time(8, 0), key="cad_vel_saida")
+                    data_chegada = st.date_input("Data da chegada", value=data, key="cad_vel_chegada_data")
+                with c4:
+                    hora_chegada = st.time_input("Hora de chegada", value=datetime_time(10, 0), key="cad_vel_chegada")
+                    distancia = st.number_input("Distancia (km)", min_value=0.0, step=1.0, format="%.2f", key="cad_vel_distancia")
+                    tempo_parado = st.number_input("Tempo parado (min)", min_value=0.0, step=5.0, format="%.1f", key="cad_vel_parado")
+
+                metric_cols = st.columns(4)
+                with metric_cols[0]:
+                    meta_minutos = st.number_input(
+                        "Meta da viagem (min)",
+                        min_value=0.0,
+                        step=5.0,
+                        format="%.1f",
+                        help="Deixe zero quando nao houver meta de duracao.",
+                        key="cad_vel_meta",
+                    )
+                with metric_cols[1]:
+                    informar_telemetria = st.checkbox("Informar telemetria", key="cad_vel_telemetria")
+                    velocidade_maxima = st.number_input(
+                        "Velocidade maxima (km/h)",
+                        min_value=0.0,
+                        step=1.0,
+                        format="%.1f",
+                        disabled=not informar_telemetria,
+                        key="cad_vel_maxima",
+                    )
+                with metric_cols[2]:
+                    limite_kmh = st.number_input(
+                        "Limite acompanhado (km/h)",
+                        min_value=0.0,
+                        step=1.0,
+                        format="%.1f",
+                        disabled=not informar_telemetria,
+                        key="cad_vel_limite",
+                    )
+                with metric_cols[3]:
+                    eventos_excesso = st.number_input(
+                        "Eventos de excesso",
+                        min_value=0,
+                        step=1,
+                        disabled=not informar_telemetria,
+                        key="cad_vel_excessos",
+                    )
+                observacao = st.text_area("Observacao", key="cad_vel_observacao")
+                submitted = st.form_submit_button("Salvar viagem", type="primary", width="stretch")
+
+                if submitted:
+                    saida = datetime.combine(data, hora_saida)
+                    chegada = datetime.combine(data_chegada, hora_chegada)
+                    duration_minutes = (chegada - saida).total_seconds() / 60.0
+                    if not placa:
+                        st.warning("Selecione ou cadastre uma placa.")
+                    elif distancia <= 0:
+                        st.warning("Informe uma distancia maior que zero.")
+                    elif duration_minutes <= 0:
+                        st.warning("A chegada deve ser posterior a saida.")
+                    elif tempo_parado >= duration_minutes:
+                        st.warning("O tempo parado deve ser menor que a duracao total da viagem.")
+                    elif informar_telemetria and (velocidade_maxima <= 0 or limite_kmh <= 0):
+                        st.warning("Preencha a velocidade maxima e o limite acompanhado para usar a telemetria.")
+                    else:
+                        _save_entry(
+                            "velocidade",
+                            {
+                                "Data": data,
+                                "Mes": _entry_month(data),
+                                "Identificador": identificador,
+                                "PLACA": placa,
+                                "Categoria": categoria,
+                                "Motorista": motorista,
+                                "Rota": rota,
+                                "Origem": origem,
+                                "Destino": destino,
+                                "Saida": saida,
+                                "Chegada": chegada,
+                                "Distancia Km": distancia,
+                                "Tempo Parado Min": tempo_parado,
+                                "Meta Minutos": meta_minutos if meta_minutos > 0 else None,
+                                "Velocidade Maxima": velocidade_maxima if informar_telemetria else None,
+                                "Limite KmH": limite_kmh if informar_telemetria else None,
+                                "Eventos Excesso": eventos_excesso if informar_telemetria else None,
+                                "Observacao": observacao,
+                            },
+                            required=["Data", "PLACA", "Saida", "Chegada", "Distancia Km"],
+                            success="Viagem de velocidade salva.",
+                            reset_table_key="cad_vel_table",
+                        )
+
+            velocity_columns = [source for source, _target in VELOCIDADE_EXPORT_COLUMNS]
+            velocity_columns.insert(1, "Mes")
+            velocity_columns.insert(4, "Categoria")
+            _render_dataset_editor(
+                "velocidade",
+                backend.load_velocidade,
+                velocity_columns,
+                ["Data", "PLACA", "Saida", "Chegada", "Distancia Km"],
+                "cad_vel_table",
+                {
+                    "Data": _date_col(),
+                    "Mes": st.column_config.TextColumn("Mes"),
+                    "Identificador": st.column_config.TextColumn("Identificador"),
+                    "PLACA": st.column_config.TextColumn("Placa"),
+                    "Categoria": st.column_config.SelectboxColumn("Categoria", options=CATEGORY_OPTIONS, required=True),
+                    "Motorista": st.column_config.TextColumn("Motorista"),
+                    "Rota": st.column_config.TextColumn("Rota"),
+                    "Origem": st.column_config.TextColumn("Origem"),
+                    "Destino": st.column_config.TextColumn("Destino"),
+                    "Saida": _datetime_col("Saida"),
+                    "Chegada": _datetime_col("Chegada"),
+                    "Distancia Km": _number_col("Distancia (km)", step=0.1, format="%.2f"),
+                    "Tempo Parado Min": _number_col("Tempo parado (min)", step=1.0, format="%.1f"),
+                    "Meta Minutos": _number_col("Meta (min)", step=1.0, format="%.1f"),
+                    "Velocidade Maxima": _number_col("Velocidade maxima", step=0.1, format="%.1f"),
+                    "Limite KmH": _number_col("Limite (km/h)", step=0.1, format="%.1f"),
+                    "Eventos Excesso": _number_col("Eventos de excesso", step=1.0, format="%.0f"),
+                    "Observacao": st.column_config.TextColumn("Observacao"),
+                },
+                ["Mes", "Identificador", "PLACA", "Categoria", "Motorista", "Rota", "Origem", "Destino"],
             )
 
         if active_tab == "Pedágio/Extras":
@@ -10927,6 +11812,210 @@ def render_alertas() -> None:
                     height=460,
                 )
     footer("Alertas gerados automaticamente a partir das utilizações dos veículos Vex. © JR")
+def _render_velocity_details(params: dict[str, object]) -> None:
+    with st.expander("Dados detalhados e exportacao", expanded=False):
+        try:
+            details = backend.velocidade_detalhes(params)
+        except Exception as exc:
+            st.warning("Nao foi possivel carregar os detalhes das viagens.")
+            st.caption(clean_text(exc))
+            return
+        if details is None or details.empty:
+            st.info("Nenhuma viagem encontrada para os filtros selecionados.")
+            return
+
+        export_details = details.copy()
+        export_downloads = st.columns(2)
+        with export_downloads[0]:
+            st.download_button(
+                "Exportar resultado filtrado (Excel)",
+                data=lambda frame=export_details: _sheet_xlsx_bytes(frame, "KPIs velocidade"),
+                file_name="kpis_velocidade_filtrados.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                key="vel_details_xlsx",
+                on_click="ignore",
+                width="stretch",
+            )
+        with export_downloads[1]:
+            st.download_button(
+                "Exportar resultado filtrado (CSV)",
+                data=export_details.to_csv(index=False).encode("utf-8-sig"),
+                file_name="kpis_velocidade_filtrados.csv",
+                mime="text/csv",
+                key="vel_details_csv",
+                on_click="ignore",
+                width="stretch",
+            )
+
+        total_rows = len(details)
+        page_count = max(1, (total_rows + DATA_EDITOR_PAGE_SIZE - 1) // DATA_EDITOR_PAGE_SIZE)
+        if page_count > 1:
+            page = st.selectbox(
+                "Pagina dos detalhes",
+                list(range(1, page_count + 1)),
+                format_func=lambda value: f"Pagina {value} de {page_count}",
+                key="vel_details_page",
+            )
+        else:
+            page = 1
+        start = (int(page) - 1) * DATA_EDITOR_PAGE_SIZE
+        end = min(start + DATA_EDITOR_PAGE_SIZE, total_rows)
+        display = details.iloc[start:end].copy()
+        if "Dentro da Meta" in display.columns:
+            display["Dentro da Meta"] = display["Dentro da Meta"].map(
+                lambda value: "Sem meta" if pd.isna(value) else "Sim" if bool(value) else "Nao"
+            )
+        st.caption(f"Exibindo registros {start + 1} a {end} de {total_rows}.")
+        st.dataframe(
+            display,
+            width="stretch",
+            height=430,
+            hide_index=True,
+            column_config={
+                "Data": _date_col(),
+                "Saida": _datetime_col("Saida"),
+                "Chegada": _datetime_col("Chegada"),
+                "Distancia Km": st.column_config.NumberColumn("Distancia (km)", format="%.2f"),
+                "Duracao Total Min": st.column_config.NumberColumn("Duracao total (min)", format="%.1f"),
+                "Movimento Min": st.column_config.NumberColumn("Movimento (min)", format="%.1f"),
+                "Velocidade Km/h": st.column_config.NumberColumn("Velocidade (km/h)", format="%.1f"),
+                "Atraso Min": st.column_config.NumberColumn("Atraso (min)", format="%.1f"),
+            },
+        )
+
+
+def render_velocidade() -> None:
+    topbar("JR DASHBOARD • Velocidade", back=False)
+    seed = route_json("velocidade", {"ano": "Todos", "mes": ["Todos"]})
+    params, _filter_state = filter_controls(
+        "velocidade",
+        extra_filters=[
+            ("categoria", "Categoria", seed.get("categorias", []) or seed.get("segmentos", []) or []),
+            ("placa", "Placa", seed.get("placas", []) or []),
+            ("motorista", "Motorista", seed.get("motoristas", []) or []),
+            ("rota", "Rota", seed.get("rotas", []) or []),
+        ],
+        key_prefix="vel",
+        all_data=seed,
+        allow_compare=False,
+    )
+    data = route_json("velocidade", params)
+    valid_trips = int(data.get("viagens_validas") or 0)
+
+    def speed_text(value: object) -> str:
+        if value is None or valid_trips == 0:
+            return "—"
+        return f"{fmt_num(value, 1)} km/h"
+
+    kpis = [
+        ("viagens", "Viagens cadastradas", fmt_num(data.get("total_registros")), "#0F766E", "Operacao"),
+        ("validas", "Viagens calculadas", fmt_num(valid_trips), "#0F766E", "Operacao"),
+        ("distancia", "Distancia total", f"{fmt_num(data.get('distancia_total'), 1)} km", "#0F766E", "Operacao"),
+        ("velocidade_media", "Velocidade media ponderada", speed_text(data.get("velocidade_media")), JR_BLUE, "Velocidade"),
+        ("velocidade_maxima", "Maior velocidade registrada", speed_text(data.get("velocidade_maxima")), JR_BLUE, "Velocidade"),
+        ("tempo_medio", "Tempo medio em rota", fmt_duration_minutes(data.get("tempo_medio_min")), "#7C3AED", "Tempo"),
+        ("movimento_medio", "Tempo medio em movimento", fmt_duration_minutes(data.get("movimento_medio_min")), "#7C3AED", "Tempo"),
+        ("parado_medio", "Tempo medio parado", fmt_duration_minutes(data.get("parado_medio_min")), "#7C3AED", "Tempo"),
+        ("sla", "Viagens dentro da meta", fmt_percent(data.get("sla_percentual"), 1), "#D97706", "Metas e seguranca"),
+        ("atraso", "Atraso medio", fmt_duration_minutes(data.get("atraso_medio_min")), "#D97706", "Metas e seguranca"),
+        (
+            "sem_excesso",
+            "Viagens sem excesso",
+            fmt_percent(data.get("viagens_sem_excesso_percentual"), 1),
+            JR_RED,
+            "Metas e seguranca",
+        ),
+        (
+            "eventos_100km",
+            "Eventos de excesso / 100 km",
+            "—" if data.get("eventos_excesso_por_100_km") is None else fmt_num(data.get("eventos_excesso_por_100_km"), 2),
+            JR_RED,
+            "Metas e seguranca",
+        ),
+    ]
+
+    include_year = params.get("ano") is None
+    fallback_year = params.get("ano")
+    speed_month_labels, speed_month_values = sorted_series(
+        data.get("velocidade_mensal", {}),
+        "Mes",
+        "Velocidade Km/h",
+        include_year=include_year,
+        fallback_year=fallback_year,
+    )
+    sla_month_labels, sla_month_values = sorted_series(
+        data.get("sla_mensal", {}),
+        "Mes",
+        "SLA %",
+        include_year=include_year,
+        fallback_year=fallback_year,
+    )
+    trip_month_labels, trip_month_values = sorted_series(
+        data.get("viagens_mensal", {}),
+        "Mes",
+        "Viagens",
+        include_year=include_year,
+        fallback_year=fallback_year,
+    )
+    charts = [
+        (
+            "velocidade_mensal",
+            "Velocidade media ponderada por mes",
+            metric_line_chart(speed_month_labels, speed_month_values, unit="km/h", decimals=1, color="#0F766E"),
+        ),
+        (
+            "sla_mensal",
+            "Cumprimento da meta por mes",
+            metric_line_chart(sla_month_labels, sla_month_values, unit="%", decimals=1, color="#D97706"),
+        ),
+        (
+            "velocidade_placa",
+            "Velocidade media por placa",
+            metric_bar_chart(
+                data.get("velocidade_por_placa", {}).get("PLACA", []),
+                data.get("velocidade_por_placa", {}).get("Velocidade Km/h", []),
+                unit="km/h",
+                decimals=1,
+                horizontal=True,
+                sort_desc=True,
+                color="#0F766E",
+            ),
+        ),
+        (
+            "tempo_rota",
+            "Tempo medio por rota",
+            metric_bar_chart(
+                data.get("tempo_por_rota", {}).get("Rota", []),
+                data.get("tempo_por_rota", {}).get("Tempo Medio Min", []),
+                unit="min",
+                decimals=1,
+                horizontal=True,
+                sort_desc=True,
+                color="#7C3AED",
+            ),
+        ),
+        (
+            "viagens_mensal",
+            "Viagens por mes",
+            metric_bar_chart(trip_month_labels, trip_month_values, unit="viagens", decimals=0, color=JR_BLUE),
+        ),
+        (
+            "distancia_rota",
+            "Distancia percorrida por rota",
+            metric_bar_chart(
+                data.get("distancia_por_rota", {}).get("Rota", []),
+                data.get("distancia_por_rota", {}).get("Distancia Km", []),
+                unit="km",
+                decimals=1,
+                horizontal=True,
+                sort_desc=True,
+                color=JR_BLUE,
+            ),
+        ),
+    ]
+    render_controlled_dashboard("vel", title="JR Dashboard - Velocidade", kpis=kpis, charts=charts)
+    _render_velocity_details(params)
+    footer("Velocidade calculada por viagem com base na distancia e no tempo em movimento. © JR")
 
 
 def footer(text: str) -> None:
@@ -10950,6 +12039,8 @@ def main() -> None:
             render_vex()
         elif page == "alertas":
             render_alertas()
+        elif page == "velocidade":
+            render_velocidade()
         elif page in {"frota", "ranking"}:
             render_frota()
         elif page in {"cadastro", "dados"}:

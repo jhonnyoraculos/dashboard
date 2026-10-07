@@ -49,6 +49,7 @@ DB_TABLES = {
     "aluguel_veiculos": "dashboard_aluguel_veiculos",
     "peso": "dashboard_peso",
     "rodagem_rota": "dashboard_rodagem_rota",
+    "velocidade": "dashboard_velocidade",
     "placas": "dashboard_placas",
     "salarios_transporte": "dashboard_salarios_transporte",
     "alertas_vex": "dashboard_alertas_vex",
@@ -70,6 +71,7 @@ _PNEUS_CACHE = {"mtime": None, "df": None, "lock": threading.Lock()}
 _HOTEIS_CACHE = {"mtime": None, "df": None, "lock": threading.Lock()}
 _PESO_CACHE = {"mtime": None, "df": None, "lock": threading.Lock()}
 _RODAGEM_ROTA_CACHE = {"mtime": None, "df": None, "lock": threading.Lock()}
+_VELOCIDADE_CACHE = {"mtime": None, "df": None, "lock": threading.Lock()}
 _OVERVIEW_CACHE = {"mtimes": None, "dados": None}
 _PLATE_REGISTRY_CACHE = {"mtime": None, "df": None, "lock": threading.Lock()}
 _PLACAS_CACHE = {"mtime": None, "df": None, "lock": threading.Lock()}
@@ -90,6 +92,7 @@ _CACHE_MAP = {
     "aluguel_veiculos": _ALUGUEL_VEICULOS_CACHE,
     "peso": _PESO_CACHE,
     "rodagem_rota": _RODAGEM_ROTA_CACHE,
+    "velocidade": _VELOCIDADE_CACHE,
     "placas": _PLACAS_CACHE,
     "salarios_transporte": _SALARIOS_TRANSPORTE_CACHE,
     "alertas_vex": _ALERTAS_VEX_CACHE,
@@ -144,6 +147,26 @@ _ALUGUEL_VEICULOS_COLUMNS = [
 ]
 _PESO_COLUMNS = ["Data", "Mes", "Cidade", "Rota", "Peso", "Valor", "PLACA", "Categoria"]
 _RODAGEM_ROTA_COLUMNS = ["Mes", "Rota", "PLACA", "Km Rodados"]
+_VELOCIDADE_COLUMNS = [
+    "Data",
+    "Mes",
+    "Identificador",
+    "PLACA",
+    "Categoria",
+    "Motorista",
+    "Rota",
+    "Origem",
+    "Destino",
+    "Saida",
+    "Chegada",
+    "Distancia Km",
+    "Velocidade Maxima",
+    "Limite KmH",
+    "Eventos Excesso",
+    "Tempo Parado Min",
+    "Meta Minutos",
+    "Observacao",
+]
 _PLACAS_COLUMNS = ["PLACA", "Categoria", "Diaria"]
 _SALARIOS_TRANSPORTE_COLUMNS = ["Mes", "Valor"]
 _ALERTAS_VEX_COLUMNS = ["Data", "Mes", "PLACA", "Local", "IGN", "Categoria"]
@@ -164,6 +187,7 @@ _DATASET_COLUMNS = {
     "aluguel_veiculos": _ALUGUEL_VEICULOS_COLUMNS,
     "peso": _PESO_COLUMNS,
     "rodagem_rota": _RODAGEM_ROTA_COLUMNS,
+    "velocidade": _VELOCIDADE_COLUMNS,
     "placas": _PLACAS_COLUMNS,
     "salarios_transporte": _SALARIOS_TRANSPORTE_COLUMNS,
     "alertas_vex": _ALERTAS_VEX_COLUMNS,
@@ -172,6 +196,8 @@ _COLUMN_SQL_TYPES = {
     "Data": "TIMESTAMP",
     "Inicio": "TIMESTAMP",
     "Fim": "TIMESTAMP",
+    "Saida": "TIMESTAMP",
+    "Chegada": "TIMESTAMP",
     "Mes": "TEXT",
     "Km Rodados": "DOUBLE PRECISION",
     "Horas": "DOUBLE PRECISION",
@@ -196,9 +222,18 @@ _COLUMN_SQL_TYPES = {
     "Tipo": "TEXT",
     "OFICINA": "TEXT",
     "Peso": "DOUBLE PRECISION",
+    "Distancia Km": "DOUBLE PRECISION",
+    "Velocidade Maxima": "DOUBLE PRECISION",
+    "Limite KmH": "DOUBLE PRECISION",
+    "Eventos Excesso": "DOUBLE PRECISION",
+    "Tempo Parado Min": "DOUBLE PRECISION",
+    "Meta Minutos": "DOUBLE PRECISION",
     "Fornecedor": "TEXT",
     "Quantidade": "DOUBLE PRECISION",
     "Medida": "TEXT",
+    "Identificador": "TEXT",
+    "Origem": "TEXT",
+    "Destino": "TEXT",
     "Observacao": "TEXT",
     "Local": "TEXT",
     "IGN": "TEXT",
@@ -409,26 +444,19 @@ def _write_metadata(conn, key: str, value) -> None:
 
 
 def _clear_dataset_cache(dataset: str) -> None:
-    if dataset in {
-        "placas",
-        "combustivel",
-        "combustivel_km",
-        "empilhadeira_horas",
-        "manutencao",
-        "pneus",
-        "pedagio",
-        "aluguel_veiculos",
-        "peso",
-        "rodagem_rota",
-    }:
+    # Alterar um lancamento comum nao muda o cadastro de placas: todos os
+    # escritores ja fazem o upsert da placa antes de chegar aqui. Limpar esses
+    # caches a cada INSERT fazia a tela de cadastro reconstruir o registro de
+    # placas percorrendo todas as tabelas do dashboard.
+    if dataset == "placas":
         _PLATE_REGISTRY_CACHE["mtime"] = None
         _PLATE_REGISTRY_CACHE["df"] = None
         _PLACAS_CACHE["mtime"] = None
         _PLACAS_CACHE["df"] = None
-    if dataset in {"combustivel", "combustiveis"}:
+    if dataset == "combustiveis":
         _TEXT_REGISTRY_CACHES["combustiveis"]["mtime"] = None
         _TEXT_REGISTRY_CACHES["combustiveis"]["df"] = None
-    if dataset in {"combustivel", "postos"}:
+    if dataset == "postos":
         _TEXT_REGISTRY_CACHES["postos"]["mtime"] = None
         _TEXT_REGISTRY_CACHES["postos"]["df"] = None
 
@@ -439,9 +467,20 @@ def _clear_dataset_cache(dataset: str) -> None:
     elif dataset == "manutencao":
         targets = ["manutencao", "pneus"]
     elif dataset == "placas":
-        targets = ["combustivel", "combustivel_km", "empilhadeira_horas", "manutencao", "pneus", "pedagio", "aluguel_veiculos", "peso", "rodagem_rota"]
+        targets = [
+            "combustivel",
+            "combustivel_km",
+            "empilhadeira_horas",
+            "manutencao",
+            "pneus",
+            "pedagio",
+            "aluguel_veiculos",
+            "peso",
+            "rodagem_rota",
+            "velocidade",
+        ]
     elif dataset in {"combustiveis", "postos"}:
-        targets = ["combustivel"]
+        targets = []
     else:
         targets = [dataset]
     for target in targets:
@@ -454,6 +493,190 @@ def _clear_dataset_cache(dataset: str) -> None:
             cache["km_rodados_mensal"] = None
     _OVERVIEW_CACHE["mtimes"] = None
     _OVERVIEW_CACHE["dados"] = None
+
+
+def _record_cache_version(dataset: str):
+    if dataset == "combustivel":
+        return (_db_version("combustivel"), _db_version("combustivel_km"))
+    if dataset == "pneus":
+        return (_db_version("pneus"), _db_version("manutencao"))
+    return _db_version(dataset)
+
+
+def _snapshot_record_cache(dataset: str) -> dict | None:
+    """Preserva um cache valido para que um INSERT possa ser aplicado localmente."""
+    supported = {
+        "combustivel",
+        "combustivel_km",
+        "empilhadeira_horas",
+        "salarios_transporte",
+        "manutencao",
+        "pneus",
+        "hoteis",
+        "pedagio",
+        "aluguel_veiculos",
+        "peso",
+        "rodagem_rota",
+        "velocidade",
+    }
+    if dataset not in supported:
+        return None
+    cache = _CACHE_MAP.get(dataset)
+    if cache is None:
+        return None
+    expected_version = _record_cache_version(dataset)
+    with cache["lock"]:
+        cached = cache.get("df")
+        if cached is None or cache.get("mtime") != expected_version:
+            return None
+        snapshot = {"df": cached.copy(), "extras": {}}
+        if dataset == "combustivel":
+            km = cache.get("km_rodados_mensal")
+            snapshot["extras"]["km_rodados_mensal"] = km.copy() if isinstance(km, pd.DataFrame) else km
+        return snapshot
+
+
+def _cached_record_frame(dataset: str, prepared: dict) -> pd.DataFrame:
+    columns = _DATASET_COLUMNS[dataset]
+    frame = pd.DataFrame([{column: prepared.get(column) for column in columns}], columns=columns)
+
+    if dataset == "combustivel":
+        frame = _finalize_common(
+            frame,
+            date_columns=["Data"],
+            numeric_columns=["Km Rodados", "Litros", "Custo"],
+            text_columns=["Combustivel", "POSTOS"],
+            plate_columns=["PLACA"],
+        )
+    elif dataset == "combustivel_km":
+        frame = _finalize_common(frame, numeric_columns=["Km Rodados"], plate_columns=["PLACA"])
+    elif dataset == "empilhadeira_horas":
+        frame = _finalize_common(frame, numeric_columns=["Horas"], plate_columns=["PLACA"])
+    elif dataset == "salarios_transporte":
+        frame = _finalize_common(frame, numeric_columns=["Valor"])
+    elif dataset == "manutencao":
+        frame = _finalize_common(
+            frame,
+            date_columns=["Data"],
+            numeric_columns=["Custo"],
+            text_columns=["OFICINA"],
+            plate_columns=["PLACA"],
+        )
+        frame = frame.loc[~_pneu_legacy_mask(frame)].copy()
+    elif dataset == "pneus":
+        frame = _finalize_common(
+            frame,
+            date_columns=["Data"],
+            numeric_columns=["Quantidade", "Custo"],
+            text_columns=["Fornecedor", "Medida", "Observacao"],
+            plate_columns=["PLACA"],
+        )
+    elif dataset == "hoteis":
+        frame = _finalize_common(
+            frame,
+            date_columns=["Data"],
+            numeric_columns=["Valor", "Dias"],
+            text_columns=["Motorista", "Ajudante", "Cidade", "Hotel", "Tipo"],
+        )
+        frame["Categoria"] = frame["Categoria"].fillna("Transporte")
+    elif dataset == "pedagio":
+        frame = _finalize_common(
+            frame,
+            date_columns=["Data"],
+            numeric_columns=["Custo"],
+            text_columns=["Tipo"],
+            plate_columns=["PLACA"],
+        )
+        frame["Tipo"] = frame["Tipo"].apply(_normalize_tipo_value).astype("string").fillna("Outros")
+    elif dataset == "aluguel_veiculos":
+        frame = _finalize_common(
+            frame,
+            date_columns=["Data", "Inicio", "Fim"],
+            numeric_columns=["Custo"],
+            text_columns=["Fornecedor", "Observacao"],
+            plate_columns=["PLACA"],
+            default_category="Vex",
+        )
+    elif dataset == "peso":
+        frame = _finalize_common(
+            frame,
+            date_columns=["Data"],
+            numeric_columns=["Peso", "Valor"],
+            text_columns=["Cidade", "Rota"],
+            plate_columns=["PLACA"],
+        )
+    elif dataset == "rodagem_rota":
+        frame = _finalize_common(
+            frame,
+            numeric_columns=["Km Rodados"],
+            text_columns=["Rota"],
+            plate_columns=["PLACA"],
+        )
+        frame["Rota"] = frame["Rota"].astype("string").fillna("").str.strip().str.upper()
+    elif dataset == "velocidade":
+        numeric_columns = [
+            "Distancia Km",
+            "Velocidade Maxima",
+            "Limite KmH",
+            "Eventos Excesso",
+            "Tempo Parado Min",
+            "Meta Minutos",
+        ]
+        frame = _finalize_common(
+            frame,
+            date_columns=["Data", "Saida", "Chegada"],
+            numeric_columns=numeric_columns,
+            text_columns=["Identificador", "Motorista", "Rota", "Origem", "Destino", "Observacao"],
+            plate_columns=["PLACA"],
+        )
+        for column in numeric_columns:
+            frame[column] = pd.to_numeric(frame[column], errors="coerce").clip(lower=0)
+    return frame[columns].copy()
+
+
+def _matches_replace_value(series: pd.Series, value) -> pd.Series:
+    if isinstance(value, (datetime, pd.Timestamp)):
+        return pd.to_datetime(series, errors="coerce") == pd.to_datetime(value, errors="coerce")
+    try:
+        if pd.isna(value):
+            return series.isna()
+    except (TypeError, ValueError):
+        pass
+    return series.astype("string").fillna("").str.strip() == str(value).strip()
+
+
+def _restore_record_cache_after_insert(
+    dataset: str,
+    prepared: dict,
+    snapshot: dict | None,
+    replace_keys: list[str] | None,
+) -> None:
+    """Atualiza a tabela em memoria sem buscar novamente todas as linhas no Neon."""
+    if snapshot is None:
+        return
+    cache = _CACHE_MAP.get(dataset)
+    if cache is None:
+        return
+
+    cached = snapshot["df"].copy()
+    keys = [key for key in (replace_keys or []) if key in cached.columns and prepared.get(key) is not None]
+    if keys and not cached.empty:
+        replace_mask = pd.Series(True, index=cached.index)
+        for key in keys:
+            replace_mask &= _matches_replace_value(cached[key], prepared.get(key))
+        cached = cached.loc[~replace_mask].copy()
+
+    record = _cached_record_frame(dataset, prepared)
+    if not record.empty:
+        attrs = dict(cached.attrs)
+        cached = pd.concat([cached, record], ignore_index=True)
+        cached.attrs.update(attrs)
+
+    with cache["lock"]:
+        cache["mtime"] = _record_cache_version(dataset)
+        cache["df"] = cached.copy()
+        for key, value in snapshot.get("extras", {}).items():
+            cache[key] = value.copy() if isinstance(value, pd.DataFrame) else value
 
 
 def _normalize_insert_value(value):
@@ -566,7 +789,6 @@ def _ensure_dataset_table(conn, dataset: str) -> None:
             )
         )
 
-
 def save_dashboard_record(dataset: str, row: dict, *, replace_keys: list[str] | None = None) -> str:
     if dataset not in DB_TABLES:
         raise ValueError(f"Conjunto de dados inválido: {dataset}")
@@ -583,6 +805,7 @@ def save_dashboard_record(dataset: str, row: dict, *, replace_keys: list[str] | 
     value_refs, value_params = _bind_columns(columns, prepared, "value")
     value_sql = ", ".join(value_refs[column] for column in columns)
     version = datetime.now(timezone.utc).isoformat()
+    cache_snapshot = _snapshot_record_cache(dataset)
 
     plate_registry_changed = dataset == "placas"
     text_registry_changed: set[str] = set()
@@ -598,22 +821,24 @@ def save_dashboard_record(dataset: str, row: dict, *, replace_keys: list[str] | 
                     replace_params,
                 )
         conn.execute(text(f"INSERT INTO {table} ({column_sql}) VALUES ({value_sql})"), value_params)
-        if dataset in {"combustivel", "manutencao", "pneus", "pedagio", "peso"} and prepared.get("PLACA") and prepared.get("Categoria"):
-            plate_registry_changed = True
+        if dataset in {"combustivel", "manutencao", "pneus", "pedagio", "peso", "velocidade"} and prepared.get("PLACA") and prepared.get("Categoria"):
             _ensure_dataset_table(conn, "placas")
             placas_table = _quote_identifier(DB_TABLES["placas"])
-            conn.execute(
+            registry_result = conn.execute(
                 text(
                     f"""
                     INSERT INTO {placas_table} ("PLACA", "Categoria")
                     VALUES (:placa, :categoria)
                     ON CONFLICT ("PLACA")
                     DO UPDATE SET "Categoria" = EXCLUDED."Categoria"
+                    WHERE {placas_table}."Categoria" IS DISTINCT FROM EXCLUDED."Categoria"
                     """
                 ),
                 {"placa": prepared["PLACA"], "categoria": prepared["Categoria"]},
             )
-            _write_metadata(conn, "placas.version", version)
+            plate_registry_changed = max(registry_result.rowcount or 0, 0) > 0
+            if plate_registry_changed:
+                _write_metadata(conn, "placas.version", version)
         if dataset == "combustivel":
             registry_targets = (
                 ("combustiveis", "Combustivel", prepared.get("Combustivel")),
@@ -622,11 +847,10 @@ def save_dashboard_record(dataset: str, row: dict, *, replace_keys: list[str] | 
             for registry_dataset, column, value in registry_targets:
                 if not value:
                     continue
-                text_registry_changed.add(registry_dataset)
                 _ensure_dataset_table(conn, registry_dataset)
                 registry_table = _quote_identifier(DB_TABLES[registry_dataset])
                 quoted_column = _quote_identifier(column)
-                conn.execute(
+                registry_result = conn.execute(
                     text(
                         f"""
                         INSERT INTO {registry_table} ({quoted_column})
@@ -636,13 +860,16 @@ def save_dashboard_record(dataset: str, row: dict, *, replace_keys: list[str] | 
                     ),
                     {"value": value},
                 )
-                _write_metadata(conn, f"{registry_dataset}.version", version)
+                if max(registry_result.rowcount or 0, 0) > 0:
+                    text_registry_changed.add(registry_dataset)
+                    _write_metadata(conn, f"{registry_dataset}.version", version)
         _write_metadata(conn, f"{dataset}.version", version)
         _write_metadata(conn, "import.version", version)
 
     if plate_registry_changed:
         _clear_dataset_cache("placas")
     _clear_dataset_cache(dataset)
+    _restore_record_cache_after_insert(dataset, prepared, cache_snapshot, replace_keys)
     for registry_dataset in text_registry_changed:
         _clear_dataset_cache(registry_dataset)
     return version
@@ -671,6 +898,8 @@ def replace_dashboard_records(dataset: str, rows: list[dict]) -> str:
         if dataset == "hoteis":
             # Registros sincronizados pertencem ao sistema de reservas. O editor
             # manual so regrava as linhas historicas que nao possuem UUID.
+            # Linhas sincronizadas pertencem ao sistema de reservas e nao podem
+            # ser recriadas sem seu UUID pelo editor manual do dashboard.
             conn.execute(text(f"DELETE FROM {table} WHERE {_quote_identifier('Reserva ID')} IS NULL"))
         else:
             conn.execute(text(f"DELETE FROM {table}"))
@@ -679,7 +908,7 @@ def replace_dashboard_records(dataset: str, rows: list[dict]) -> str:
             value_sql = ", ".join(value_refs[column] for column in columns)
             conn.execute(text(f"INSERT INTO {table} ({column_sql}) VALUES ({value_sql})"), value_params)
 
-            if dataset in {"combustivel", "manutencao", "pneus", "pedagio", "peso"} and prepared.get("PLACA") and prepared.get("Categoria"):
+            if dataset in {"combustivel", "manutencao", "pneus", "pedagio", "peso", "velocidade"} and prepared.get("PLACA") and prepared.get("Categoria"):
                 _ensure_dataset_table(conn, "placas")
                 placas_table = _quote_identifier(DB_TABLES["placas"])
                 conn.execute(
@@ -718,12 +947,12 @@ def replace_dashboard_records(dataset: str, rows: list[dict]) -> str:
                     )
                     _write_metadata(conn, f"{registry_dataset}.version", version)
 
-        if dataset in {"combustivel", "manutencao", "pneus", "pedagio", "peso"}:
+        if dataset in {"combustivel", "manutencao", "pneus", "pedagio", "peso", "velocidade"}:
             _write_metadata(conn, "placas.version", version)
         _write_metadata(conn, f"{dataset}.version", version)
         _write_metadata(conn, "import.version", version)
 
-    if dataset in {"combustivel", "manutencao", "pneus", "pedagio", "peso"}:
+    if dataset in {"combustivel", "manutencao", "pneus", "pedagio", "peso", "velocidade"}:
         _clear_dataset_cache("placas")
     _clear_dataset_cache(dataset)
     for registry_dataset in text_registry_changed:
@@ -758,7 +987,7 @@ def append_dashboard_records(dataset: str, rows: list[dict], *, update_plate_reg
             value_sql = ", ".join(value_refs[column] for column in columns)
             conn.execute(text(f"INSERT INTO {table} ({column_sql}) VALUES ({value_sql})"), value_params)
 
-            if update_plate_registry and dataset in {"combustivel", "manutencao", "pneus", "pedagio", "peso"} and prepared.get("PLACA") and prepared.get("Categoria"):
+            if update_plate_registry and dataset in {"combustivel", "manutencao", "pneus", "pedagio", "peso", "velocidade"} and prepared.get("PLACA") and prepared.get("Categoria"):
                 _ensure_dataset_table(conn, "placas")
                 placas_table = _quote_identifier(DB_TABLES["placas"])
                 conn.execute(
@@ -797,12 +1026,12 @@ def append_dashboard_records(dataset: str, rows: list[dict], *, update_plate_reg
                     )
                     _write_metadata(conn, f"{registry_dataset}.version", version)
 
-        if update_plate_registry and dataset in {"combustivel", "manutencao", "pneus", "pedagio", "peso"}:
+        if update_plate_registry and dataset in {"combustivel", "manutencao", "pneus", "pedagio", "peso", "velocidade"}:
             _write_metadata(conn, "placas.version", version)
         _write_metadata(conn, f"{dataset}.version", version)
         _write_metadata(conn, "import.version", version)
 
-    if update_plate_registry and dataset in {"combustivel", "manutencao", "pneus", "pedagio", "peso"}:
+    if update_plate_registry and dataset in {"combustivel", "manutencao", "pneus", "pedagio", "peso", "velocidade"}:
         _clear_dataset_cache("placas")
     _clear_dataset_cache(dataset)
     for registry_dataset in text_registry_changed:
@@ -1256,12 +1485,12 @@ def delete_matching_dashboard_records(dataset: str, rows: list[dict]) -> int:
             )
             deleted += max(result.rowcount or 0, 0)
 
-        if dataset in {"combustivel", "manutencao", "pneus", "pedagio", "peso"}:
+        if dataset in {"combustivel", "manutencao", "pneus", "pedagio", "peso", "velocidade"}:
             _write_metadata(conn, "placas.version", version)
         _write_metadata(conn, f"{dataset}.version", version)
         _write_metadata(conn, "import.version", version)
 
-    if dataset in {"combustivel", "manutencao", "pneus", "pedagio", "peso"}:
+    if dataset in {"combustivel", "manutencao", "pneus", "pedagio", "peso", "velocidade"}:
         _clear_dataset_cache("placas")
     _clear_dataset_cache(dataset)
     return deleted
@@ -1294,12 +1523,12 @@ def delete_dashboard_month(dataset: str, mes: str) -> int:
         result = conn.execute(text(delete_sql), params)
         deleted = max(result.rowcount or 0, 0)
 
-        if dataset in {"combustivel", "manutencao", "pneus", "pedagio", "peso"}:
+        if dataset in {"combustivel", "manutencao", "pneus", "pedagio", "peso", "velocidade"}:
             _write_metadata(conn, "placas.version", version)
         _write_metadata(conn, f"{dataset}.version", version)
         _write_metadata(conn, "import.version", version)
 
-    if dataset in {"combustivel", "manutencao", "pneus", "pedagio", "peso"}:
+    if dataset in {"combustivel", "manutencao", "pneus", "pedagio", "peso", "velocidade"}:
         _clear_dataset_cache("placas")
     _clear_dataset_cache(dataset)
     return deleted
@@ -1319,12 +1548,12 @@ def delete_dashboard_all(dataset: str) -> int:
         result = conn.execute(text(f"DELETE FROM {table}"))
         deleted = max(result.rowcount or 0, 0)
 
-        if dataset in {"combustivel", "manutencao", "pneus", "pedagio", "peso"}:
+        if dataset in {"combustivel", "manutencao", "pneus", "pedagio", "peso", "velocidade"}:
             _write_metadata(conn, "placas.version", version)
         _write_metadata(conn, f"{dataset}.version", version)
         _write_metadata(conn, "import.version", version)
 
-    if dataset in {"combustivel", "manutencao", "pneus", "pedagio", "peso"}:
+    if dataset in {"combustivel", "manutencao", "pneus", "pedagio", "peso", "velocidade"}:
         _clear_dataset_cache("placas")
     _clear_dataset_cache(dataset)
     return deleted
@@ -1577,7 +1806,18 @@ def rename_plate(old_plate, new_plate, categoria: str, diaria: float | None = No
             diaria_value = float(stored_daily or 0.0)
         else:
             diaria_value = max(float(diaria or 0.0), 0.0)
-        for dataset in ("combustivel", "combustivel_km", "empilhadeira_horas", "manutencao", "pneus", "pedagio", "aluguel_veiculos", "peso", "rodagem_rota"):
+        for dataset in (
+            "combustivel",
+            "combustivel_km",
+            "empilhadeira_horas",
+            "manutencao",
+            "pneus",
+            "pedagio",
+            "aluguel_veiculos",
+            "peso",
+            "rodagem_rota",
+            "velocidade",
+        ):
             _ensure_dataset_table(conn, dataset)
             table = _quote_identifier(DB_TABLES[dataset])
             conn.execute(
@@ -1836,6 +2076,7 @@ def _derived_plate_registry() -> pd.DataFrame:
         load_pedagio,
         load_peso,
         load_rodagem_rota,
+        load_velocidade,
     ):
         try:
             df = loader()
@@ -1884,25 +2125,21 @@ def _derived_plate_registry() -> pd.DataFrame:
 
 
 def load_placas() -> pd.DataFrame:
-    version = (
-        _db_version("placas"),
-        _db_version("combustivel"),
-        _db_version("combustivel_km"),
-        _db_version("empilhadeira_horas"),
-        _db_version("manutencao"),
-        _db_version("pneus"),
-        _db_version("pedagio"),
-        _db_version("peso"),
-        _db_version("rodagem_rota"),
-    )
+    # Toda gravacao nova sincroniza o cadastro de placas. Assim, somente a
+    # versao desse cadastro precisa invalidar a lista; usar as versoes de todas
+    # as tabelas fazia qualquer lancamento reconstruir a frota inteira.
+    version = _db_version("placas")
     with _PLACAS_CACHE["lock"]:
         cached = _PLACAS_CACHE.get("df")
         if cached is not None and _PLACAS_CACHE.get("mtime") == version:
             return cached.copy()
 
-    derived = _derived_plate_registry()
     registered = _read_plate_registry()
-    frames = [df for df in (derived, registered) if not df.empty]
+    # Em instalacoes atuais, dashboard_placas e a fonte oficial e todos os
+    # fluxos de gravacao a mantem sincronizada. A varredura das demais tabelas
+    # fica apenas como compatibilidade para uma base antiga ainda sem cadastro.
+    frames = [registered] if not registered.empty else [_derived_plate_registry()]
+    frames = [df for df in frames if not df.empty]
     if not frames:
         df = _empty(_PLACAS_COLUMNS)
     else:
@@ -2322,7 +2559,11 @@ def load_salarios_transporte() -> pd.DataFrame:
 
 def _load_text_registry(dataset: str, columns: list[str], column: str) -> pd.DataFrame:
     cache = _TEXT_REGISTRY_CACHES.get(dataset)
-    version = (_db_version(dataset), _db_version("combustivel"))
+    # Novos valores de combustivel/posto sao gravados no registro dedicado.
+    # O historico so e consultado ao montar o cache pela primeira vez; um novo
+    # abastecimento com uma opcao existente nao precisa invalidar essa lista.
+    version = _db_version(dataset)
+    combustivel_version = _db_version("combustivel")
     if cache is None:
         cached = None
     else:
@@ -2347,7 +2588,7 @@ def _load_text_registry(dataset: str, columns: list[str], column: str) -> pd.Dat
             combustivel_df is not None
             and isinstance(combustivel_mtime, tuple)
             and combustivel_mtime
-            and combustivel_mtime[0] == version[1]
+            and combustivel_mtime[0] == combustivel_version
         ):
             historical = combustivel_df
     if historical is None:
@@ -2976,6 +3217,259 @@ def load_rodagem_rota() -> pd.DataFrame:
         return df.copy(deep=False)
 
 
+def load_velocidade() -> pd.DataFrame:
+    cache = _VELOCIDADE_CACHE
+    with cache["lock"]:
+        version = _db_version("velocidade")
+        cached = cache.get("df")
+        if cached is not None and cache.get("mtime") == version:
+            return cached.copy(deep=False)
+
+        df = _read_database_table(
+            "velocidade",
+            _VELOCIDADE_COLUMNS,
+            date_columns=["Data", "Saida", "Chegada"],
+        )
+        numeric_columns = [
+            "Distancia Km",
+            "Velocidade Maxima",
+            "Limite KmH",
+            "Eventos Excesso",
+            "Tempo Parado Min",
+            "Meta Minutos",
+        ]
+        df = _finalize_common(
+            df,
+            date_columns=["Data", "Saida", "Chegada"],
+            numeric_columns=numeric_columns,
+            text_columns=["Identificador", "Motorista", "Rota", "Origem", "Destino", "Observacao"],
+            plate_columns=["PLACA"],
+        )
+        for column in numeric_columns:
+            df[column] = pd.to_numeric(df[column], errors="coerce").clip(lower=0)
+        df = _apply_plate_categories(df)
+        for column in _VELOCIDADE_COLUMNS:
+            if column not in df.columns:
+                df[column] = pd.NA
+        df = df[_VELOCIDADE_COLUMNS].copy()
+        cache["mtime"] = version
+        cache["df"] = df.copy()
+        return df.copy(deep=False)
+
+
+_VELOCIDADE_CALCULATED_COLUMNS = [
+    "Duracao Total Min",
+    "Movimento Min",
+    "Velocidade Km/h",
+    "Dentro da Meta",
+    "Atraso Min",
+]
+
+
+def _velocidade_with_metrics(df: pd.DataFrame) -> pd.DataFrame:
+    details = df.copy() if df is not None else _empty(_VELOCIDADE_COLUMNS)
+    for column in _VELOCIDADE_COLUMNS:
+        if column not in details.columns:
+            details[column] = pd.NA
+
+    for column in ("Data", "Saida", "Chegada"):
+        details[column] = pd.to_datetime(details[column], errors="coerce")
+
+    numeric_columns = [
+        "Distancia Km",
+        "Velocidade Maxima",
+        "Limite KmH",
+        "Eventos Excesso",
+        "Tempo Parado Min",
+        "Meta Minutos",
+    ]
+    for column in numeric_columns:
+        details[column] = pd.to_numeric(details[column], errors="coerce").clip(lower=0)
+
+    duration = (details["Chegada"] - details["Saida"]).dt.total_seconds().div(60.0)
+    valid_duration = duration.gt(0) & duration.notna()
+    duration = duration.where(valid_duration)
+    stopped_for_calculation = details["Tempo Parado Min"].fillna(0.0)
+    movement = (duration - stopped_for_calculation).clip(lower=0).where(valid_duration)
+
+    valid_speed = valid_duration & movement.gt(0) & details["Distancia Km"].gt(0)
+    speed = pd.Series(float("nan"), index=details.index, dtype="float64")
+    speed.loc[valid_speed] = (
+        details.loc[valid_speed, "Distancia Km"]
+        .div(movement.loc[valid_speed].div(60.0))
+        .astype("float64")
+    )
+
+    target = details["Meta Minutos"]
+    target_eligible = valid_speed & target.gt(0) & target.notna()
+    within_target = pd.Series(pd.NA, index=details.index, dtype="boolean")
+    within_target.loc[target_eligible] = duration.loc[target_eligible].le(target.loc[target_eligible])
+    delay = (duration - target).clip(lower=0).where(target_eligible)
+
+    details["Duracao Total Min"] = duration
+    details["Movimento Min"] = movement
+    details["Velocidade Km/h"] = speed
+    details["Dentro da Meta"] = within_target
+    details["Atraso Min"] = delay
+    return details[_VELOCIDADE_COLUMNS + _VELOCIDADE_CALCULATED_COLUMNS].copy()
+
+
+def _velocidade_weighted_series(
+    details: pd.DataFrame,
+    group_column: str,
+    *,
+    sort_by_group: bool,
+) -> dict:
+    value_column = "Velocidade Km/h"
+    if details.empty or group_column not in details.columns:
+        return {group_column: [], value_column: []}
+
+    valid = details[group_column].notna() & details["Velocidade Km/h"].notna()
+    data = details.loc[valid, [group_column, "Distancia Km", "Movimento Min"]].copy()
+    if data.empty:
+        return {group_column: [], value_column: []}
+
+    grouped = data.groupby(group_column, as_index=False).agg(
+        _distancia=("Distancia Km", "sum"),
+        _movimento=("Movimento Min", "sum"),
+    )
+    grouped[value_column] = grouped["_distancia"].div(grouped["_movimento"].div(60.0))
+    if sort_by_group:
+        grouped = grouped.sort_values(group_column)
+    else:
+        grouped = grouped.sort_values(value_column, ascending=False)
+    return grouped[[group_column, value_column]].to_dict(orient="list")
+
+
+def _velocidade_group_mean(
+    details: pd.DataFrame,
+    group_column: str,
+    source_column: str,
+    value_column: str,
+    *,
+    sort_by_group: bool,
+) -> dict:
+    if details.empty or group_column not in details.columns or source_column not in details.columns:
+        return {group_column: [], value_column: []}
+    data = details.dropna(subset=[group_column, source_column])[[group_column, source_column]].copy()
+    if data.empty:
+        return {group_column: [], value_column: []}
+    grouped = data.groupby(group_column, as_index=False)[source_column].mean().rename(columns={source_column: value_column})
+    if sort_by_group:
+        grouped = grouped.sort_values(group_column)
+    else:
+        grouped = grouped.sort_values(value_column, ascending=False)
+    return grouped.to_dict(orient="list")
+
+
+def agg_velocidade(df: pd.DataFrame) -> dict:
+    details = _velocidade_with_metrics(df)
+    total_registros = int(len(details))
+    valid_trips = details["Velocidade Km/h"].notna()
+    viagens_validas = int(valid_trips.sum())
+
+    distance = details.loc[valid_trips, "Distancia Km"]
+    distancia_total = float(distance.sum()) if not distance.empty else 0.0
+    weighted_rows = valid_trips
+    movement_weight = float(details.loc[weighted_rows, "Movimento Min"].sum())
+    velocidade_media = (
+        float(details.loc[weighted_rows, "Distancia Km"].sum()) / (movement_weight / 60.0)
+        if movement_weight > 0
+        else 0.0
+    )
+
+    tempo_medio_min = float(details.loc[valid_trips, "Duracao Total Min"].mean()) if viagens_validas else 0.0
+    movimento_medio_min = float(details.loc[valid_trips, "Movimento Min"].mean()) if viagens_validas else 0.0
+    parado_values = details.loc[valid_trips, "Tempo Parado Min"].fillna(0.0)
+    parado_medio_min = float(parado_values.mean()) if viagens_validas else 0.0
+
+    target_eligible = valid_trips & details["Dentro da Meta"].notna()
+    sla_percentual = (
+        float(details.loc[target_eligible, "Dentro da Meta"].astype("float64").mean() * 100.0)
+        if target_eligible.any()
+        else None
+    )
+    delayed = target_eligible & details["Atraso Min"].gt(0)
+    if not target_eligible.any():
+        atraso_medio_min = None
+    elif delayed.any():
+        atraso_medio_min = float(details.loc[delayed, "Atraso Min"].mean())
+    else:
+        atraso_medio_min = 0.0
+
+    maximum_speed = details.loc[valid_trips, "Velocidade Maxima"].dropna()
+    velocidade_maxima = float(maximum_speed.max()) if not maximum_speed.empty else None
+    informed_excess = valid_trips & details["Eventos Excesso"].notna()
+    viagens_sem_excesso_percentual = (
+        float(details.loc[informed_excess, "Eventos Excesso"].eq(0).mean() * 100.0)
+        if informed_excess.any()
+        else None
+    )
+    if informed_excess.any():
+        total_excess_events = float(details.loc[informed_excess, "Eventos Excesso"].sum())
+        informed_distance = float(details.loc[informed_excess, "Distancia Km"].sum())
+        eventos_excesso_por_100_km = (
+            total_excess_events / informed_distance * 100.0
+            if informed_distance > 0
+            else None
+        )
+    else:
+        eventos_excesso_por_100_km = None
+
+    sla_data = details.loc[target_eligible & details["Mes"].notna(), ["Mes", "Dentro da Meta"]].copy()
+    if sla_data.empty:
+        sla_mensal = {"Mes": [], "SLA %": []}
+    else:
+        sla_data["Dentro da Meta"] = sla_data["Dentro da Meta"].astype("float64")
+        sla_grouped = (
+            sla_data.groupby("Mes", as_index=False)["Dentro da Meta"]
+            .mean()
+            .sort_values("Mes")
+        )
+        sla_grouped["SLA %"] = sla_grouped["Dentro da Meta"] * 100.0
+        sla_mensal = sla_grouped[["Mes", "SLA %"]].to_dict(orient="list")
+
+    trips_data = details.loc[valid_trips & details["Mes"].notna(), ["Mes"]].copy()
+    if trips_data.empty:
+        viagens_mensal = {"Mes": [], "Viagens": []}
+    else:
+        trips_grouped = trips_data.groupby("Mes", as_index=False).size().rename(columns={"size": "Viagens"}).sort_values("Mes")
+        viagens_mensal = trips_grouped.to_dict(orient="list")
+
+    return {
+        "total_registros": total_registros,
+        "viagens_validas": viagens_validas,
+        "distancia_total": distancia_total,
+        "velocidade_media": velocidade_media,
+        "velocidade_maxima": velocidade_maxima,
+        "tempo_medio_min": tempo_medio_min,
+        "movimento_medio_min": movimento_medio_min,
+        "parado_medio_min": parado_medio_min,
+        "sla_percentual": sla_percentual,
+        "atraso_medio_min": atraso_medio_min,
+        "viagens_sem_excesso_percentual": viagens_sem_excesso_percentual,
+        "eventos_excesso_por_100_km": eventos_excesso_por_100_km,
+        "velocidade_mensal": _velocidade_weighted_series(details, "Mes", sort_by_group=True),
+        "velocidade_por_placa": _velocidade_weighted_series(details, "PLACA", sort_by_group=False),
+        "tempo_por_rota": _velocidade_group_mean(
+            details.loc[valid_trips],
+            "Rota",
+            "Duracao Total Min",
+            "Tempo Medio Min",
+            sort_by_group=False,
+        ),
+        "sla_mensal": sla_mensal,
+        "viagens_mensal": viagens_mensal,
+        "distancia_por_rota": _group_sum(details.loc[valid_trips], "Rota", "Distancia Km"),
+        "anos": _unique_years(details),
+        "meses": _unique_sorted(details, "Mes"),
+        "placas": _unique_sorted(details, "PLACA"),
+        "motoristas": _unique_sorted(details, "Motorista"),
+        "rotas": _unique_sorted(details, "Rota"),
+        "categorias": _unique_sorted(details, "Categoria"),
+    }
+
+
 def agg_peso(df: pd.DataFrame) -> dict:
     peso_total = float(pd.to_numeric(df.get("Peso"), errors="coerce").sum()) if "Peso" in df else 0.0
     valor_total = float(pd.to_numeric(df.get("Valor"), errors="coerce").sum()) if "Valor" in df else 0.0
@@ -3225,6 +3719,65 @@ def data_pedagio(params: dict | None = None) -> dict:
     resultado["anos"] = anos_disponiveis
     resultado["meses"] = meses_disponiveis
     resultado["segmentos"] = segmentos_disponiveis
+    return resultado
+
+
+def _filter_velocidade_text(df: pd.DataFrame, column: str, value: object) -> pd.DataFrame:
+    if not value or value == "Todos":
+        return df
+    if df.empty or column not in df.columns:
+        return df.iloc[0:0].copy()
+    target = _normalize_ascii(value).strip().casefold()
+    normalized = df[column].astype("string").fillna("").apply(lambda item: _normalize_ascii(item).strip().casefold())
+    return df.loc[normalized.eq(target)].copy()
+
+
+def _velocidade_filtered_scope(params: dict | None = None) -> tuple[pd.DataFrame, dict[str, list]]:
+    params = params or {}
+    df = load_velocidade()
+    anos_sheets = list(df.attrs.get("anos_sheets", []))
+
+    ano = _parse_int(_param(params, "ano"))
+    meses = _parse_mes_list(params.get("mes"))
+    placa = _param(params, "placa")
+    motorista = _param(params, "motorista")
+    rota = _param(params, "rota")
+    categoria = _param(params, "categoria") or _param(params, "segmento")
+
+    df = _filter_plate_param(df, placa)
+    df = _filter_velocidade_text(df, "Motorista", motorista)
+    df = _filter_velocidade_text(df, "Rota", rota)
+    df = _filter_category_param(df, categoria)
+
+    pre_period = df.copy()
+    anos_disponiveis = sorted({*_unique_years(pre_period), *anos_sheets})
+    month_scope = _filter_by_period(pre_period, ano=ano) if ano is not None else pre_period
+    meses_disponiveis = _unique_sorted(month_scope, "Mes")
+    options = {
+        "anos": anos_disponiveis,
+        "meses": meses_disponiveis,
+        "placas": _unique_sorted(pre_period, "PLACA"),
+        "motoristas": _unique_sorted(pre_period, "Motorista"),
+        "rotas": _unique_sorted(pre_period, "Rota"),
+        "categorias": _unique_sorted(pre_period, "Categoria"),
+    }
+
+    if ano is not None:
+        df = _filter_by_period(df, ano=ano)
+    if meses:
+        df = df[df["Mes"].isin(meses)].copy()
+    return df, options
+
+
+def velocidade_detalhes(params: dict | None = None) -> pd.DataFrame:
+    df, _options = _velocidade_filtered_scope(params)
+    return _velocidade_with_metrics(df).reset_index(drop=True)
+
+
+def data_velocidade(params: dict | None = None) -> dict:
+    df, options = _velocidade_filtered_scope(params)
+    resultado = agg_velocidade(df)
+    resultado.update(options)
     return resultado
 
 
@@ -4284,6 +4837,7 @@ def data_frota(params: dict | None = None) -> dict:
                 route_fuel_warnings.append(
                     "Nenhuma rodagem em KM foi cadastrada para as rotas, placas e meses selecionados."
                 )
+            df_comb = _ranking_filter_route_day_rows(df_comb, df_peso)
             df_ped = _ranking_filter_route_day_rows(df_ped, df_peso)
             df_comb_metrics = _ranking_filter_plates(df_comb_metrics, route_plates)
             df_manu = _ranking_filter_plates(df_manu, route_plates)
@@ -4585,6 +5139,7 @@ def _warm_data_caches(*, blocking: bool = False) -> None:
         (load_peso, "peso"),
         (load_rodagem_rota, "rodagem por rota"),
         (load_salarios_transporte, "salários do transporte"),
+        (load_velocidade, "velocidade"),
     )
 
     def _run() -> None:
