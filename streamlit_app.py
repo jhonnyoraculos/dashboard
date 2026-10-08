@@ -10349,7 +10349,63 @@ def _render_seguro_period_adjustment() -> None:
 
 
 @st.fragment
-def _render_pedagio_reset_all() -> None:
+def _render_pedagio_reset_options() -> None:
+    with st.expander("Zerar Pedágio/Extras por mês", expanded=False):
+        st.warning("Essa ação apaga todos os lançamentos de pedágio, extras, táxi, IPVA e seguros do mês escolhido.")
+
+        try:
+            df_preview = backend.load_pedagio()
+        except Exception as exc:
+            st.info("Não foi possível carregar os lançamentos para selecionar um mês.")
+            st.caption(str(exc))
+            df_preview = pd.DataFrame()
+
+        month_options = _sheet_export_month_options(df_preview)
+        if not month_options:
+            st.caption("Nenhum mês cadastrado para zerar.")
+        else:
+            current_month = date.today().strftime("%Y-%m")
+            default_index = month_options.index(current_month) if current_month in month_options else 0
+            selected_month = st.selectbox(
+                "Mês para zerar",
+                month_options,
+                index=default_index,
+                format_func=month_filter_label,
+                key="cad_ped_reset_month",
+            )
+
+            month_values = df_preview["Mes"].astype("string").fillna("").str.strip()
+            selected_rows = df_preview.loc[month_values.eq(selected_month)]
+            selected_count = int(selected_rows.shape[0])
+            selected_total = float(pd.to_numeric(selected_rows.get("Custo"), errors="coerce").sum())
+            selected_label = month_filter_label(selected_month)
+            st.caption(
+                f"{selected_label}: {selected_count} lançamento(s), total {fmt_brl(selected_total)}."
+            )
+
+            confirmar_mes = st.checkbox(
+                f"Confirmo que quero apagar todos os lançamentos de Pedágio/Extras de {selected_label}.",
+                key=f"cad_ped_reset_month_confirm_{selected_month}",
+            )
+            if st.button(
+                f"Zerar Pedágio/Extras de {selected_label}",
+                type="primary",
+                width="stretch",
+                disabled=not confirmar_mes or selected_count == 0,
+                key=f"cad_ped_reset_month_button_{selected_month}",
+            ):
+                try:
+                    deleted = backend.delete_dashboard_month("pedagio", selected_month)
+                except Exception as exc:
+                    st.error(f"Não foi possível zerar Pedágio/Extras de {selected_label} no Neon.")
+                    st.exception(exc)
+                    return
+                _clear_pedagio_last_import()
+                _reset_dataset_editor("cad_ped_table")
+                clear_cached_reads()
+                st.success(f"{deleted} lançamento(s) de Pedágio/Extras apagado(s) de {selected_label}.")
+                st.rerun()
+
     with st.expander("Zerar todo Pedágio/Extras", expanded=False):
         st.warning("Essa ação apaga todos os lançamentos de pedágio, extras, táxi, IPVA e seguros. Use somente se for recadastrar tudo manualmente.")
         count = None
@@ -11136,7 +11192,7 @@ def render_cadastro() -> None:
 
         if active_tab == "Pedágio/Extras":
             _render_pedagio_sheet_import(plate_map)
-            _render_pedagio_reset_all()
+            _render_pedagio_reset_options()
 
             with st.form("form_pedagio", clear_on_submit=True):
                 c1, c2, c3 = st.columns(3)
