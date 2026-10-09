@@ -44,7 +44,8 @@ _backend_aluguel_period_ready = {"Inicio", "Fim"}.issubset(
     set(getattr(backend, "_ALUGUEL_VEICULOS_COLUMNS", []))
 )
 _backend_aluguel_monthly_ready = getattr(backend, "BACKEND_BUILD_VERSION", "") == "aluguel-multiplicar-meses-v1"
-if not _backend_features_ready or not _backend_aluguel_period_ready or not _backend_aluguel_monthly_ready:
+_backend_pedagio_chart_ready = getattr(backend, "PEDAGIO_CHART_VERSION", "") == "all-types-v1"
+if not _backend_features_ready or not _backend_aluguel_period_ready or not _backend_aluguel_monthly_ready or not _backend_pedagio_chart_ready:
     backend = importlib.reload(backend)
 
 
@@ -10351,7 +10352,10 @@ def _render_seguro_period_adjustment() -> None:
 @st.fragment
 def _render_pedagio_reset_options() -> None:
     with st.expander("Zerar Pedágio/Extras por mês", expanded=False):
-        st.warning("Essa ação apaga todos os lançamentos de pedágio, extras, táxi, IPVA e seguros do mês escolhido.")
+        st.warning(
+            "Essa ação apaga todos os lançamentos de pedágio, extras, táxi, IPVA e seguros do mês escolhido. "
+            "O gráfico Gasto mensal não inclui lançamentos da área Vex; esses valores aparecem separados abaixo."
+        )
 
         try:
             df_preview = backend.load_pedagio()
@@ -10378,10 +10382,25 @@ def _render_pedagio_reset_options() -> None:
             selected_rows = df_preview.loc[month_values.eq(selected_month)]
             selected_count = int(selected_rows.shape[0])
             selected_total = float(pd.to_numeric(selected_rows.get("Custo"), errors="coerce").sum())
+
+            chart_rows = selected_rows.copy()
+            if "Categoria" in chart_rows.columns:
+                category_values = chart_rows["Categoria"].astype("string").fillna("").map(clean_text).str.casefold()
+                chart_rows = chart_rows.loc[category_values.ne("vex")]
+            chart_count = int(chart_rows.shape[0])
+            chart_total = float(pd.to_numeric(chart_rows.get("Custo"), errors="coerce").sum())
+            additional_count = selected_count - chart_count
+            additional_total = selected_total - chart_total
+
             selected_label = month_filter_label(selected_month)
             st.caption(
-                f"{selected_label}: {selected_count} lançamento(s), total {fmt_brl(selected_total)}."
+                f"{selected_label}: o gráfico Gasto mensal mostra {chart_count} lançamento(s), total {fmt_brl(chart_total)}."
             )
+            if additional_count:
+                st.caption(
+                    f"Também serão apagados {additional_count} lançamento(s) da área Vex, "
+                    f"total {fmt_brl(additional_total)}. Total completo a apagar: {fmt_brl(selected_total)}."
+                )
 
             confirmar_mes = st.checkbox(
                 f"Confirmo que quero apagar todos os lançamentos de Pedágio/Extras de {selected_label}.",

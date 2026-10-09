@@ -56,6 +56,7 @@ DB_TABLES = {
 }
 DB_METADATA_TABLE = "dashboard_metadata"
 BACKEND_BUILD_VERSION = "aluguel-multiplicar-meses-v1"
+PEDAGIO_CHART_VERSION = "all-types-v1"
 BACKUP_METADATA_KEY = "backup.last_downloaded_at"
 _DB_ENGINE = None
 _METADATA_CACHE_SECONDS = float(os.environ.get("JR_METADATA_CACHE_SECONDS", "30") or 30)
@@ -3546,14 +3547,14 @@ def agg_pedagio(df: pd.DataFrame) -> dict:
         "qtd_pedagio": int(tipo_contagens.get("Pedágio", 0)),
         "qtd_ipva": int(tipo_contagens.get("IPVA", 0)),
         "qtd_seguro": int(tipo_contagens.get("Seguro", 0)),
-        "custo_mensal": _group_sum(other_df, "Mes", "Custo", sort_by="group"),
+        "custo_mensal": _group_sum(df, "Mes", "Custo", sort_by="group"),
         "gasto_por_tipo": {"Tipo": [item[0] for item in tipo_items], "Custo": [item[1] for item in tipo_items]},
         "gasto_por_placa": gasto_por_placa,
         "seguro_por_placa": {"PLACA": [item[0] for item in seguro_placa_items], "Custo": [item[1] for item in seguro_placa_items]},
         "meses": _unique_sorted(df, "Mes"),
         "tipos": _unique_sorted(df, "Tipo"),
         "placas": _unique_sorted(df, "PLACA"),
-        "custo_semana": _weekly_series(other_df, "Data", "Custo", "Custo"),
+        "custo_semana": _weekly_series(df, "Data", "Custo", "Custo"),
     }
     if "Categoria" in df.columns:
         gasto_por_categoria = _group_sum(other_df, "Categoria", "Custo") if not other_df.empty else {"Categoria": [], "Custo": []}
