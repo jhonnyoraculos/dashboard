@@ -78,11 +78,11 @@ mantem uma simulacao anterior depois que peso, distancia ou equipe sao
 alterados.
 
 As despesas de hotel podem ser marcadas ou desmarcadas na calculadora. Quando
-incluidas sem uma placa especifica, entram diretamente na media da frota. Para
-uma placa especifica, sao rateadas pela quilometragem media porque os registros
-de hospedagem nao possuem placa.
+incluidas, usam o valor medio historico da diaria e sao calculadas pelo tempo
+total da operacao: menos de 10 horas nao gera diaria; de 10 ate menos de 20
+horas gera uma diaria; de 20 ate menos de 30 horas gera duas diarias, e assim
+por diante.
 
-O resumo mostra a composicao completa: custo direto por km + hoteis rateados
-por km = tarifa final por km. O salario da equipe nao entra nessa tarifa; ele e
-calculado separadamente pelo tempo de viagem e descarga, quantidade de
-funcionarios e valor por hora.
+O resumo separa o custo direto do caminhao por km, o custo da equipe e o hotel.
+O salario da equipe e calculado pelo tempo de viagem e descarga, quantidade de
+funcionarios e valor por hora. O hotel nao altera o custo por km da placa.

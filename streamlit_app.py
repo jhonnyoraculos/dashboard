@@ -55,7 +55,7 @@ MUTED = "#6B7280"
 CARD_BORDER = "#c2d2f3"
 LOGO_PATH = Path(__file__).parent / "static" / "logo-jr.png"
 CURRENT_YEAR = date.today().year
-APP_VERSION = "freight-calculator-rate-breakdown-v1"
+APP_VERSION = "freight-calculator-hotel-hours-v1"
 RANK_ROUTES_ENABLED = False
 ROUTE_CACHE_TTL_SECONDS = max(int(os.environ.get("JR_ROUTE_CACHE_TTL_SECONDS", "180") or 180), 30)
 DATA_EDITOR_PAGE_SIZE = 100
@@ -64,6 +64,7 @@ TABLE_FILTER_EMPTY_LABEL = "Sem informação"
 BR_TZ = ZoneInfo("America/Sao_Paulo")
 FREIGHT_UNLOAD_KG_PER_HOUR = 1000.0
 FREIGHT_AVERAGE_SPEED_KMH = 80.0
+FREIGHT_HOTEL_DAY_HOURS = 10.0
 FREIGHT_WORKDAY_HOURS = 8.0
 FREIGHT_REFERENCE_CREW_SIZE = 2.0
 FREIGHT_FLEET_AVERAGE_LABEL = "Média da frota (sem placa)"
@@ -3183,7 +3184,11 @@ def _freight_reference(totals: dict) -> dict[str, float]:
     total_cost = max(float(totals.get("total") or 0.0), 0.0)
     salary_cost = max(float(totals.get("salario_transporte") or 0.0), 0.0)
     hotel_cost = max(float(totals.get("hoteis") or 0.0), 0.0)
-    operating_cost = max(total_cost - salary_cost, 0.0)
+    hotel_days = max(float(totals.get("dias_hoteis") or 0.0), 0.0)
+    hotel_daily_rate = max(float(totals.get("hoteis_diaria") or 0.0), 0.0)
+    if not hotel_daily_rate and hotel_days:
+        hotel_daily_rate = hotel_cost / hotel_days
+    operating_cost = max(total_cost - salary_cost - hotel_cost, 0.0)
     total_km = max(float(totals.get("km_total") or 0.0), 0.0)
     service_days = max(
         float(totals.get("salario_transporte_dias") or totals.get("dias_servico") or 0.0),
@@ -3193,10 +3198,10 @@ def _freight_reference(totals: dict) -> dict[str, float]:
         "operating_cost": operating_cost,
         "salary_cost": salary_cost,
         "hotel_cost": hotel_cost,
+        "hotel_daily_rate": hotel_daily_rate,
         "total_km": total_km,
         "service_days": service_days,
         "rate_per_km": operating_cost / total_km if total_km else 0.0,
-        "hotel_rate_per_km": hotel_cost / total_km if total_km else 0.0,
         "rate_per_employee_hour": (
             salary_cost
             / service_days
@@ -3217,18 +3222,16 @@ def _freight_plate_reference(row: dict, general: dict[str, float]) -> dict[str, 
 
     has_plate_km_rate = bool(total_km and operating_cost)
     has_plate_hourly_rate = bool(service_days and salary_cost)
-    hotel_rate_per_km = float(general.get("hotel_rate_per_km") or 0.0)
     general_rate_per_km = float(general.get("rate_per_km") or 0.0)
-    general_direct_rate_per_km = max(general_rate_per_km - hotel_rate_per_km, 0.0)
     direct_rate_per_km = (
         operating_cost / total_km
         if has_plate_km_rate
-        else general_direct_rate_per_km
+        else general_rate_per_km
     )
     return {
-        "rate_per_km": direct_rate_per_km + hotel_rate_per_km,
+        "rate_per_km": direct_rate_per_km,
         "direct_rate_per_km": direct_rate_per_km,
-        "hotel_rate_per_km": hotel_rate_per_km,
+        "hotel_daily_rate": float(general.get("hotel_daily_rate") or 0.0),
         "rate_per_employee_hour": (
             salary_cost
             / service_days
@@ -3252,6 +3255,7 @@ def _calculate_freight_quote(
     employees: int,
     employee_hourly_rate: float,
     margin_percent: float,
+    include_hotels: bool,
 ) -> dict[str, float]:
     employee_count = max(int(employees), 1)
     unload_hours = max(weight_kg, 0.0) / FREIGHT_UNLOAD_KG_PER_HOUR
@@ -3265,7 +3269,14 @@ def _calculate_freight_quote(
     travel_labor_cost = travel_employee_hours * hourly_rate
     team_cost = unload_labor_cost + travel_labor_cost
     distance_component = max(distance_km, 0.0) * reference["rate_per_km"]
-    estimated_cost = distance_component + team_cost
+    hotel_daily_rate = max(float(reference.get("hotel_daily_rate") or 0.0), 0.0)
+    hotel_days = (
+        int(total_operation_hours // FREIGHT_HOTEL_DAY_HOURS)
+        if include_hotels
+        else 0
+    )
+    hotel_cost = hotel_days * hotel_daily_rate
+    estimated_cost = distance_component + team_cost + hotel_cost
     margin_value = estimated_cost * max(margin_percent, 0.0) / 100.0
     suggested_freight = estimated_cost + margin_value
     return {
@@ -3273,6 +3284,9 @@ def _calculate_freight_quote(
         "travel_labor_cost": travel_labor_cost,
         "team_cost": team_cost,
         "distance_component": distance_component,
+        "hotel_days": float(hotel_days),
+        "hotel_daily_rate": hotel_daily_rate,
+        "hotel_cost": hotel_cost,
         "unload_hours": unload_hours,
         "travel_hours": travel_hours,
         "total_operation_hours": total_operation_hours,
@@ -6639,7 +6653,7 @@ def render_calculadora_frete() -> None:
             """
             <section class="frete-intro">
               <h2>Quanto cobrar pelo frete?</h2>
-              <p>Use a média da frota ou escolha um caminhão específico. O tempo da viagem considera velocidade média de 80 km/h, e a descarga considera 1 tonelada por hora.</p>
+              <p>Use a média da frota ou escolha um caminhão específico. O tempo da viagem considera velocidade média de 80 km/h, a descarga considera 1 tonelada por hora e o hotel conta uma diária a cada 10 horas completas de operação.</p>
             </section>
             """
         )
@@ -6662,7 +6676,7 @@ def render_calculadora_frete() -> None:
             "Incluir hotéis no cálculo",
             value=True,
             key="frete_include_hotels",
-            help="Inclui ou remove as despesas históricas de hospedagem da tarifa por km.",
+            help="Inclui uma diária média de hotel a cada 10 horas completas de viagem + descarga.",
         )
 
         historical = route_json(
@@ -6775,6 +6789,7 @@ def render_calculadora_frete() -> None:
             "employees": int(employees),
             "employee_hourly_rate": float(employee_hourly_rate),
             "margin_percent": float(margin_percent),
+            "include_hotels": bool(include_hotels),
         }
         quote = _calculate_freight_quote(plate_reference, **quote_inputs)
         st.html(
@@ -6789,18 +6804,19 @@ def render_calculadora_frete() -> None:
                 <div class="frete-result-item frete-result-item--cost">
                   <p class="frete-result-label">Custo estimado</p>
                   <p class="frete-result-value frete-result-value--cost">{h(fmt_brl(quote['estimated_cost'], compact_threshold=float('inf')))}</p>
-                  <p class="frete-result-note">Caminhão + equipe por {h(fmt_num(quote['total_operation_hours'], 2))} h, sem margem.</p>
+                  <p class="frete-result-note">Caminhão + equipe + hotel por {h(fmt_num(quote['total_operation_hours'], 2))} h, sem margem.</p>
                 </div>
               </div>
             </section>
             <section class="frete-breakdown">
-              <div class="frete-breakdown-card"><p>Custo do caminhão por km</p><strong>{h(fmt_brl(quote['distance_component'], compact_threshold=float('inf')))}</strong></div>
+              <div class="frete-breakdown-card"><p>Custo do caminhão na distância</p><strong>{h(fmt_brl(quote['distance_component'], compact_threshold=float('inf')))}</strong></div>
               <div class="frete-breakdown-card"><p>Custo da equipe</p><strong>{h(fmt_brl(quote['team_cost'], compact_threshold=float('inf')))}</strong></div>
+              <div class="frete-breakdown-card"><p>Hotel — {h(fmt_num(quote['hotel_days']))} diária(s)</p><strong>{h(fmt_brl(quote['hotel_cost'], compact_threshold=float('inf')))}</strong></div>
               <div class="frete-breakdown-card"><p>Tempo de viagem a 80 km/h</p><strong>{h(fmt_num(quote['travel_hours'], 2))} h</strong></div>
               <div class="frete-breakdown-card"><p>Tempo de descarga a 1 t/h</p><strong>{h(fmt_num(quote['unload_hours'], 2))} h</strong></div>
             </section>
             <div class="frete-memory">
-              <strong>Memória do cálculo:</strong> viagem: {h(fmt_num(quote_inputs['distance_km'], 1))} km ÷ 80 km/h = {h(fmt_num(quote['travel_hours'], 2))} h. Descarga: {h(fmt_num(quote_inputs['weight_kg'], 2))} kg ÷ 1.000 kg/h = {h(fmt_num(quote['unload_hours'], 2))} h. Tempo total: {h(fmt_num(quote['total_operation_hours'], 2))} h. Com {h(fmt_num(quote_inputs['employees']))} funcionário(s), são {h(fmt_num(quote['employee_hours'], 2))} horas-pessoa × {h(fmt_brl(quote_inputs['employee_hourly_rate'], compact_threshold=float('inf')))} = {h(fmt_brl(quote['team_cost'], compact_threshold=float('inf')))} de equipe. Somando {h(fmt_brl(quote['distance_component'], compact_threshold=float('inf')))} do caminhão, o custo estimado é {h(fmt_brl(quote['estimated_cost'], compact_threshold=float('inf')))}; a margem acrescenta {h(fmt_brl(quote['margin_value'], compact_threshold=float('inf')))}.
+              <strong>Memória do cálculo:</strong> viagem: {h(fmt_num(quote_inputs['distance_km'], 1))} km ÷ 80 km/h = {h(fmt_num(quote['travel_hours'], 2))} h. Descarga: {h(fmt_num(quote_inputs['weight_kg'], 2))} kg ÷ 1.000 kg/h = {h(fmt_num(quote['unload_hours'], 2))} h. Tempo total: {h(fmt_num(quote['total_operation_hours'], 2))} h. Com {h(fmt_num(quote_inputs['employees']))} funcionário(s), são {h(fmt_num(quote['employee_hours'], 2))} horas-pessoa × {h(fmt_brl(quote_inputs['employee_hourly_rate'], compact_threshold=float('inf')))} = {h(fmt_brl(quote['team_cost'], compact_threshold=float('inf')))} de equipe. Hotel: {h(fmt_num(quote['hotel_days']))} diária(s) completa(s) de 10 h × {h(fmt_brl(quote['hotel_daily_rate'], compact_threshold=float('inf')))} = {h(fmt_brl(quote['hotel_cost'], compact_threshold=float('inf')))}. Somando {h(fmt_brl(quote['distance_component'], compact_threshold=float('inf')))} do caminhão + equipe + hotel, o custo estimado é {h(fmt_brl(quote['estimated_cost'], compact_threshold=float('inf')))}; a margem acrescenta {h(fmt_brl(quote['margin_value'], compact_threshold=float('inf')))}.
             </div>
             """
         )
@@ -6824,40 +6840,37 @@ def render_calculadora_frete() -> None:
                 fmt_brl(plate_reference["direct_rate_per_km"], compact_threshold=float("inf")),
             )
             rate_cols[2].metric(
-                "Hotéis rateados por km",
-                fmt_brl(plate_reference["hotel_rate_per_km"], compact_threshold=float("inf")),
+                "Diária média de hotel",
+                fmt_brl(plate_reference["hotel_daily_rate"], compact_threshold=float("inf")),
             )
             rate_cols[3].metric(
-                "Tarifa final por km",
-                fmt_brl(plate_reference["rate_per_km"], compact_threshold=float("inf")),
-            )
-            hotel_explanation = (
-                f"Como os hotéis não possuem uma placa vinculada, o total histórico de hospedagens "
-                f"({fmt_brl(general_reference['hotel_cost'])}) é dividido pelos quilômetros da frota. "
-                f"Esse rateio acrescenta {fmt_brl(plate_reference['hotel_rate_per_km'], compact_threshold=float('inf'))} por km."
-                if include_hotels
-                else "Os hotéis estão desmarcados e, por isso, não acrescentam nenhum valor à tarifa por km."
-            )
-            st.info(
-                f"**Como a tarifa foi formada:** "
-                f"{fmt_brl(plate_reference['direct_rate_per_km'], compact_threshold=float('inf'))} de custo direto por km "
-                f"+ {fmt_brl(plate_reference['hotel_rate_per_km'], compact_threshold=float('inf'))} de hotéis por km "
-                f"= **{fmt_brl(plate_reference['rate_per_km'], compact_threshold=float('inf'))} por km**. "
-                f"{hotel_explanation} O custo do caminhão na simulação é essa tarifa final multiplicada pela distância informada."
-            )
-            employee_cols = st.columns(2)
-            employee_cols[0].metric(
                 "Funcionário por hora",
                 fmt_brl(plate_reference["rate_per_employee_hour"], compact_threshold=float("inf")),
             )
-            employee_cols[1].markdown(
-                "**Equipe calculada separadamente**  \n"
-                "O salário por hora não entra na tarifa do caminhão por km. Ele é multiplicado pelo tempo de viagem + descarga e pela quantidade de funcionários."
+            hotel_explanation = (
+                f"O tempo total de {fmt_num(quote['total_operation_hours'], 2)} h contém "
+                f"{fmt_num(quote['hotel_days'])} bloco(s) completo(s) de 10 h. Portanto, são "
+                f"{fmt_num(quote['hotel_days'])} diária(s) × "
+                f"{fmt_brl(quote['hotel_daily_rate'], compact_threshold=float('inf'))} = "
+                f"{fmt_brl(quote['hotel_cost'], compact_threshold=float('inf'))} de hotel."
+                if include_hotels
+                else "Os hotéis estão desmarcados e, por isso, não acrescentam nenhum valor ao custo estimado."
+            )
+            st.info(
+                f"**Como o hotel foi calculado:** {hotel_explanation} "
+                "Menos de 10 h não gera diária; de 10 h até menos de 20 h gera 1 diária; "
+                "de 20 h até menos de 30 h gera 2 diárias, e assim por diante. "
+                "O hotel é somado separadamente e não altera o custo por km da placa."
+            )
+            st.markdown(
+                "**Custos separados:** o custo do caminhão é a distância × o custo direto por km. "
+                "A equipe usa o tempo de viagem + descarga × funcionários × salário/hora. "
+                "O hotel usa os blocos completos de 10 horas × a diária média histórica."
             )
             st.caption(
-                f"Base: {period_label}. A tarifa de km usa {plate_reference['km_rate_source']} e reúne combustível, "
-                f"manutenção, pedágio/extras, diárias de freteiros e hotéis {('incluídos' if include_hotels else 'excluídos')}. "
-                f"Hospedagens consideradas: {fmt_brl(general_reference['hotel_cost'])}. "
+                f"Base: {period_label}. O custo por km usa {plate_reference['km_rate_source']} e reúne combustível, "
+                f"manutenção, pedágio/extras e diárias de freteiros. Hotéis {('incluídos por tempo' if include_hotels else 'excluídos')}; "
+                f"histórico de hospedagens: {fmt_brl(general_reference['hotel_cost'])}. "
                 f"A tarifa por hora usa {plate_reference['hourly_rate_source']}, jornada de 8 horas e equipe histórica "
                 "de motorista + ajudante. Velocidade média: 80 km/h. Produtividade da descarga: 1 tonelada por hora."
             )
