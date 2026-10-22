@@ -58,7 +58,7 @@ DB_TABLES = {
 }
 DB_METADATA_TABLE = "dashboard_metadata"
 BACKEND_BUILD_VERSION = "aluguel-multiplicar-meses-v1"
-ROUTES_BUILD_VERSION = "rotas-pdf-v2"
+ROUTES_BUILD_VERSION = "rotas-pdf-v3"
 PEDAGIO_CHART_VERSION = "all-types-v1"
 BACKUP_METADATA_KEY = "backup.last_downloaded_at"
 _DB_ENGINE = None
@@ -267,6 +267,7 @@ _COLUMN_SQL_TYPES = {
     "Chegada": "TIMESTAMP",
     "Mes": "TEXT",
     "Km Rodados": "DOUBLE PRECISION",
+    "KM Rodados": "DOUBLE PRECISION",
     "Peso Carga": "DOUBLE PRECISION",
     "Peso Manifesto": "DOUBLE PRECISION",
     "Peso Pedido": "DOUBLE PRECISION",
@@ -853,6 +854,37 @@ def _ensure_dataset_table(conn, dataset: str) -> None:
             )
         )
     if dataset == "rotas":
+        # A primeira versao da tabela usava "KM Rodados" com letras maiusculas,
+        # enquanto o mapa de tipos continha apenas "Km Rodados". No Neon isso
+        # criou a coluna como TEXT. Converta automaticamente as tabelas que ja
+        # existem antes de executar o upsert numerico.
+        km_column_type = conn.execute(
+            text(
+                """
+                SELECT data_type
+                FROM information_schema.columns
+                WHERE table_schema = current_schema()
+                  AND table_name = :table_name
+                  AND column_name = :column_name
+                """
+            ),
+            {"table_name": DB_TABLES["rotas"], "column_name": "KM Rodados"},
+        ).scalar()
+        if km_column_type in {"text", "character varying", "character"}:
+            conn.execute(
+                text(
+                    f"""
+                    ALTER TABLE {table}
+                    ALTER COLUMN "KM Rodados" TYPE DOUBLE PRECISION
+                    USING CASE
+                        WHEN NULLIF(BTRIM("KM Rodados"), '') IS NULL THEN NULL
+                        WHEN REPLACE(BTRIM("KM Rodados"), ',', '.') ~ '^-?[0-9]+([.][0-9]+)?$'
+                            THEN REPLACE(BTRIM("KM Rodados"), ',', '.')::DOUBLE PRECISION
+                        ELSE NULL
+                    END
+                    """
+                )
+            )
         conn.execute(
             text(
                 f"CREATE UNIQUE INDEX IF NOT EXISTS uq_dashboard_rotas_rota_id "
@@ -1985,7 +2017,8 @@ def import_route_manifests(routes: list[dict], deliveries: list[dict]) -> dict:
             f'"Observacao" = COALESCE(NULLIF({route_table}."Observacao", \'\'), EXCLUDED."Observacao")',
             (
                 f'"Status" = CASE WHEN {route_table}."Saida" IS NOT NULL '
-                f'AND {route_table}."Retorno" IS NOT NULL AND COALESCE({route_table}."KM Rodados", 0) > 0 '
+                f'AND {route_table}."Retorno" IS NOT NULL '
+                f'AND COALESCE(NULLIF({route_table}."KM Rodados"::TEXT, \'\'), \'0\')::DOUBLE PRECISION > 0 '
                 f'THEN \'Concluída\' ELSE EXCLUDED."Status" END'
             ),
         ]
