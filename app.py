@@ -8,7 +8,7 @@ import threading
 import time
 import unicodedata
 from collections import Counter, defaultdict
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import pandas as pd
@@ -58,7 +58,7 @@ DB_TABLES = {
 }
 DB_METADATA_TABLE = "dashboard_metadata"
 BACKEND_BUILD_VERSION = "aluguel-multiplicar-meses-v1"
-ROUTES_BUILD_VERSION = "rotas-pdf-v6"
+ROUTES_BUILD_VERSION = "rotas-pdf-v7"
 PEDAGIO_CHART_VERSION = "all-types-v1"
 BACKUP_METADATA_KEY = "backup.last_downloaded_at"
 _DB_ENGINE = None
@@ -2115,7 +2115,9 @@ def update_route_operation(
 
     from sqlalchemy import text
 
-    version = datetime.now(timezone.utc).isoformat()
+    selected_updated_at = datetime.now(timezone.utc)
+    propagated_updated_at = selected_updated_at - timedelta(microseconds=1)
+    version = selected_updated_at.isoformat()
     route_table = _quote_identifier(DB_TABLES["rotas"])
     with _db_engine().begin() as conn:
         _ensure_dataset_table(conn, "rotas")
@@ -2192,7 +2194,10 @@ def update_route_operation(
                         ELSE "Observacao"
                     END,
                     "Status" = 'Concluída',
-                    "Atualizado Em" = CURRENT_TIMESTAMP,
+                    "Atualizado Em" = CASE
+                        WHEN "Rota ID" = :selected_route_id THEN :selected_updated_at
+                        ELSE :propagated_updated_at
+                    END,
                     "Data" = COALESCE("Data", :saida),
                     "Mes" = TO_CHAR(COALESCE("Data", :saida), 'YYYY-MM')
                 WHERE "Rota ID" IN ({group_placeholders})
@@ -2207,6 +2212,8 @@ def update_route_operation(
                 "motorista": driver_value,
                 "observacao": str(observacao or "").strip() or None,
                 "selected_route_id": route_id,
+                "selected_updated_at": selected_updated_at,
+                "propagated_updated_at": propagated_updated_at,
                 **group_params,
             },
         )
@@ -2318,7 +2325,7 @@ def update_route_history_rows(rows: list[dict]) -> dict:
                         "KM Rodados" = :km,
                         "Observacao" = :observacao,
                         "Status" = :status,
-                        "Atualizado Em" = CURRENT_TIMESTAMP
+                        "Atualizado Em" = :updated_at
                     WHERE "Rota ID" = :route_id
                     """
                 ),
@@ -2331,6 +2338,7 @@ def update_route_history_rows(rows: list[dict]) -> dict:
                     "km": km_value,
                     "observacao": observation,
                     "status": status,
+                    "updated_at": datetime.now(timezone.utc),
                     "route_id": route_id,
                 },
             )
