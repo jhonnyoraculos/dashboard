@@ -4781,6 +4781,16 @@ def data_frota(params: dict | None = None) -> dict:
         if incluir_hoteis and "Dias" in df_hoteis_period.columns
         else 0.0
     )
+    general_hotel_reservations = (
+        int(df_hoteis_period["Data"].notna().sum())
+        if incluir_hoteis and "Data" in df_hoteis_period.columns
+        else int(len(df_hoteis_period)) if incluir_hoteis else 0
+    )
+    hotel_reservation_average = (
+        general_hotel_total / general_hotel_reservations
+        if general_hotel_reservations
+        else 0.0
+    )
     hotel_daily_average = (
         general_hotel_total / general_hotel_days
         if general_hotel_days
@@ -5111,6 +5121,8 @@ def data_frota(params: dict | None = None) -> dict:
             "hoteis": round(total_hoteis, 2),
             "hoteis_diaria": round(hoteis_diaria, 2),
             "dias_hoteis": round(total_dias_hoteis, 2),
+            "hoteis_reservas": general_hotel_reservations,
+            "hoteis_media_reserva": round(hotel_reservation_average, 2),
             "inclui_hoteis": incluir_hoteis,
             "inclui_salario": include_transport_salary,
             "peso_total": round(total_peso_geral, 3),

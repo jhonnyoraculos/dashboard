@@ -78,10 +78,12 @@ mantem uma simulacao anterior depois que peso, distancia ou equipe sao
 alterados.
 
 As despesas de hotel podem ser marcadas ou desmarcadas na calculadora. Quando
-incluidas, usam o valor medio historico da diaria e sao calculadas pelo tempo
-total da operacao: menos de 10 horas nao gera diaria; de 10 ate menos de 20
-horas gera uma diaria; de 20 ate menos de 30 horas gera duas diarias, e assim
-por diante.
+incluidas, usam o valor medio historico por reserva de quarto duplo, calculado
+como valor total dividido pela quantidade de reservas. Essa diaria ja cobre
+motorista e ajudante e nao e multiplicada pela quantidade de funcionarios. O
+hotel e calculado pelo tempo total da operacao: menos de 10 horas nao gera
+diaria; de 10 ate menos de 20 horas gera uma diaria; de 20 ate menos de 30
+horas gera duas diarias, e assim por diante.
 
 O resumo separa o custo direto do caminhao por km, o custo da equipe e o hotel.
 O salario da equipe e calculado pelo tempo de viagem e descarga, quantidade de
