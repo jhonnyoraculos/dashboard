@@ -43,6 +43,7 @@ _backend_features_ready = all(
         "load_rota_entregas",
         "import_route_manifests",
         "update_route_operation",
+        "update_route_history_rows",
     )
 )
 _backend_aluguel_period_ready = {"Inicio", "Fim"}.issubset(
@@ -50,7 +51,7 @@ _backend_aluguel_period_ready = {"Inicio", "Fim"}.issubset(
 )
 _backend_aluguel_monthly_ready = getattr(backend, "BACKEND_BUILD_VERSION", "") == "aluguel-multiplicar-meses-v1"
 _backend_pedagio_chart_ready = getattr(backend, "PEDAGIO_CHART_VERSION", "") == "all-types-v1"
-_backend_routes_ready = getattr(backend, "ROUTES_BUILD_VERSION", "") == "rotas-pdf-v4"
+_backend_routes_ready = getattr(backend, "ROUTES_BUILD_VERSION", "") == "rotas-pdf-v5"
 if not _backend_features_ready or not _backend_aluguel_period_ready or not _backend_aluguel_monthly_ready or not _backend_pedagio_chart_ready or not _backend_routes_ready:
     backend = importlib.reload(backend)
 
@@ -61,7 +62,7 @@ MUTED = "#6B7280"
 CARD_BORDER = "#c2d2f3"
 LOGO_PATH = Path(__file__).parent / "static" / "logo-jr.png"
 CURRENT_YEAR = date.today().year
-APP_VERSION = "route-manifests-pdf-v4"
+APP_VERSION = "route-manifests-pdf-v5"
 RANK_ROUTES_ENABLED = False
 ROUTE_CACHE_TTL_SECONDS = max(int(os.environ.get("JR_ROUTE_CACHE_TTL_SECONDS", "180") or 180), 30)
 DATA_EDITOR_PAGE_SIZE = 100
@@ -11148,6 +11149,17 @@ def _render_route_completion(plate_map: dict[str, str]) -> None:
         st.info("Importe o primeiro manifesto para liberar o preenchimento operacional.")
         return
 
+    pending_count = int(routes["Status"].astype("string").fillna("").str.casefold().eq("pendente").sum())
+    completed_count = max(int(routes["Rota ID"].nunique()) - pending_count, 0)
+    pending_cols = st.columns(3)
+    pending_cols[0].metric("Rotas pendentes", fmt_num(pending_count))
+    pending_cols[1].metric("Rotas concluídas", fmt_num(completed_count))
+    pending_cols[2].metric("Total importado", fmt_num(routes["Rota ID"].nunique()))
+    if pending_count:
+        st.warning(f"Ainda faltam preencher {pending_count} rota(s).")
+    else:
+        st.success("Todas as rotas importadas foram concluídas.")
+
     routes = routes.sort_values(["Status", "Data", "Rota"], ascending=[False, False, True]).reset_index(drop=True)
     label_map: dict[str, str] = {}
     for _, row in routes.iterrows():
@@ -11242,12 +11254,151 @@ def _render_route_completion(plate_map: dict[str, str]) -> None:
         st.dataframe(deliveries, width="stretch", hide_index=True)
 
 
+def _route_history_edit_value(column: str, value):
+    if column in {"Saida", "Retorno"}:
+        parsed = pd.to_datetime(value, errors="coerce")
+        return parsed.isoformat() if pd.notna(parsed) else None
+    if column == "KM Rodados":
+        parsed = pd.to_numeric(value, errors="coerce")
+        return round(float(parsed), 6) if pd.notna(parsed) and float(parsed) > 0 else None
+    try:
+        if pd.isna(value):
+            return ""
+    except (TypeError, ValueError):
+        pass
+    return clean_text(value).strip()
+
+
+def _render_route_history(plate_map: dict[str, str]) -> None:
+    st.markdown("### Histórico das últimas alterações")
+    st.caption(
+        "As rotas mais recentemente importadas ou alteradas aparecem primeiro. Edite os campos operacionais "
+        "diretamente na planilha e clique em salvar. O status é recalculado automaticamente."
+    )
+    try:
+        routes = backend.load_rotas()
+    except Exception as exc:
+        st.error("Não foi possível carregar o histórico das rotas.")
+        st.exception(exc)
+        return
+    if routes.empty:
+        st.info("O histórico aparecerá depois da primeira importação.")
+        return
+
+    routes = routes.copy()
+    updated_at = pd.to_datetime(routes.get("Atualizado Em"), errors="coerce", utc=True)
+    imported_at = pd.to_datetime(routes.get("Importado Em"), errors="coerce", utc=True)
+    routes["Última alteração"] = (
+        updated_at.fillna(imported_at).dt.tz_convert(BR_TZ).dt.tz_localize(None)
+    )
+    routes = routes.sort_values(["Última alteração", "Data"], ascending=[False, False]).reset_index(drop=True)
+
+    limit_options: list[object] = [25, 50, 100, "Todas"]
+    limit = st.selectbox(
+        "Quantidade de alterações exibidas",
+        limit_options,
+        index=1,
+        key="route_history_limit",
+    )
+    if limit != "Todas":
+        routes = routes.head(int(limit)).copy()
+
+    columns = [
+        "Rota ID",
+        "Última alteração",
+        "Status",
+        "Previsao",
+        "Rota",
+        "Carga",
+        "PLACA",
+        "Categoria",
+        "Motorista",
+        "Saida",
+        "Retorno",
+        "KM Rodados",
+        "Observacao",
+    ]
+    history = routes[columns].copy()
+    history["Observacao"] = history["Observacao"].astype("string").fillna("").replace("<NA>", "")
+    latest_value = history["Última alteração"].max()
+    history_token = hashlib.sha1(
+        f"{len(history)}|{latest_value}|{APP_VERSION}".encode("utf-8")
+    ).hexdigest()[:12]
+    plate_options = sorted(set([*plate_map.keys(), *history["PLACA"].dropna().astype(str).tolist()]) - {""})
+    edited = st.data_editor(
+        history,
+        width="stretch",
+        hide_index=True,
+        num_rows="fixed",
+        disabled=["Rota ID", "Última alteração", "Status", "Previsao", "Rota", "Carga", "Categoria"],
+        column_config={
+            "Rota ID": st.column_config.TextColumn("ID"),
+            "Última alteração": st.column_config.DatetimeColumn("Última alteração", format="DD/MM/YYYY HH:mm"),
+            "Status": st.column_config.TextColumn("Status"),
+            "Previsao": st.column_config.DatetimeColumn("Previsão", format="DD/MM/YYYY"),
+            "Rota": st.column_config.TextColumn("Rota"),
+            "Carga": st.column_config.TextColumn("Carga"),
+            "PLACA": st.column_config.SelectboxColumn("Placa", options=plate_options, required=True),
+            "Categoria": st.column_config.TextColumn("Categoria"),
+            "Motorista": st.column_config.TextColumn("Motorista", required=True),
+            "Saida": _datetime_col("Saída"),
+            "Retorno": _datetime_col("Retorno"),
+            "KM Rodados": _number_col("KM rodados", format="%.1f"),
+            "Observacao": st.column_config.TextColumn("Observação"),
+        },
+        key=f"route_history_editor_{history_token}",
+    )
+
+    if st.button(
+        "Salvar alterações da planilha",
+        type="primary",
+        width="stretch",
+        key=f"route_history_save_{history_token}",
+    ):
+        editable_columns = ["PLACA", "Motorista", "Saida", "Retorno", "KM Rodados", "Observacao"]
+        originals = {
+            clean_text(row["Rota ID"]): row
+            for _, row in history.iterrows()
+        }
+        changed_rows: list[dict] = []
+        for _, edited_row in edited.iterrows():
+            route_id = clean_text(edited_row.get("Rota ID"))
+            original = originals.get(route_id)
+            if original is None:
+                continue
+            changed = any(
+                _route_history_edit_value(column, edited_row.get(column))
+                != _route_history_edit_value(column, original.get(column))
+                for column in editable_columns
+            )
+            if changed:
+                changed_rows.append(
+                    {
+                        "Rota ID": route_id,
+                        **{column: edited_row.get(column) for column in editable_columns},
+                    }
+                )
+        if not changed_rows:
+            st.info("Nenhuma alteração foi feita na planilha.")
+        else:
+            try:
+                result = backend.update_route_history_rows(changed_rows)
+            except Exception as exc:
+                st.error(f"Não foi possível salvar o histórico: {exc}")
+            else:
+                clear_cached_reads()
+                st.success(f"{result['updated']} rota(s) atualizada(s) pela planilha.")
+                st.rerun()
+
+
 def _render_route_registry(plate_map: dict[str, str]) -> None:
     with st.container(border=True):
         _render_route_pdf_import(plate_map)
     with st.container(border=True):
         _render_route_completion(plate_map)
     st.info("A pesquisa completa e os rankings ficam no dashboard Rotas, acessível pela página inicial.")
+    with st.container(border=True):
+        _render_route_history(plate_map)
 
 
 def render_cadastro() -> None:

@@ -294,6 +294,7 @@ def parse_route_pdf(data: bytes, filename: str, plate_categories: dict[str, str]
         "Observacao": "",
         "Texto Extraido": "\n".join(tokens),
         "Importado Em": datetime.now(),
+        "Atualizado Em": datetime.now(),
     }
     return route, deliveries, warnings
 

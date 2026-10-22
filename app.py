@@ -58,7 +58,7 @@ DB_TABLES = {
 }
 DB_METADATA_TABLE = "dashboard_metadata"
 BACKEND_BUILD_VERSION = "aluguel-multiplicar-meses-v1"
-ROUTES_BUILD_VERSION = "rotas-pdf-v4"
+ROUTES_BUILD_VERSION = "rotas-pdf-v5"
 PEDAGIO_CHART_VERSION = "all-types-v1"
 BACKUP_METADATA_KEY = "backup.last_downloaded_at"
 _DB_ENGINE = None
@@ -183,6 +183,7 @@ _ROTAS_COLUMNS = [
     "Observacao",
     "Texto Extraido",
     "Importado Em",
+    "Atualizado Em",
 ]
 _ROTA_ENTREGAS_COLUMNS = [
     "Entrega ID",
@@ -2150,6 +2151,7 @@ def update_route_operation(
                     "Motorista" = :motorista,
                     "Observacao" = :observacao,
                     "Status" = 'Concluída',
+                    "Atualizado Em" = CURRENT_TIMESTAMP,
                     "Data" = COALESCE("Data", :saida),
                     "Mes" = TO_CHAR(COALESCE("Data", :saida), 'YYYY-MM')
                 WHERE "Rota ID" = :route_id
@@ -2183,6 +2185,126 @@ def update_route_operation(
     _clear_dataset_cache("rotas")
     _clear_dataset_cache("placas")
     return version
+
+
+def update_route_history_rows(rows: list[dict]) -> dict:
+    """Atualiza os campos operacionais editados na planilha de historico."""
+    if not rows:
+        return {"updated": 0}
+
+    from sqlalchemy import text
+
+    def optional_datetime(value, field: str):
+        if value is None or (isinstance(value, str) and not value.strip()):
+            return None
+        try:
+            if pd.isna(value):
+                return None
+        except (TypeError, ValueError):
+            pass
+        parsed = pd.to_datetime(value, errors="coerce")
+        if pd.isna(parsed):
+            raise ValueError(f"Data/hora invalida em {field}.")
+        return parsed.to_pydatetime()
+
+    version = datetime.now(timezone.utc).isoformat()
+    route_table = _quote_identifier(DB_TABLES["rotas"])
+    placas_table = _quote_identifier(DB_TABLES["placas"])
+    updated = 0
+
+    with _db_engine().begin() as conn:
+        _ensure_dataset_table(conn, "rotas")
+        _ensure_dataset_table(conn, "placas")
+        for row in rows:
+            route_id = str(row.get("Rota ID") or "").strip()
+            if not route_id:
+                raise ValueError("Uma linha do historico esta sem identificador de rota.")
+            plate_value = _normalize_plate_value(row.get("PLACA"))
+            if not _is_plate_or_asset_identifier(plate_value):
+                raise ValueError(f"Placa invalida na rota {route_id}.")
+            driver_value = str(row.get("Motorista") or "").strip()
+            if not driver_value:
+                raise ValueError(f"Informe o motorista da rota {route_id}.")
+
+            saida_dt = optional_datetime(row.get("Saida"), "Saida")
+            retorno_dt = optional_datetime(row.get("Retorno"), "Retorno")
+            if saida_dt and retorno_dt and retorno_dt <= saida_dt:
+                raise ValueError(f"O retorno deve ser posterior a saida na rota {route_id}.")
+            km_numeric = pd.to_numeric(pd.Series([row.get("KM Rodados")]), errors="coerce").iloc[0]
+            km_value = float(km_numeric) if pd.notna(km_numeric) and float(km_numeric) > 0 else None
+            observation_value = row.get("Observacao")
+            try:
+                observation_empty = pd.isna(observation_value)
+            except (TypeError, ValueError):
+                observation_empty = False
+            observation = None if observation_empty else str(observation_value or "").strip() or None
+
+            category = conn.execute(
+                text(
+                    f"""
+                    SELECT COALESCE(p."Categoria", r."Categoria", 'Transporte')
+                    FROM {route_table} AS r
+                    LEFT JOIN {placas_table} AS p ON p."PLACA" = :placa
+                    WHERE r."Rota ID" = :route_id
+                    """
+                ),
+                {"placa": plate_value, "route_id": route_id},
+            ).scalar()
+            if category is None:
+                raise ValueError(f"Rota nao encontrada: {route_id}.")
+            category = _normalize_category_value(category)
+            is_freighter = category == "Freteiro"
+            completed = bool(saida_dt and retorno_dt and (is_freighter or km_value is not None))
+            status = "Concluída" if completed else "Pendente"
+
+            result = conn.execute(
+                text(
+                    f"""
+                    UPDATE {route_table}
+                    SET "PLACA" = :placa,
+                        "Categoria" = :categoria,
+                        "Motorista" = :motorista,
+                        "Saida" = :saida,
+                        "Retorno" = :retorno,
+                        "KM Rodados" = :km,
+                        "Observacao" = :observacao,
+                        "Status" = :status,
+                        "Atualizado Em" = CURRENT_TIMESTAMP
+                    WHERE "Rota ID" = :route_id
+                    """
+                ),
+                {
+                    "placa": plate_value,
+                    "categoria": category,
+                    "motorista": driver_value,
+                    "saida": saida_dt,
+                    "retorno": retorno_dt,
+                    "km": km_value,
+                    "observacao": observation,
+                    "status": status,
+                    "route_id": route_id,
+                },
+            )
+            if not (result.rowcount or 0):
+                raise ValueError(f"Rota nao encontrada: {route_id}.")
+            updated += 1
+            conn.execute(
+                text(
+                    f'INSERT INTO {placas_table} ("PLACA", "Categoria") VALUES (:placa, :categoria) '
+                    f'ON CONFLICT ("PLACA") DO UPDATE SET "Categoria" = EXCLUDED."Categoria"'
+                ),
+                {"placa": plate_value, "categoria": category},
+            )
+
+        if updated:
+            for dataset in ("rotas", "placas"):
+                _write_metadata(conn, f"{dataset}.version", version)
+            _write_metadata(conn, "import.version", version)
+
+    if updated:
+        _clear_dataset_cache("rotas")
+        _clear_dataset_cache("placas")
+    return {"updated": updated, "version": version}
 
 
 def _normalize_ascii(value):
@@ -3571,11 +3693,11 @@ def load_rotas() -> pd.DataFrame:
         df = _read_database_table(
             "rotas",
             _ROTAS_COLUMNS,
-            date_columns=["Data", "Emissao", "Previsao", "Saida", "Retorno", "Importado Em"],
+            date_columns=["Data", "Emissao", "Previsao", "Saida", "Retorno", "Importado Em", "Atualizado Em"],
         )
         df = _finalize_common(
             df,
-            date_columns=["Data", "Emissao", "Previsao", "Saida", "Retorno", "Importado Em"],
+            date_columns=["Data", "Emissao", "Previsao", "Saida", "Retorno", "Importado Em", "Atualizado Em"],
             numeric_columns=["Peso Carga", "Peso Manifesto", "KM Rodados", "Paginas", "Entregas"],
             text_columns=[
                 "Rota ID",
