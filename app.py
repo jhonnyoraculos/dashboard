@@ -58,7 +58,7 @@ DB_TABLES = {
 }
 DB_METADATA_TABLE = "dashboard_metadata"
 BACKEND_BUILD_VERSION = "aluguel-multiplicar-meses-v1"
-ROUTES_BUILD_VERSION = "rotas-pdf-v1"
+ROUTES_BUILD_VERSION = "rotas-pdf-v2"
 PEDAGIO_CHART_VERSION = "all-types-v1"
 BACKUP_METADATA_KEY = "backup.last_downloaded_at"
 _DB_ENGINE = None
@@ -173,6 +173,7 @@ _ROTAS_COLUMNS = [
     "Veiculo",
     "Motorista",
     "Peso Carga",
+    "Peso Manifesto",
     "Telefone",
     "Empresa",
     "KM Rodados",
@@ -267,6 +268,7 @@ _COLUMN_SQL_TYPES = {
     "Mes": "TEXT",
     "Km Rodados": "DOUBLE PRECISION",
     "Peso Carga": "DOUBLE PRECISION",
+    "Peso Manifesto": "DOUBLE PRECISION",
     "Peso Pedido": "DOUBLE PRECISION",
     "Valor Nota": "DOUBLE PRECISION",
     "Valor Recebimento": "DOUBLE PRECISION",
@@ -3512,7 +3514,7 @@ def load_rodagem_rota() -> pd.DataFrame:
 def load_rotas() -> pd.DataFrame:
     cache = _ROTAS_CACHE
     with cache["lock"]:
-        version = _db_version("rotas")
+        version = (_db_version("rotas"), _db_version("rota_entregas"))
         cached = cache.get("df")
         if cached is not None and cache.get("mtime") == version:
             return cached.copy(deep=False)
@@ -3525,7 +3527,7 @@ def load_rotas() -> pd.DataFrame:
         df = _finalize_common(
             df,
             date_columns=["Data", "Emissao", "Previsao", "Saida", "Retorno", "Importado Em"],
-            numeric_columns=["Peso Carga", "KM Rodados", "Paginas", "Entregas"],
+            numeric_columns=["Peso Carga", "Peso Manifesto", "KM Rodados", "Paginas", "Entregas"],
             text_columns=[
                 "Rota ID",
                 "Hash PDF",
@@ -3544,6 +3546,23 @@ def load_rotas() -> pd.DataFrame:
             plate_columns=["PLACA"],
         )
         df = _apply_plate_categories(df)
+        try:
+            deliveries = load_rota_entregas()
+        except Exception:
+            deliveries = _empty(_ROTA_ENTREGAS_COLUMNS)
+        order_weight = (
+            deliveries.assign(
+                **{"Peso Pedido": pd.to_numeric(deliveries["Peso Pedido"], errors="coerce").fillna(0.0)}
+            )
+            .groupby("Rota ID")["Peso Pedido"]
+            .sum()
+            if not deliveries.empty
+            else pd.Series(dtype="float64")
+        )
+        original_weight = pd.to_numeric(df["Peso Carga"], errors="coerce")
+        manifest_weight = pd.to_numeric(df["Peso Manifesto"], errors="coerce")
+        df["Peso Manifesto"] = manifest_weight.where(manifest_weight.notna(), original_weight)
+        df["Peso Carga"] = df["Rota ID"].astype("string").map(order_weight).fillna(0.0)
         duration = (df["Retorno"] - df["Saida"]).dt.total_seconds() / 3600
         df["Duracao Horas"] = duration.where(duration >= 0)
         df["Dias Rota"] = (df["Duracao Horas"] / 24).apply(

@@ -265,10 +265,6 @@ def parse_route_pdf(data: bytes, filename: str, plate_categories: dict[str, str]
     if not deliveries:
         warnings.append("Nenhuma entrega foi identificada.")
     delivery_weight = sum(float(item.get("Peso Pedido") or 0) for item in deliveries)
-    if peso_carga and delivery_weight and abs(peso_carga - delivery_weight) > max(1.0, peso_carga * 0.01):
-        warnings.append(
-            f"Peso da carga ({peso_carga:.3f} kg) difere da soma dos pedidos ({delivery_weight:.3f} kg)."
-        )
 
     route = {
         "Rota ID": route_id,
@@ -287,7 +283,8 @@ def parse_route_pdf(data: bytes, filename: str, plate_categories: dict[str, str]
         "Categoria": categoria,
         "Veiculo": veiculo,
         "Motorista": motorista,
-        "Peso Carga": peso_carga,
+        "Peso Carga": delivery_weight,
+        "Peso Manifesto": peso_carga,
         "Telefone": telefone,
         "Empresa": empresa,
         "KM Rodados": None,

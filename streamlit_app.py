@@ -50,7 +50,7 @@ _backend_aluguel_period_ready = {"Inicio", "Fim"}.issubset(
 )
 _backend_aluguel_monthly_ready = getattr(backend, "BACKEND_BUILD_VERSION", "") == "aluguel-multiplicar-meses-v1"
 _backend_pedagio_chart_ready = getattr(backend, "PEDAGIO_CHART_VERSION", "") == "all-types-v1"
-_backend_routes_ready = getattr(backend, "ROUTES_BUILD_VERSION", "") == "rotas-pdf-v1"
+_backend_routes_ready = getattr(backend, "ROUTES_BUILD_VERSION", "") == "rotas-pdf-v2"
 if not _backend_features_ready or not _backend_aluguel_period_ready or not _backend_aluguel_monthly_ready or not _backend_pedagio_chart_ready or not _backend_routes_ready:
     backend = importlib.reload(backend)
 
@@ -61,7 +61,7 @@ MUTED = "#6B7280"
 CARD_BORDER = "#c2d2f3"
 LOGO_PATH = Path(__file__).parent / "static" / "logo-jr.png"
 CURRENT_YEAR = date.today().year
-APP_VERSION = "route-manifests-pdf-v1"
+APP_VERSION = "route-manifests-pdf-v2"
 RANK_ROUTES_ENABLED = False
 ROUTE_CACHE_TTL_SECONDS = max(int(os.environ.get("JR_ROUTE_CACHE_TTL_SECONDS", "180") or 180), 30)
 DATA_EDITOR_PAGE_SIZE = 100
@@ -11042,7 +11042,7 @@ def _render_route_pdf_import(plate_map: dict[str, str]) -> None:
     st.caption(
         "Cada PDF cria ou atualiza uma rota independente. Cabeçalho, carga, placa, motorista, veículo, "
         "peso, clientes, pedidos, cidades, endereços, vendedores, valores e demais textos encontrados são registrados. "
-        "Nada desta importação é lançado em Peso."
+        "O peso usado na rota é sempre a soma dos pesos dos pedidos. Nada desta importação é lançado em Peso."
     )
     if message := st.session_state.pop("route_import_message", None):
         st.success(message)
@@ -11080,7 +11080,7 @@ def _render_route_pdf_import(plate_map: dict[str, str]) -> None:
 
     route_preview_columns = [
         "Arquivo", "Previsao", "Rota", "Carga", "PLACA", "Motorista", "Veiculo",
-        "Peso Carga", "Entregas", "Status",
+        "Peso Carga", "Peso Manifesto", "Entregas", "Status",
     ]
     st.markdown("#### Prévia das rotas")
     st.dataframe(
@@ -11089,7 +11089,8 @@ def _render_route_pdf_import(plate_map: dict[str, str]) -> None:
         hide_index=True,
         column_config={
             "Previsao": st.column_config.DatetimeColumn("Previsão", format="DD/MM/YYYY"),
-            "Peso Carga": _number_col("Peso da carga (kg)", format="%.3f"),
+            "Peso Carga": _number_col("Soma dos pedidos (kg)", format="%.3f"),
+            "Peso Manifesto": _number_col("Peso informado no PDF (kg)", format="%.3f"),
         },
     )
     with st.expander(f"Ver {len(parsed_deliveries)} entrega(s) extraída(s)"):
@@ -12890,7 +12891,8 @@ def render_rotas() -> None:
     st.markdown("## Rotas, entregas e desempenho operacional")
     st.caption(
         "Dados importados dos manifestos em PDF e complementados com saída, retorno e KM reais. "
-        "A pesquisa consulta tanto a rota quanto clientes, pedidos, endereços, cidades, vendedores e observações."
+        "O peso total é sempre a soma dos pedidos. A pesquisa consulta tanto a rota quanto clientes, "
+        "pedidos, endereços, cidades, vendedores e observações."
     )
 
     options = route_json("rotas")
@@ -12940,7 +12942,7 @@ def render_rotas() -> None:
             ("Concluídas", fmt_num(data.get("rotas_concluidas"), decimals=0), "#0F766E"),
             ("Pendentes", fmt_num(data.get("rotas_pendentes"), decimals=0), JR_RED),
             ("Entregas", fmt_num(data.get("entregas_total"), decimals=0), JR_BLUE),
-            ("Peso", fmt_peso(data.get("peso_total")), "#7C3AED"),
+            ("Peso dos pedidos", fmt_peso(data.get("peso_total")), "#7C3AED"),
             ("KM realizados", fmt_num(data.get("km_total"), decimals=1), "#D97706"),
             ("Horas em rota", fmt_num(data.get("horas_total"), decimals=1), "#0F766E"),
         ]
@@ -12970,7 +12972,7 @@ def render_rotas() -> None:
     else:
         route_visible = [
             "Status", "Data", "Previsao", "Rota", "Carga", "PLACA", "Motorista", "Veiculo",
-            "Peso Carga", "Entregas", "Saida", "Retorno", "Duracao Horas", "Dias Rota", "KM Rodados", "Arquivo",
+            "Peso Carga", "Peso Manifesto", "Entregas", "Saida", "Retorno", "Duracao Horas", "Dias Rota", "KM Rodados", "Arquivo",
         ]
         route_visible = [column for column in route_visible if column in routes_df.columns]
         st.dataframe(routes_df[route_visible], width="stretch", hide_index=True)
