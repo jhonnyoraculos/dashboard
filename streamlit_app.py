@@ -55,7 +55,7 @@ MUTED = "#6B7280"
 CARD_BORDER = "#c2d2f3"
 LOGO_PATH = Path(__file__).parent / "static" / "logo-jr.png"
 CURRENT_YEAR = date.today().year
-APP_VERSION = "freight-calculator-hotel-option-v1"
+APP_VERSION = "home-hide-velocity-card-v1"
 RANK_ROUTES_ENABLED = False
 ROUTE_CACHE_TTL_SECONDS = max(int(os.environ.get("JR_ROUTE_CACHE_TTL_SECONDS", "180") or 180), 30)
 DATA_EDITOR_PAGE_SIZE = 100
@@ -6983,12 +6983,6 @@ def render_home() -> None:
             <div><span class="home-chip">Ranking</span><h2>Ranking de gastos por caminhão</h2></div>
             <p class="home-card-text">Veja todos os caminhões em formato de tabela, do maior para o menor gasto, com detalhamento por placa.</p>
             <ul class="home-list"><li>Ordenação por combustível, manutenção, pedágio/extras ou total</li><li>Métricas individuais dentro da própria linha</li><li>Filtros por ano, mês e categoria</li></ul>
-            <span class="home-link">Abrir dashboard &rarr;</span>
-          </a>
-          <a class="home-card" href="?page=velocidade" target="_self" aria-label="Abrir dashboard Velocidade">
-            <div><span class="home-chip">Velocidade</span><h2>Ritmo, duração e cumprimento de metas</h2></div>
-            <p class="home-card-text">Acompanhe cada viagem por placa, motorista e rota, com velocidade média ponderada e indicadores de tempo.</p>
-            <ul class="home-list"><li>Velocidade média, máxima e distância percorrida</li><li>Tempo em rota, paradas e atrasos</li><li>SLA e eventos de excesso por período</li></ul>
             <span class="home-link">Abrir dashboard &rarr;</span>
           </a>
           <a class="home-card" href="?page=combustivel" target="_self" aria-label="Abrir dashboard Combustível">
