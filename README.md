@@ -63,10 +63,10 @@ Excel inclui as abas `Importacao`, `Exemplo` e `Instrucoes`; preencha a aba
 
 ## Calculadora de frete
 
-A calculadora e acessada pelo atalho ao lado do titulo da pagina inicial. Ela
-combina a referencia historica por peso com o piso operacional de distancia e
-equipe, usando os dados de entregas, km, combustivel, manutencao,
-pedagio/extras, hoteis, salarios e diarias ja cadastrados no dashboard. O valor
-sugerido usa a maior base e aplica a margem de seguranca informada pelo usuario.
-O resultado tambem destaca o custo operacional estimado de distancia e equipe,
-separado do valor de venda sugerido para o frete.
+A calculadora e acessada pelo atalho ao lado do titulo da pagina inicial. O
+usuario escolhe a placa do caminhao, e o custo por km e obtido do historico de
+combustivel, manutencao, pedagio/extras, hoteis e diarias da placa. O peso e
+convertido em horas de descarga pela produtividade de 100 kg por hora; essas
+horas sao multiplicadas pela quantidade de funcionarios e pelo salario medio
+por hora, que pode ser ajustado na simulacao. O resultado separa o custo
+estimado do valor sugerido com a margem informada.

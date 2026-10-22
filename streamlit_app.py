@@ -55,13 +55,16 @@ MUTED = "#6B7280"
 CARD_BORDER = "#c2d2f3"
 LOGO_PATH = Path(__file__).parent / "static" / "logo-jr.png"
 CURRENT_YEAR = date.today().year
-APP_VERSION = "freight-calculator-estimated-cost-v1"
+APP_VERSION = "freight-calculator-plate-hourly-weight-v1"
 RANK_ROUTES_ENABLED = False
 ROUTE_CACHE_TTL_SECONDS = max(int(os.environ.get("JR_ROUTE_CACHE_TTL_SECONDS", "180") or 180), 30)
 DATA_EDITOR_PAGE_SIZE = 100
 DATA_EDITOR_ALL_PAGES = "__todos_os_registros__"
 TABLE_FILTER_EMPTY_LABEL = "Sem informação"
 BR_TZ = ZoneInfo("America/Sao_Paulo")
+FREIGHT_UNLOAD_KG_PER_HOUR = 100.0
+FREIGHT_WORKDAY_HOURS = 8.0
+FREIGHT_REFERENCE_CREW_SIZE = 2.0
 CATEGORY_OPTIONS = ["Transporte", "Freteiro", "Empilhadeira", "Estoque", "Vex", "Equipamento"]
 CADASTRO_TABS = ["Placas", "Empilhadeiras", "Combustível", "KM mensal", "Manutenção", "Pneus", "Hotéis", "Peso", "Velocidade", "Pedágio/Extras", "Aluguel de veículos"]
 PEDAGIO_TIPO_OPTIONS = ["Pedágio", "Extras", "Táxi", "IPVA", "Seguro", "Licenciamento", "DPVAT", "Outros"]
@@ -3179,31 +3182,54 @@ def _freight_reference(totals: dict) -> dict[str, float]:
     salary_cost = max(float(totals.get("salario_transporte") or 0.0), 0.0)
     operating_cost = max(total_cost - salary_cost, 0.0)
     total_km = max(float(totals.get("km_total") or 0.0), 0.0)
-    total_weight = max(
-        float(totals.get("peso_total_filtrado") or totals.get("peso_total") or 0.0),
-        0.0,
-    )
-    delivery_value = max(float(totals.get("valor_peso") or 0.0), 0.0)
     service_days = max(
         float(totals.get("salario_transporte_dias") or totals.get("dias_servico") or 0.0),
         0.0,
     )
-    # O cadastro de hospedagem representa a equipe padrao como motorista + ajudante.
-    reference_crew_size = 2.0
     return {
         "operating_cost": operating_cost,
         "salary_cost": salary_cost,
         "total_km": total_km,
-        "total_weight": total_weight,
-        "delivery_value": delivery_value,
         "service_days": service_days,
         "rate_per_km": operating_cost / total_km if total_km else 0.0,
-        "rate_per_kg": delivery_value / total_weight if total_weight else 0.0,
-        "rate_per_employee_day": (
-            salary_cost / service_days / reference_crew_size
+        "rate_per_employee_hour": (
+            salary_cost
+            / service_days
+            / FREIGHT_REFERENCE_CREW_SIZE
+            / FREIGHT_WORKDAY_HOURS
             if service_days and salary_cost
             else 0.0
         ),
+    }
+
+
+def _freight_plate_reference(row: dict, general: dict[str, float]) -> dict[str, float | str]:
+    total_cost = max(float(row.get("total") or 0.0), 0.0)
+    salary_cost = max(float(row.get("salario_transporte") or 0.0), 0.0)
+    operating_cost = max(total_cost - salary_cost, 0.0)
+    total_km = max(float(row.get("km_total") or 0.0), 0.0)
+    service_days = max(float(row.get("dias_servico") or 0.0), 0.0)
+
+    has_plate_km_rate = bool(total_km and operating_cost)
+    has_plate_hourly_rate = bool(service_days and salary_cost)
+    return {
+        "rate_per_km": (
+            operating_cost / total_km
+            if has_plate_km_rate
+            else float(general.get("rate_per_km") or 0.0)
+        ),
+        "rate_per_employee_hour": (
+            salary_cost
+            / service_days
+            / FREIGHT_REFERENCE_CREW_SIZE
+            / FREIGHT_WORKDAY_HOURS
+            if has_plate_hourly_rate
+            else float(general.get("rate_per_employee_hour") or 0.0)
+        ),
+        "km_rate_source": "placa" if has_plate_km_rate else "média da frota",
+        "hourly_rate_source": "placa" if has_plate_hourly_rate else "média da equipe",
+        "plate_km": total_km,
+        "plate_operating_cost": operating_cost,
     }
 
 
@@ -3213,30 +3239,25 @@ def _calculate_freight_quote(
     weight_kg: float,
     distance_km: float,
     employees: int,
-    operation_days: int,
+    employee_hourly_rate: float,
     margin_percent: float,
-) -> dict[str, float | str]:
-    weight_component = max(weight_kg, 0.0) * reference["rate_per_kg"]
+) -> dict[str, float]:
+    employee_count = max(int(employees), 1)
+    unload_hours = max(weight_kg, 0.0) / FREIGHT_UNLOAD_KG_PER_HOUR
+    employee_hours = unload_hours * employee_count
+    weight_component = employee_hours * max(employee_hourly_rate, 0.0)
     distance_component = max(distance_km, 0.0) * reference["rate_per_km"]
-    employee_component = (
-        max(int(employees), 0)
-        * max(int(operation_days), 0)
-        * reference["rate_per_employee_day"]
-    )
-    operating_floor = distance_component + employee_component
-    calculation_base = max(weight_component, operating_floor)
-    margin_value = calculation_base * max(margin_percent, 0.0) / 100.0
-    suggested_freight = calculation_base + margin_value
-    source = "peso" if weight_component >= operating_floor else "km + equipe"
+    estimated_cost = distance_component + weight_component
+    margin_value = estimated_cost * max(margin_percent, 0.0) / 100.0
+    suggested_freight = estimated_cost + margin_value
     return {
         "weight_component": weight_component,
         "distance_component": distance_component,
-        "employee_component": employee_component,
-        "operating_floor": operating_floor,
-        "calculation_base": calculation_base,
+        "unload_hours": unload_hours,
+        "employee_hours": employee_hours,
+        "estimated_cost": estimated_cost,
         "margin_value": margin_value,
         "suggested_freight": suggested_freight,
-        "source": source,
     }
 
 
@@ -6596,7 +6617,7 @@ def render_calculadora_frete() -> None:
             """
             <section class="frete-intro">
               <h2>Quanto cobrar pelo frete?</h2>
-              <p>Informe a carga, a distância total da viagem e a equipe. A calculadora usa o histórico completo de entregas e custos do dashboard para montar uma estimativa rastreável.</p>
+              <p>Escolha o caminhão e informe a carga, a distância total e a equipe. O custo do peso considera a produtividade da descarga de 100 kg por hora e o salário por hora de cada funcionário.</p>
             </section>
             """
         )
@@ -6625,23 +6646,45 @@ def render_calculadora_frete() -> None:
             },
         )
         totals = historical.get("totais") or {}
-        reference = _freight_reference(totals)
+        general_reference = _freight_reference(totals)
+        ranking = historical.get("ranking") or []
+        rows_by_plate = {
+            str(row.get("placa") or "").strip(): row
+            for row in ranking
+            if str(row.get("placa") or "").strip()
+        }
+        plate_options = sorted(rows_by_plate)
 
-        valid_reference = any(
-            reference[key] > 0
-            for key in ("rate_per_km", "rate_per_kg", "rate_per_employee_day")
-        )
-        if not valid_reference:
+        if not plate_options:
             st.warning(
-                "Ainda não há dados suficientes de peso, km, despesas e salários para calcular o frete. "
-                "Cadastre esses dados em Adicionar dados e tente novamente."
+                "Ainda não há caminhões com dados históricos para calcular o frete. "
+                "Cadastre uma placa e seus lançamentos em Adicionar dados."
             )
             footer("Calculadora baseada no histórico operacional do Neon. © JR")
             return
 
         with st.container(key="frete_form"):
             st.markdown("### Dados do frete")
-            st.caption("Na distância, informe o total previsto da viagem, incluindo ida e volta.")
+            selected_plate = st.selectbox(
+                "Placa do caminhão",
+                plate_options,
+                index=None,
+                placeholder="Selecione a placa que fará o frete",
+                key="frete_plate",
+            )
+            st.caption(
+                "Na distância, informe ida + volta. O salário por hora vem do histórico, "
+                "mas pode ser ajustado para esta simulação."
+            )
+
+            selected_row = rows_by_plate.get(str(selected_plate or ""), {})
+            plate_reference = _freight_plate_reference(selected_row, general_reference)
+            default_hourly_rate = float(plate_reference["rate_per_employee_hour"] or 0.0)
+            if selected_plate and default_hourly_rate <= 0:
+                st.warning(
+                    "Esta placa não possui salário histórico calculável. "
+                    "Informe abaixo o salário por funcionário/hora para incluir o peso no custo."
+                )
             with st.form("frete_calculator_form"):
                 input_cols = st.columns(3)
                 with input_cols[0]:
@@ -6652,6 +6695,14 @@ def render_calculadora_frete() -> None:
                         step=100.0,
                         format="%.2f",
                     )
+                    employees = st.number_input(
+                        "Funcionários na descarga",
+                        min_value=1,
+                        max_value=20,
+                        value=2,
+                        step=1,
+                    )
+                with input_cols[1]:
                     distance_km = st.number_input(
                         "Distância total (km)",
                         min_value=0.0,
@@ -6659,20 +6710,14 @@ def render_calculadora_frete() -> None:
                         step=10.0,
                         format="%.1f",
                     )
-                with input_cols[1]:
-                    employees = st.number_input(
-                        "Funcionários na viagem",
-                        min_value=1,
-                        max_value=20,
-                        value=2,
-                        step=1,
-                    )
-                    operation_days = st.number_input(
-                        "Dias de operação",
-                        min_value=1,
-                        max_value=60,
-                        value=1,
-                        step=1,
+                    employee_hourly_rate = st.number_input(
+                        "Salário por funcionário/hora (R$)",
+                        min_value=0.0,
+                        value=default_hourly_rate,
+                        step=1.0,
+                        format="%.2f",
+                        key=f"frete_hourly_rate_{selected_plate or 'sem_placa'}",
+                        help="Média calculada pelos salários do Transporte, considerando jornada de 8 horas.",
                     )
                 with input_cols[2]:
                     margin_percent = st.number_input(
@@ -6682,7 +6727,7 @@ def render_calculadora_frete() -> None:
                         value=10.0,
                         step=1.0,
                         format="%.1f",
-                        help="Percentual aplicado sobre a maior base encontrada.",
+                        help="Percentual aplicado sobre o custo estimado da operação.",
                     )
                     st.write("")
                     submitted = st.form_submit_button(
@@ -6692,18 +6737,31 @@ def render_calculadora_frete() -> None:
                     )
 
         if submitted:
-            st.session_state["frete_quote_inputs"] = {
-                "weight_kg": float(weight_kg),
-                "distance_km": float(distance_km),
-                "employees": int(employees),
-                "operation_days": int(operation_days),
-                "margin_percent": float(margin_percent),
-            }
+            if selected_plate is None:
+                st.warning("Selecione a placa do caminhão antes de calcular.")
+            else:
+                st.session_state["frete_quote_inputs_v2"] = {
+                    "plate": selected_plate,
+                    "weight_kg": float(weight_kg),
+                    "distance_km": float(distance_km),
+                    "employees": int(employees),
+                    "employee_hourly_rate": float(employee_hourly_rate),
+                    "margin_percent": float(margin_percent),
+                }
 
-        quote_inputs = st.session_state.get("frete_quote_inputs")
-        if quote_inputs:
-            quote = _calculate_freight_quote(reference, **quote_inputs)
-            base_source = "referência histórica pelo peso" if quote["source"] == "peso" else "piso operacional de km + equipe"
+        stored_inputs = st.session_state.get("frete_quote_inputs_v2")
+        if stored_inputs and stored_inputs.get("plate") in rows_by_plate:
+            result_plate = str(stored_inputs["plate"])
+            result_reference = _freight_plate_reference(
+                rows_by_plate[result_plate],
+                general_reference,
+            )
+            quote_inputs = {
+                key: value
+                for key, value in stored_inputs.items()
+                if key != "plate"
+            }
+            quote = _calculate_freight_quote(result_reference, **quote_inputs)
             st.html(
                 f"""
                 <section class="frete-result-hero">
@@ -6711,22 +6769,22 @@ def render_calculadora_frete() -> None:
                     <div class="frete-result-item">
                       <p class="frete-result-label">Frete sugerido</p>
                       <p class="frete-result-value">{h(fmt_brl(quote['suggested_freight'], compact_threshold=float('inf')))}</p>
-                      <p class="frete-result-note">Base utilizada: {h(base_source)} · margem de {h(fmt_num(quote_inputs['margin_percent'], 1))}% incluída.</p>
+                      <p class="frete-result-note">Placa {h(result_plate)} · margem de {h(fmt_num(quote_inputs['margin_percent'], 1))}% incluída.</p>
                     </div>
                     <div class="frete-result-item frete-result-item--cost">
                       <p class="frete-result-label">Custo estimado</p>
-                      <p class="frete-result-value frete-result-value--cost">{h(fmt_brl(quote['operating_floor'], compact_threshold=float('inf')))}</p>
-                      <p class="frete-result-note">Distância + equipe, sem margem.</p>
+                      <p class="frete-result-value frete-result-value--cost">{h(fmt_brl(quote['estimated_cost'], compact_threshold=float('inf')))}</p>
+                      <p class="frete-result-note">Caminhão + descarga, sem margem.</p>
                     </div>
                   </div>
                 </section>
                 <section class="frete-breakdown">
-                  <div class="frete-breakdown-card"><p>Referência pelo peso</p><strong>{h(fmt_brl(quote['weight_component'], compact_threshold=float('inf')))}</strong></div>
+                  <div class="frete-breakdown-card"><p>Custo da descarga pelo peso</p><strong>{h(fmt_brl(quote['weight_component'], compact_threshold=float('inf')))}</strong></div>
                   <div class="frete-breakdown-card"><p>Custo pela distância</p><strong>{h(fmt_brl(quote['distance_component'], compact_threshold=float('inf')))}</strong></div>
-                  <div class="frete-breakdown-card"><p>Custo da equipe</p><strong>{h(fmt_brl(quote['employee_component'], compact_threshold=float('inf')))}</strong></div>
+                  <div class="frete-breakdown-card"><p>Tempo estimado de descarga</p><strong>{h(fmt_num(quote['unload_hours'], 2))} h</strong></div>
                 </section>
                 <div class="frete-memory">
-                  <strong>Memória do cálculo:</strong> o custo estimado da operação é distância + equipe ({h(fmt_brl(quote['operating_floor'], compact_threshold=float('inf')))}). Ele é comparado com a referência pelo peso ({h(fmt_brl(quote['weight_component'], compact_threshold=float('inf')))}). A calculadora usa o maior valor como base comercial e acrescenta {h(fmt_brl(quote['margin_value'], compact_threshold=float('inf')))} de margem.
+                  <strong>Memória do cálculo:</strong> {h(fmt_num(quote_inputs['weight_kg'], 2))} kg ÷ 100 kg/h = {h(fmt_num(quote['unload_hours'], 2))} hora(s) de descarga. Com {h(fmt_num(quote_inputs['employees']))} funcionário(s), são {h(fmt_num(quote['employee_hours'], 2))} hora(s)-pessoa × {h(fmt_brl(quote_inputs['employee_hourly_rate'], compact_threshold=float('inf')))} = {h(fmt_brl(quote['weight_component'], compact_threshold=float('inf')))} pelo peso. Somando {h(fmt_brl(quote['distance_component'], compact_threshold=float('inf')))} da distância, o custo estimado é {h(fmt_brl(quote['estimated_cost'], compact_threshold=float('inf')))}; a margem acrescenta {h(fmt_brl(quote['margin_value'], compact_threshold=float('inf')))}.
                 </div>
                 """
             )
@@ -6742,22 +6800,22 @@ def render_calculadora_frete() -> None:
         with st.expander("Ver tarifas e dados usados", expanded=False):
             rate_cols = st.columns(3)
             rate_cols[0].metric(
-                "Operação por km",
-                fmt_brl(reference["rate_per_km"], compact_threshold=float("inf")),
+                "Placa selecionada",
+                selected_plate or "—",
             )
             rate_cols[1].metric(
-                "Referência por tonelada",
-                fmt_brl(reference["rate_per_kg"] * 1000, compact_threshold=float("inf")),
+                "Operação por km",
+                fmt_brl(plate_reference["rate_per_km"], compact_threshold=float("inf")),
             )
             rate_cols[2].metric(
-                "Funcionário por dia",
-                fmt_brl(reference["rate_per_employee_day"], compact_threshold=float("inf")),
+                "Funcionário por hora",
+                fmt_brl(plate_reference["rate_per_employee_hour"], compact_threshold=float("inf")),
             )
             st.caption(
-                f"Base: {period_label}; {fmt_num(reference['total_km'])} km, "
-                f"{fmt_peso(reference['total_weight'])} e {fmt_brl(reference['salary_cost'])} em salários. "
-                "A tarifa de km reúne combustível, manutenção, pedágio/extras, hotéis e diárias de freteiros. "
-                "Como o banco registra o salário total, a tarifa individual considera a equipe padrão de motorista + ajudante."
+                f"Base: {period_label}. A tarifa de km usa {plate_reference['km_rate_source']} e reúne combustível, "
+                "manutenção, pedágio/extras, hotéis e diárias de freteiros. "
+                f"A tarifa por hora usa {plate_reference['hourly_rate_source']}, jornada de 8 horas e equipe histórica "
+                "de motorista + ajudante. Produtividade da descarga: 100 kg por hora."
             )
 
     footer("Estimativa calculada com o histórico operacional do Neon. Confira pedágios e condições especiais antes de fechar. © JR")
