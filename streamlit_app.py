@@ -55,14 +55,15 @@ MUTED = "#6B7280"
 CARD_BORDER = "#c2d2f3"
 LOGO_PATH = Path(__file__).parent / "static" / "logo-jr.png"
 CURRENT_YEAR = date.today().year
-APP_VERSION = "home-hide-velocity-card-v1"
+APP_VERSION = "freight-calculator-operation-time-v1"
 RANK_ROUTES_ENABLED = False
 ROUTE_CACHE_TTL_SECONDS = max(int(os.environ.get("JR_ROUTE_CACHE_TTL_SECONDS", "180") or 180), 30)
 DATA_EDITOR_PAGE_SIZE = 100
 DATA_EDITOR_ALL_PAGES = "__todos_os_registros__"
 TABLE_FILTER_EMPTY_LABEL = "Sem informação"
 BR_TZ = ZoneInfo("America/Sao_Paulo")
-FREIGHT_UNLOAD_KG_PER_HOUR = 100.0
+FREIGHT_UNLOAD_KG_PER_HOUR = 1000.0
+FREIGHT_AVERAGE_SPEED_KMH = 80.0
 FREIGHT_WORKDAY_HOURS = 8.0
 FREIGHT_REFERENCE_CREW_SIZE = 2.0
 FREIGHT_FLEET_AVERAGE_LABEL = "Média da frota (sem placa)"
@@ -1060,7 +1061,7 @@ def inject_css() -> None:
 
         .frete-breakdown {{
           display: grid;
-          grid-template-columns: repeat(3, minmax(0, 1fr));
+          grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
           gap: 14px;
           margin: 16px 0 0;
         }}
@@ -3249,16 +3250,27 @@ def _calculate_freight_quote(
 ) -> dict[str, float]:
     employee_count = max(int(employees), 1)
     unload_hours = max(weight_kg, 0.0) / FREIGHT_UNLOAD_KG_PER_HOUR
-    employee_hours = unload_hours * employee_count
-    weight_component = employee_hours * max(employee_hourly_rate, 0.0)
+    travel_hours = max(distance_km, 0.0) / FREIGHT_AVERAGE_SPEED_KMH
+    total_operation_hours = unload_hours + travel_hours
+    unload_employee_hours = unload_hours * employee_count
+    travel_employee_hours = travel_hours * employee_count
+    employee_hours = total_operation_hours * employee_count
+    hourly_rate = max(employee_hourly_rate, 0.0)
+    unload_labor_cost = unload_employee_hours * hourly_rate
+    travel_labor_cost = travel_employee_hours * hourly_rate
+    team_cost = unload_labor_cost + travel_labor_cost
     distance_component = max(distance_km, 0.0) * reference["rate_per_km"]
-    estimated_cost = distance_component + weight_component
+    estimated_cost = distance_component + team_cost
     margin_value = estimated_cost * max(margin_percent, 0.0) / 100.0
     suggested_freight = estimated_cost + margin_value
     return {
-        "weight_component": weight_component,
+        "unload_labor_cost": unload_labor_cost,
+        "travel_labor_cost": travel_labor_cost,
+        "team_cost": team_cost,
         "distance_component": distance_component,
         "unload_hours": unload_hours,
+        "travel_hours": travel_hours,
+        "total_operation_hours": total_operation_hours,
         "employee_hours": employee_hours,
         "estimated_cost": estimated_cost,
         "margin_value": margin_value,
@@ -6622,7 +6634,7 @@ def render_calculadora_frete() -> None:
             """
             <section class="frete-intro">
               <h2>Quanto cobrar pelo frete?</h2>
-              <p>Use a média da frota ou escolha um caminhão específico e informe a carga, a distância total e a equipe. O custo do peso considera a produtividade da descarga de 100 kg por hora e o salário por hora de cada funcionário.</p>
+              <p>Use a média da frota ou escolha um caminhão específico. O tempo da viagem considera velocidade média de 80 km/h, e a descarga considera 1 tonelada por hora.</p>
             </section>
             """
         )
@@ -6781,17 +6793,18 @@ def render_calculadora_frete() -> None:
                     <div class="frete-result-item frete-result-item--cost">
                       <p class="frete-result-label">Custo estimado</p>
                       <p class="frete-result-value frete-result-value--cost">{h(fmt_brl(quote['estimated_cost'], compact_threshold=float('inf')))}</p>
-                      <p class="frete-result-note">Caminhão + descarga, sem margem.</p>
+                      <p class="frete-result-note">Caminhão + equipe por {h(fmt_num(quote['total_operation_hours'], 2))} h, sem margem.</p>
                     </div>
                   </div>
                 </section>
                 <section class="frete-breakdown">
-                  <div class="frete-breakdown-card"><p>Custo da descarga pelo peso</p><strong>{h(fmt_brl(quote['weight_component'], compact_threshold=float('inf')))}</strong></div>
-                  <div class="frete-breakdown-card"><p>Custo pela distância</p><strong>{h(fmt_brl(quote['distance_component'], compact_threshold=float('inf')))}</strong></div>
-                  <div class="frete-breakdown-card"><p>Tempo estimado de descarga</p><strong>{h(fmt_num(quote['unload_hours'], 2))} h</strong></div>
+                  <div class="frete-breakdown-card"><p>Custo do caminhão por km</p><strong>{h(fmt_brl(quote['distance_component'], compact_threshold=float('inf')))}</strong></div>
+                  <div class="frete-breakdown-card"><p>Custo da equipe</p><strong>{h(fmt_brl(quote['team_cost'], compact_threshold=float('inf')))}</strong></div>
+                  <div class="frete-breakdown-card"><p>Tempo de viagem a 80 km/h</p><strong>{h(fmt_num(quote['travel_hours'], 2))} h</strong></div>
+                  <div class="frete-breakdown-card"><p>Tempo de descarga a 1 t/h</p><strong>{h(fmt_num(quote['unload_hours'], 2))} h</strong></div>
                 </section>
                 <div class="frete-memory">
-                  <strong>Memória do cálculo:</strong> {h(fmt_num(quote_inputs['weight_kg'], 2))} kg ÷ 100 kg/h = {h(fmt_num(quote['unload_hours'], 2))} hora(s) de descarga. Com {h(fmt_num(quote_inputs['employees']))} funcionário(s), são {h(fmt_num(quote['employee_hours'], 2))} hora(s)-pessoa × {h(fmt_brl(quote_inputs['employee_hourly_rate'], compact_threshold=float('inf')))} = {h(fmt_brl(quote['weight_component'], compact_threshold=float('inf')))} pelo peso. Somando {h(fmt_brl(quote['distance_component'], compact_threshold=float('inf')))} da distância, o custo estimado é {h(fmt_brl(quote['estimated_cost'], compact_threshold=float('inf')))}; a margem acrescenta {h(fmt_brl(quote['margin_value'], compact_threshold=float('inf')))}.
+                  <strong>Memória do cálculo:</strong> viagem: {h(fmt_num(quote_inputs['distance_km'], 1))} km ÷ 80 km/h = {h(fmt_num(quote['travel_hours'], 2))} h. Descarga: {h(fmt_num(quote_inputs['weight_kg'], 2))} kg ÷ 1.000 kg/h = {h(fmt_num(quote['unload_hours'], 2))} h. Tempo total: {h(fmt_num(quote['total_operation_hours'], 2))} h. Com {h(fmt_num(quote_inputs['employees']))} funcionário(s), são {h(fmt_num(quote['employee_hours'], 2))} horas-pessoa × {h(fmt_brl(quote_inputs['employee_hourly_rate'], compact_threshold=float('inf')))} = {h(fmt_brl(quote['team_cost'], compact_threshold=float('inf')))} de equipe. Somando {h(fmt_brl(quote['distance_component'], compact_threshold=float('inf')))} do caminhão, o custo estimado é {h(fmt_brl(quote['estimated_cost'], compact_threshold=float('inf')))}; a margem acrescenta {h(fmt_brl(quote['margin_value'], compact_threshold=float('inf')))}.
                 </div>
                 """
             )
@@ -6823,7 +6836,7 @@ def render_calculadora_frete() -> None:
                 f"manutenção, pedágio/extras, diárias de freteiros e hotéis {('incluídos' if include_hotels else 'excluídos')}. "
                 f"Hospedagens consideradas: {fmt_brl(general_reference['hotel_cost'])}. "
                 f"A tarifa por hora usa {plate_reference['hourly_rate_source']}, jornada de 8 horas e equipe histórica "
-                "de motorista + ajudante. Produtividade da descarga: 100 kg por hora."
+                "de motorista + ajudante. Velocidade média: 80 km/h. Produtividade da descarga: 1 tonelada por hora."
             )
 
     footer("Estimativa calculada com o histórico operacional do Neon. Confira pedágios e condições especiais antes de fechar. © JR")
