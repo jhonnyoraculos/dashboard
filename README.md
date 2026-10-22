@@ -68,3 +68,5 @@ combina a referencia historica por peso com o piso operacional de distancia e
 equipe, usando os dados de entregas, km, combustivel, manutencao,
 pedagio/extras, hoteis, salarios e diarias ja cadastrados no dashboard. O valor
 sugerido usa a maior base e aplica a margem de seguranca informada pelo usuario.
+O resultado tambem destaca o custo operacional estimado de distancia e equipe,
+separado do valor de venda sugerido para o frete.

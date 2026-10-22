@@ -55,7 +55,7 @@ MUTED = "#6B7280"
 CARD_BORDER = "#c2d2f3"
 LOGO_PATH = Path(__file__).parent / "static" / "logo-jr.png"
 CURRENT_YEAR = date.today().year
-APP_VERSION = "freight-calculator-v1"
+APP_VERSION = "freight-calculator-estimated-cost-v1"
 RANK_ROUTES_ENABLED = False
 ROUTE_CACHE_TTL_SECONDS = max(int(os.environ.get("JR_ROUTE_CACHE_TTL_SECONDS", "180") or 180), 30)
 DATA_EDITOR_PAGE_SIZE = 100
@@ -1012,6 +1012,21 @@ def inject_css() -> None:
           box-shadow: 0 16px 34px rgba(28,45,107,.22);
         }}
 
+        .frete-result-grid {{
+          display: grid;
+          grid-template-columns: 1.25fr .75fr;
+          gap: 28px;
+          align-items: stretch;
+        }}
+
+        .frete-result-item--cost {{
+          display: flex;
+          flex-direction: column;
+          justify-content: center;
+          padding-left: 28px;
+          border-left: 1px solid rgba(255,255,255,.24);
+        }}
+
         .frete-result-label {{
           margin: 0 0 8px;
           font-size: 12px;
@@ -1026,6 +1041,11 @@ def inject_css() -> None:
           font-size: clamp(34px, 6vw, 54px);
           font-weight: 900;
           line-height: 1;
+        }}
+
+        .frete-result-value--cost {{
+          font-size: clamp(28px, 4vw, 40px);
+          color: #fff;
         }}
 
         .frete-result-note {{
@@ -2819,6 +2839,17 @@ def inject_css() -> None:
 
           .frete-breakdown {{
             grid-template-columns: 1fr;
+          }}
+
+          .frete-result-grid {{
+            grid-template-columns: 1fr;
+            gap: 22px;
+          }}
+
+          .frete-result-item--cost {{
+            padding: 20px 0 0;
+            border-top: 1px solid rgba(255,255,255,.24);
+            border-left: 0;
           }}
 
           .home-total-grid,
@@ -6676,9 +6707,18 @@ def render_calculadora_frete() -> None:
             st.html(
                 f"""
                 <section class="frete-result-hero">
-                  <p class="frete-result-label">Frete sugerido</p>
-                  <p class="frete-result-value">{h(fmt_brl(quote['suggested_freight'], compact_threshold=float('inf')))}</p>
-                  <p class="frete-result-note">Base utilizada: {h(base_source)} · margem de {h(fmt_num(quote_inputs['margin_percent'], 1))}% incluída.</p>
+                  <div class="frete-result-grid">
+                    <div class="frete-result-item">
+                      <p class="frete-result-label">Frete sugerido</p>
+                      <p class="frete-result-value">{h(fmt_brl(quote['suggested_freight'], compact_threshold=float('inf')))}</p>
+                      <p class="frete-result-note">Base utilizada: {h(base_source)} · margem de {h(fmt_num(quote_inputs['margin_percent'], 1))}% incluída.</p>
+                    </div>
+                    <div class="frete-result-item frete-result-item--cost">
+                      <p class="frete-result-label">Custo estimado</p>
+                      <p class="frete-result-value frete-result-value--cost">{h(fmt_brl(quote['operating_floor'], compact_threshold=float('inf')))}</p>
+                      <p class="frete-result-note">Distância + equipe, sem margem.</p>
+                    </div>
+                  </div>
                 </section>
                 <section class="frete-breakdown">
                   <div class="frete-breakdown-card"><p>Referência pelo peso</p><strong>{h(fmt_brl(quote['weight_component'], compact_threshold=float('inf')))}</strong></div>
@@ -6686,7 +6726,7 @@ def render_calculadora_frete() -> None:
                   <div class="frete-breakdown-card"><p>Custo da equipe</p><strong>{h(fmt_brl(quote['employee_component'], compact_threshold=float('inf')))}</strong></div>
                 </section>
                 <div class="frete-memory">
-                  <strong>Memória do cálculo:</strong> o piso operacional é distância + equipe ({h(fmt_brl(quote['operating_floor'], compact_threshold=float('inf')))}). Ele é comparado com a referência pelo peso ({h(fmt_brl(quote['weight_component'], compact_threshold=float('inf')))}). A calculadora usa o maior valor e acrescenta {h(fmt_brl(quote['margin_value'], compact_threshold=float('inf')))} de margem.
+                  <strong>Memória do cálculo:</strong> o custo estimado da operação é distância + equipe ({h(fmt_brl(quote['operating_floor'], compact_threshold=float('inf')))}). Ele é comparado com a referência pelo peso ({h(fmt_brl(quote['weight_component'], compact_threshold=float('inf')))}). A calculadora usa o maior valor como base comercial e acrescenta {h(fmt_brl(quote['margin_value'], compact_threshold=float('inf')))} de margem.
                 </div>
                 """
             )
