@@ -73,6 +73,10 @@ multiplicados pela quantidade de funcionarios e pelo salario medio por hora,
 que pode ser ajustado na simulacao. O resultado separa o custo estimado do
 valor sugerido com a margem informada.
 
+Os resultados usam diretamente os valores atuais dos campos; a calculadora nao
+mantem uma simulacao anterior depois que peso, distancia ou equipe sao
+alterados.
+
 As despesas de hotel podem ser marcadas ou desmarcadas na calculadora. Quando
 incluidas sem uma placa especifica, entram diretamente na media da frota. Para
 uma placa especifica, sao rateadas pela quilometragem media porque os registros

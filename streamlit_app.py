@@ -55,7 +55,7 @@ MUTED = "#6B7280"
 CARD_BORDER = "#c2d2f3"
 LOGO_PATH = Path(__file__).parent / "static" / "logo-jr.png"
 CURRENT_YEAR = date.today().year
-APP_VERSION = "freight-calculator-operation-time-v1"
+APP_VERSION = "freight-calculator-live-values-v1"
 RANK_ROUTES_ENABLED = False
 ROUTE_CACHE_TTL_SECONDS = max(int(os.environ.get("JR_ROUTE_CACHE_TTL_SECONDS", "180") or 180), 30)
 DATA_EDITOR_PAGE_SIZE = 100
@@ -6706,108 +6706,99 @@ def render_calculadora_frete() -> None:
                     "A base escolhida não possui salário histórico calculável. "
                     "Informe abaixo o salário por funcionário/hora para incluir o peso no custo."
                 )
-            with st.form("frete_calculator_form"):
-                input_cols = st.columns(3)
-                with input_cols[0]:
-                    weight_kg = st.number_input(
-                        "Peso da carga (kg)",
-                        min_value=0.0,
-                        value=1000.0,
-                        step=100.0,
-                        format="%.2f",
-                    )
-                    employees = st.number_input(
-                        "Funcionários na descarga",
-                        min_value=1,
-                        max_value=20,
-                        value=2,
-                        step=1,
-                    )
-                with input_cols[1]:
-                    distance_km = st.number_input(
-                        "Distância total (km)",
-                        min_value=0.0,
-                        value=100.0,
-                        step=10.0,
-                        format="%.1f",
-                    )
-                    employee_hourly_rate = st.number_input(
-                        "Salário por funcionário/hora (R$)",
-                        min_value=0.0,
-                        value=default_hourly_rate,
-                        step=1.0,
-                        format="%.2f",
-                        key=f"frete_hourly_rate_{selected_plate or 'sem_placa'}",
-                        help="Média calculada pelos salários do Transporte, considerando jornada de 8 horas.",
-                    )
-                with input_cols[2]:
-                    margin_percent = st.number_input(
-                        "Margem de segurança (%)",
-                        min_value=0.0,
-                        max_value=100.0,
-                        value=10.0,
-                        step=1.0,
-                        format="%.1f",
-                        help="Percentual aplicado sobre o custo estimado da operação.",
-                    )
-                    st.write("")
-                    submitted = st.form_submit_button(
-                        "Calcular frete",
-                        type="primary",
-                        width="stretch",
-                    )
+            input_cols = st.columns(3)
+            with input_cols[0]:
+                weight_kg = st.number_input(
+                    "Peso da carga (kg)",
+                    min_value=0.0,
+                    value=1000.0,
+                    step=100.0,
+                    format="%.2f",
+                    key="frete_weight_kg",
+                )
+                employees = st.number_input(
+                    "Funcionários na descarga",
+                    min_value=1,
+                    max_value=20,
+                    value=2,
+                    step=1,
+                    key="frete_employees",
+                )
+            with input_cols[1]:
+                distance_km = st.number_input(
+                    "Distância total (km)",
+                    min_value=0.0,
+                    value=100.0,
+                    step=10.0,
+                    format="%.1f",
+                    key="frete_distance_km",
+                )
+                employee_hourly_rate = st.number_input(
+                    "Salário por funcionário/hora (R$)",
+                    min_value=0.0,
+                    value=default_hourly_rate,
+                    step=1.0,
+                    format="%.2f",
+                    key=f"frete_hourly_rate_{selected_plate or 'sem_placa'}",
+                    help="Média calculada pelos salários do Transporte, considerando jornada de 8 horas.",
+                )
+            with input_cols[2]:
+                margin_percent = st.number_input(
+                    "Margem de segurança (%)",
+                    min_value=0.0,
+                    max_value=100.0,
+                    value=10.0,
+                    step=1.0,
+                    format="%.1f",
+                    key="frete_margin_percent",
+                    help="Percentual aplicado sobre o custo estimado da operação.",
+                )
+                st.write("")
+                st.button(
+                    "Atualizar cálculo",
+                    type="primary",
+                    width="stretch",
+                    key="frete_refresh",
+                )
+            st.caption("O resultado usa sempre os valores atuais. Confirme a digitação com Enter ou saia do campo.")
 
-        if submitted:
-            st.session_state["frete_quote_inputs_v2"] = {
-                "plate": selected_plate,
-                "weight_kg": float(weight_kg),
-                "distance_km": float(distance_km),
-                "employees": int(employees),
-                "employee_hourly_rate": float(employee_hourly_rate),
-                "margin_percent": float(margin_percent),
-            }
-
-        stored_inputs = st.session_state.get("frete_quote_inputs_v2")
-        stored_plate = stored_inputs.get("plate") if stored_inputs else None
-        if stored_inputs and (stored_plate is None or stored_plate in rows_by_plate):
-            result_plate = str(stored_plate) if stored_plate else FREIGHT_FLEET_AVERAGE_LABEL
-            result_reference = _freight_plate_reference(
-                rows_by_plate.get(str(stored_plate), {}),
-                general_reference,
-            )
-            quote_inputs = {
-                key: value
-                for key, value in stored_inputs.items()
-                if key != "plate"
-            }
-            quote = _calculate_freight_quote(result_reference, **quote_inputs)
-            st.html(
-                f"""
-                <section class="frete-result-hero">
-                  <div class="frete-result-grid">
-                    <div class="frete-result-item">
-                      <p class="frete-result-label">Frete sugerido</p>
-                      <p class="frete-result-value">{h(fmt_brl(quote['suggested_freight'], compact_threshold=float('inf')))}</p>
-                      <p class="frete-result-note">Base: {h(result_plate)} · hotéis {"incluídos" if include_hotels else "excluídos"} · margem de {h(fmt_num(quote_inputs['margin_percent'], 1))}% incluída.</p>
-                    </div>
-                    <div class="frete-result-item frete-result-item--cost">
-                      <p class="frete-result-label">Custo estimado</p>
-                      <p class="frete-result-value frete-result-value--cost">{h(fmt_brl(quote['estimated_cost'], compact_threshold=float('inf')))}</p>
-                      <p class="frete-result-note">Caminhão + equipe por {h(fmt_num(quote['total_operation_hours'], 2))} h, sem margem.</p>
-                    </div>
-                  </div>
-                </section>
-                <section class="frete-breakdown">
-                  <div class="frete-breakdown-card"><p>Custo do caminhão por km</p><strong>{h(fmt_brl(quote['distance_component'], compact_threshold=float('inf')))}</strong></div>
-                  <div class="frete-breakdown-card"><p>Custo da equipe</p><strong>{h(fmt_brl(quote['team_cost'], compact_threshold=float('inf')))}</strong></div>
-                  <div class="frete-breakdown-card"><p>Tempo de viagem a 80 km/h</p><strong>{h(fmt_num(quote['travel_hours'], 2))} h</strong></div>
-                  <div class="frete-breakdown-card"><p>Tempo de descarga a 1 t/h</p><strong>{h(fmt_num(quote['unload_hours'], 2))} h</strong></div>
-                </section>
-                <div class="frete-memory">
-                  <strong>Memória do cálculo:</strong> viagem: {h(fmt_num(quote_inputs['distance_km'], 1))} km ÷ 80 km/h = {h(fmt_num(quote['travel_hours'], 2))} h. Descarga: {h(fmt_num(quote_inputs['weight_kg'], 2))} kg ÷ 1.000 kg/h = {h(fmt_num(quote['unload_hours'], 2))} h. Tempo total: {h(fmt_num(quote['total_operation_hours'], 2))} h. Com {h(fmt_num(quote_inputs['employees']))} funcionário(s), são {h(fmt_num(quote['employee_hours'], 2))} horas-pessoa × {h(fmt_brl(quote_inputs['employee_hourly_rate'], compact_threshold=float('inf')))} = {h(fmt_brl(quote['team_cost'], compact_threshold=float('inf')))} de equipe. Somando {h(fmt_brl(quote['distance_component'], compact_threshold=float('inf')))} do caminhão, o custo estimado é {h(fmt_brl(quote['estimated_cost'], compact_threshold=float('inf')))}; a margem acrescenta {h(fmt_brl(quote['margin_value'], compact_threshold=float('inf')))}.
+        st.session_state.pop("frete_quote_inputs_v2", None)
+        result_plate = selected_plate or FREIGHT_FLEET_AVERAGE_LABEL
+        quote_inputs = {
+            "weight_kg": float(weight_kg),
+            "distance_km": float(distance_km),
+            "employees": int(employees),
+            "employee_hourly_rate": float(employee_hourly_rate),
+            "margin_percent": float(margin_percent),
+        }
+        quote = _calculate_freight_quote(plate_reference, **quote_inputs)
+        st.html(
+            f"""
+            <section class="frete-result-hero">
+              <div class="frete-result-grid">
+                <div class="frete-result-item">
+                  <p class="frete-result-label">Frete sugerido</p>
+                  <p class="frete-result-value">{h(fmt_brl(quote['suggested_freight'], compact_threshold=float('inf')))}</p>
+                  <p class="frete-result-note">Base: {h(result_plate)} · hotéis {"incluídos" if include_hotels else "excluídos"} · margem de {h(fmt_num(quote_inputs['margin_percent'], 1))}% incluída.</p>
                 </div>
-                """
-            )
+                <div class="frete-result-item frete-result-item--cost">
+                  <p class="frete-result-label">Custo estimado</p>
+                  <p class="frete-result-value frete-result-value--cost">{h(fmt_brl(quote['estimated_cost'], compact_threshold=float('inf')))}</p>
+                  <p class="frete-result-note">Caminhão + equipe por {h(fmt_num(quote['total_operation_hours'], 2))} h, sem margem.</p>
+                </div>
+              </div>
+            </section>
+            <section class="frete-breakdown">
+              <div class="frete-breakdown-card"><p>Custo do caminhão por km</p><strong>{h(fmt_brl(quote['distance_component'], compact_threshold=float('inf')))}</strong></div>
+              <div class="frete-breakdown-card"><p>Custo da equipe</p><strong>{h(fmt_brl(quote['team_cost'], compact_threshold=float('inf')))}</strong></div>
+              <div class="frete-breakdown-card"><p>Tempo de viagem a 80 km/h</p><strong>{h(fmt_num(quote['travel_hours'], 2))} h</strong></div>
+              <div class="frete-breakdown-card"><p>Tempo de descarga a 1 t/h</p><strong>{h(fmt_num(quote['unload_hours'], 2))} h</strong></div>
+            </section>
+            <div class="frete-memory">
+              <strong>Memória do cálculo:</strong> viagem: {h(fmt_num(quote_inputs['distance_km'], 1))} km ÷ 80 km/h = {h(fmt_num(quote['travel_hours'], 2))} h. Descarga: {h(fmt_num(quote_inputs['weight_kg'], 2))} kg ÷ 1.000 kg/h = {h(fmt_num(quote['unload_hours'], 2))} h. Tempo total: {h(fmt_num(quote['total_operation_hours'], 2))} h. Com {h(fmt_num(quote_inputs['employees']))} funcionário(s), são {h(fmt_num(quote['employee_hours'], 2))} horas-pessoa × {h(fmt_brl(quote_inputs['employee_hourly_rate'], compact_threshold=float('inf')))} = {h(fmt_brl(quote['team_cost'], compact_threshold=float('inf')))} de equipe. Somando {h(fmt_brl(quote['distance_component'], compact_threshold=float('inf')))} do caminhão, o custo estimado é {h(fmt_brl(quote['estimated_cost'], compact_threshold=float('inf')))}; a margem acrescenta {h(fmt_brl(quote['margin_value'], compact_threshold=float('inf')))}.
+            </div>
+            """
+        )
 
         years = historical.get("anos") or []
         period_label = (
