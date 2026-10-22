@@ -50,7 +50,7 @@ _backend_aluguel_period_ready = {"Inicio", "Fim"}.issubset(
 )
 _backend_aluguel_monthly_ready = getattr(backend, "BACKEND_BUILD_VERSION", "") == "aluguel-multiplicar-meses-v1"
 _backend_pedagio_chart_ready = getattr(backend, "PEDAGIO_CHART_VERSION", "") == "all-types-v1"
-_backend_routes_ready = getattr(backend, "ROUTES_BUILD_VERSION", "") == "rotas-pdf-v3"
+_backend_routes_ready = getattr(backend, "ROUTES_BUILD_VERSION", "") == "rotas-pdf-v4"
 if not _backend_features_ready or not _backend_aluguel_period_ready or not _backend_aluguel_monthly_ready or not _backend_pedagio_chart_ready or not _backend_routes_ready:
     backend = importlib.reload(backend)
 
@@ -61,7 +61,7 @@ MUTED = "#6B7280"
 CARD_BORDER = "#c2d2f3"
 LOGO_PATH = Path(__file__).parent / "static" / "logo-jr.png"
 CURRENT_YEAR = date.today().year
-APP_VERSION = "route-manifests-pdf-v3"
+APP_VERSION = "route-manifests-pdf-v4"
 RANK_ROUTES_ENABLED = False
 ROUTE_CACHE_TTL_SECONDS = max(int(os.environ.get("JR_ROUTE_CACHE_TTL_SECONDS", "180") or 180), 30)
 DATA_EDITOR_PAGE_SIZE = 100
@@ -11135,8 +11135,8 @@ def _route_row_datetime(row: pd.Series, column: str, fallback: datetime) -> date
 def _render_route_completion(plate_map: dict[str, str]) -> None:
     st.markdown("### Finalizar dados operacionais da rota")
     st.caption(
-        "Complete a saída real, o retorno e os KM feitos. Esses campos alimentam o cálculo de duração, dias, "
-        "quilometragem e os rankings de motorista, placa e rota."
+        "Complete a saída real e o retorno. O KM é obrigatório para a frota própria e opcional para freteiros. "
+        "Esses campos alimentam o cálculo de duração, dias e os rankings de motorista, placa e rota."
     )
     try:
         routes = backend.load_rotas()
@@ -11184,21 +11184,30 @@ def _render_route_completion(plate_map: dict[str, str]) -> None:
                 index=plate_options.index(current_plate) if current_plate in plate_options else 0,
             )
             driver = st.text_input("Motorista", value=clean_text(row.get("Motorista")))
+            selected_category = plate_map.get(plate, clean_text(row.get("Categoria") or "Transporte"))
+            is_freighter = clean_text(selected_category).strip().lower() == "freteiro"
+            st.caption(f"Categoria da placa: {selected_category}")
         with c2:
             departure_date = st.date_input("Data de saída", value=departure_default.date())
             departure_time = st.time_input("Hora de saída", value=departure_default.time().replace(second=0, microsecond=0))
         with c3:
             return_date = st.date_input("Data de retorno", value=return_default.date())
             return_time = st.time_input("Hora de retorno", value=return_default.time().replace(second=0, microsecond=0))
-        stored_km = pd.to_numeric(row.get("KM Rodados"), errors="coerce")
-        km = st.number_input(
-            "KM feitos para realizar a rota",
-            min_value=0.0,
-            value=float(stored_km) if pd.notna(stored_km) else 0.0,
-            step=1.0,
-            format="%.1f",
-        )
-        observation = st.text_area("Observação operacional", value=clean_text(row.get("Observacao")))
+        if is_freighter:
+            km = None
+            st.info("Placa classificada como Freteiro: não é necessário informar os KM desta rota.")
+        else:
+            stored_km = pd.to_numeric(row.get("KM Rodados"), errors="coerce")
+            km = st.number_input(
+                "KM feitos para realizar a rota",
+                min_value=0.0,
+                value=float(stored_km) if pd.notna(stored_km) else 0.0,
+                step=1.0,
+                format="%.1f",
+            )
+        raw_observation = row.get("Observacao")
+        observation_default = "" if pd.isna(raw_observation) else clean_text(raw_observation)
+        observation = st.text_area("Observação operacional", value=observation_default)
         submitted = st.form_submit_button("Salvar e concluir rota", type="primary", width="stretch")
         if submitted:
             try:
@@ -11215,7 +11224,10 @@ def _render_route_completion(plate_map: dict[str, str]) -> None:
                 st.error(str(exc))
             else:
                 clear_cached_reads()
-                st.success("Rota concluída. Duração, dias, KM e rankings foram atualizados.")
+                if is_freighter:
+                    st.success("Rota de freteiro concluída sem KM. Duração, dias e rankings foram atualizados.")
+                else:
+                    st.success("Rota concluída. Duração, dias, KM e rankings foram atualizados.")
                 st.rerun()
 
     with st.expander("Ver todos os dados extraídos desta rota", expanded=False):

@@ -58,7 +58,7 @@ DB_TABLES = {
 }
 DB_METADATA_TABLE = "dashboard_metadata"
 BACKEND_BUILD_VERSION = "aluguel-multiplicar-meses-v1"
-ROUTES_BUILD_VERSION = "rotas-pdf-v3"
+ROUTES_BUILD_VERSION = "rotas-pdf-v4"
 PEDAGIO_CHART_VERSION = "all-types-v1"
 BACKUP_METADATA_KEY = "backup.last_downloaded_at"
 _DB_ENGINE = None
@@ -2018,7 +2018,8 @@ def import_route_manifests(routes: list[dict], deliveries: list[dict]) -> dict:
             (
                 f'"Status" = CASE WHEN {route_table}."Saida" IS NOT NULL '
                 f'AND {route_table}."Retorno" IS NOT NULL '
-                f'AND COALESCE(NULLIF({route_table}."KM Rodados"::TEXT, \'\'), \'0\')::DOUBLE PRECISION > 0 '
+                f'AND (LOWER(COALESCE({route_table}."Categoria", \'\')) = \'freteiro\' OR '
+                f'COALESCE(NULLIF({route_table}."KM Rodados"::TEXT, \'\'), \'0\')::DOUBLE PRECISION > 0) '
                 f'THEN \'Concluída\' ELSE EXCLUDED."Status" END'
             ),
         ]
@@ -2088,7 +2089,7 @@ def update_route_operation(
     *,
     saida,
     retorno,
-    km_rodados: float,
+    km_rodados: float | None,
     placa: str,
     motorista: str,
     observacao: str = "",
@@ -2103,8 +2104,7 @@ def update_route_operation(
     if retorno_dt <= saida_dt:
         raise ValueError("O retorno deve ser posterior a saida.")
     km_value = pd.to_numeric(pd.Series([km_rodados]), errors="coerce").iloc[0]
-    if pd.isna(km_value) or float(km_value) <= 0:
-        raise ValueError("Informe uma quilometragem maior que zero.")
+    km_value = float(km_value) if pd.notna(km_value) and float(km_value) > 0 else None
     plate_value = _normalize_plate_value(placa)
     if not _is_plate_or_asset_identifier(plate_value):
         raise ValueError("Informe uma placa valida.")
@@ -2118,6 +2118,26 @@ def update_route_operation(
     route_table = _quote_identifier(DB_TABLES["rotas"])
     with _db_engine().begin() as conn:
         _ensure_dataset_table(conn, "rotas")
+        _ensure_dataset_table(conn, "placas")
+        placas_table = _quote_identifier(DB_TABLES["placas"])
+        category = conn.execute(
+            text(
+                f"""
+                SELECT COALESCE(p."Categoria", r."Categoria", 'Transporte')
+                FROM {route_table} AS r
+                LEFT JOIN {placas_table} AS p ON p."PLACA" = :placa
+                WHERE r."Rota ID" = :route_id
+                """
+            ),
+            {"placa": plate_value, "route_id": route_id},
+        ).scalar()
+        if category is None:
+            raise ValueError("Rota nao encontrada.")
+        category = _normalize_category_value(category)
+        is_freighter = category == "Freteiro"
+        if not is_freighter and km_value is None:
+            raise ValueError("Informe uma quilometragem maior que zero. Para freteiros, o KM nao e obrigatorio.")
+
         result = conn.execute(
             text(
                 f"""
@@ -2126,6 +2146,7 @@ def update_route_operation(
                     "Retorno" = :retorno,
                     "KM Rodados" = :km,
                     "PLACA" = :placa,
+                    "Categoria" = :categoria,
                     "Motorista" = :motorista,
                     "Observacao" = :observacao,
                     "Status" = 'Concluída',
@@ -2137,8 +2158,9 @@ def update_route_operation(
             {
                 "saida": saida_dt.to_pydatetime(),
                 "retorno": retorno_dt.to_pydatetime(),
-                "km": float(km_value),
+                "km": km_value,
                 "placa": plate_value,
+                "categoria": category,
                 "motorista": driver_value,
                 "observacao": str(observacao or "").strip() or None,
                 "route_id": route_id,
@@ -2147,12 +2169,6 @@ def update_route_operation(
         if not (result.rowcount or 0):
             raise ValueError("Rota nao encontrada.")
 
-        category = conn.execute(
-            text(f'SELECT "Categoria" FROM {route_table} WHERE "Rota ID" = :route_id'),
-            {"route_id": route_id},
-        ).scalar() or "Transporte"
-        _ensure_dataset_table(conn, "placas")
-        placas_table = _quote_identifier(DB_TABLES["placas"])
         conn.execute(
             text(
                 f'INSERT INTO {placas_table} ("PLACA", "Categoria") VALUES (:placa, :categoria) '
@@ -3601,7 +3617,12 @@ def load_rotas() -> pd.DataFrame:
         df["Dias Rota"] = (df["Duracao Horas"] / 24).apply(
             lambda value: max(1, int(-(-float(value) // 1))) if pd.notna(value) and value > 0 else pd.NA
         )
-        completed = df["Saida"].notna() & df["Retorno"].notna() & df["KM Rodados"].fillna(0).gt(0)
+        is_freighter = _normalize_categoria(df["Categoria"]).eq("freteiro")
+        completed = (
+            df["Saida"].notna()
+            & df["Retorno"].notna()
+            & (is_freighter | df["KM Rodados"].fillna(0).gt(0))
+        )
         df.loc[completed, "Status"] = "Concluída"
         df.loc[~completed, "Status"] = "Pendente"
         cache["mtime"] = version
