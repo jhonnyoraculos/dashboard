@@ -55,7 +55,7 @@ MUTED = "#6B7280"
 CARD_BORDER = "#c2d2f3"
 LOGO_PATH = Path(__file__).parent / "static" / "logo-jr.png"
 CURRENT_YEAR = date.today().year
-APP_VERSION = "freight-calculator-optional-plate-v1"
+APP_VERSION = "freight-calculator-hotel-option-v1"
 RANK_ROUTES_ENABLED = False
 ROUTE_CACHE_TTL_SECONDS = max(int(os.environ.get("JR_ROUTE_CACHE_TTL_SECONDS", "180") or 180), 30)
 DATA_EDITOR_PAGE_SIZE = 100
@@ -3181,6 +3181,7 @@ def _freight_reference(totals: dict) -> dict[str, float]:
     """Transforma os totais historicos do dashboard em tarifas de referencia."""
     total_cost = max(float(totals.get("total") or 0.0), 0.0)
     salary_cost = max(float(totals.get("salario_transporte") or 0.0), 0.0)
+    hotel_cost = max(float(totals.get("hoteis") or 0.0), 0.0)
     operating_cost = max(total_cost - salary_cost, 0.0)
     total_km = max(float(totals.get("km_total") or 0.0), 0.0)
     service_days = max(
@@ -3190,9 +3191,11 @@ def _freight_reference(totals: dict) -> dict[str, float]:
     return {
         "operating_cost": operating_cost,
         "salary_cost": salary_cost,
+        "hotel_cost": hotel_cost,
         "total_km": total_km,
         "service_days": service_days,
         "rate_per_km": operating_cost / total_km if total_km else 0.0,
+        "hotel_rate_per_km": hotel_cost / total_km if total_km else 0.0,
         "rate_per_employee_hour": (
             salary_cost
             / service_days
@@ -3213,9 +3216,10 @@ def _freight_plate_reference(row: dict, general: dict[str, float]) -> dict[str, 
 
     has_plate_km_rate = bool(total_km and operating_cost)
     has_plate_hourly_rate = bool(service_days and salary_cost)
+    hotel_rate_per_km = float(general.get("hotel_rate_per_km") or 0.0)
     return {
         "rate_per_km": (
-            operating_cost / total_km
+            operating_cost / total_km + hotel_rate_per_km
             if has_plate_km_rate
             else float(general.get("rate_per_km") or 0.0)
         ),
@@ -6637,11 +6641,18 @@ def render_calculadora_frete() -> None:
                 help="Esta modalidade permanece desativada.",
             )
 
+        include_hotels = st.checkbox(
+            "Incluir hotéis no cálculo",
+            value=True,
+            key="frete_include_hotels",
+            help="Inclui ou remove as despesas históricas de hospedagem da tarifa por km.",
+        )
+
         historical = route_json(
             "frota",
             {
                 "categoria": ["Transporte", "Freteiro"],
-                "incluir_hoteis": True,
+                "incluir_hoteis": include_hotels,
                 "incluir_salario": True,
                 "ordenar_por": "total",
             },
@@ -6765,7 +6776,7 @@ def render_calculadora_frete() -> None:
                     <div class="frete-result-item">
                       <p class="frete-result-label">Frete sugerido</p>
                       <p class="frete-result-value">{h(fmt_brl(quote['suggested_freight'], compact_threshold=float('inf')))}</p>
-                      <p class="frete-result-note">Base: {h(result_plate)} · margem de {h(fmt_num(quote_inputs['margin_percent'], 1))}% incluída.</p>
+                      <p class="frete-result-note">Base: {h(result_plate)} · hotéis {"incluídos" if include_hotels else "excluídos"} · margem de {h(fmt_num(quote_inputs['margin_percent'], 1))}% incluída.</p>
                     </div>
                     <div class="frete-result-item frete-result-item--cost">
                       <p class="frete-result-label">Custo estimado</p>
@@ -6809,7 +6820,8 @@ def render_calculadora_frete() -> None:
             )
             st.caption(
                 f"Base: {period_label}. A tarifa de km usa {plate_reference['km_rate_source']} e reúne combustível, "
-                "manutenção, pedágio/extras, hotéis e diárias de freteiros. "
+                f"manutenção, pedágio/extras, diárias de freteiros e hotéis {('incluídos' if include_hotels else 'excluídos')}. "
+                f"Hospedagens consideradas: {fmt_brl(general_reference['hotel_cost'])}. "
                 f"A tarifa por hora usa {plate_reference['hourly_rate_source']}, jornada de 8 horas e equipe histórica "
                 "de motorista + ajudante. Produtividade da descarga: 100 kg por hora."
             )
