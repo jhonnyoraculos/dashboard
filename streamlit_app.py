@@ -25,6 +25,7 @@ import streamlit.components.v1 as components
 from PIL import Image, ImageDraw, ImageFilter, ImageFont
 
 import app as backend
+from route_pdf import parse_route_pdf
 
 # O Streamlit pode recarregar este arquivo sem reiniciar o processo Python.
 # Nesse intervalo, o modulo ``app`` pode continuar em memoria na versao anterior
@@ -38,6 +39,10 @@ _backend_features_ready = all(
         "append_missing_dashboard_records",
         "load_alertas_vex",
         "load_velocidade",
+        "load_rotas",
+        "load_rota_entregas",
+        "import_route_manifests",
+        "update_route_operation",
     )
 )
 _backend_aluguel_period_ready = {"Inicio", "Fim"}.issubset(
@@ -45,7 +50,8 @@ _backend_aluguel_period_ready = {"Inicio", "Fim"}.issubset(
 )
 _backend_aluguel_monthly_ready = getattr(backend, "BACKEND_BUILD_VERSION", "") == "aluguel-multiplicar-meses-v1"
 _backend_pedagio_chart_ready = getattr(backend, "PEDAGIO_CHART_VERSION", "") == "all-types-v1"
-if not _backend_features_ready or not _backend_aluguel_period_ready or not _backend_aluguel_monthly_ready or not _backend_pedagio_chart_ready:
+_backend_routes_ready = getattr(backend, "ROUTES_BUILD_VERSION", "") == "rotas-pdf-v1"
+if not _backend_features_ready or not _backend_aluguel_period_ready or not _backend_aluguel_monthly_ready or not _backend_pedagio_chart_ready or not _backend_routes_ready:
     backend = importlib.reload(backend)
 
 
@@ -55,7 +61,7 @@ MUTED = "#6B7280"
 CARD_BORDER = "#c2d2f3"
 LOGO_PATH = Path(__file__).parent / "static" / "logo-jr.png"
 CURRENT_YEAR = date.today().year
-APP_VERSION = "freight-calculator-unload-350-v1"
+APP_VERSION = "route-manifests-pdf-v1"
 RANK_ROUTES_ENABLED = False
 ROUTE_CACHE_TTL_SECONDS = max(int(os.environ.get("JR_ROUTE_CACHE_TTL_SECONDS", "180") or 180), 30)
 DATA_EDITOR_PAGE_SIZE = 100
@@ -69,7 +75,7 @@ FREIGHT_WORKDAY_HOURS = 8.0
 FREIGHT_REFERENCE_CREW_SIZE = 2.0
 FREIGHT_FLEET_AVERAGE_LABEL = "Média da frota (sem placa)"
 CATEGORY_OPTIONS = ["Transporte", "Freteiro", "Empilhadeira", "Estoque", "Vex", "Equipamento"]
-CADASTRO_TABS = ["Placas", "Empilhadeiras", "Combustível", "KM mensal", "Manutenção", "Pneus", "Hotéis", "Peso", "Velocidade", "Pedágio/Extras", "Aluguel de veículos"]
+CADASTRO_TABS = ["Placas", "Rotas", "Empilhadeiras", "Combustível", "KM mensal", "Manutenção", "Pneus", "Hotéis", "Peso", "Velocidade", "Pedágio/Extras", "Aluguel de veículos"]
 PEDAGIO_TIPO_OPTIONS = ["Pedágio", "Extras", "Táxi", "IPVA", "Seguro", "Licenciamento", "DPVAT", "Outros"]
 PEDAGIO_OPTIONAL_PLATE_TYPES = {"Extras", "Táxi"}
 BACKUP_INTERVAL_DAYS = 7
@@ -91,6 +97,8 @@ BACKUP_TABLES = [
     ("hoteis", "Hotéis", "hoteis", backend.load_hoteis),
     ("peso", "Peso", "peso", backend.load_peso),
     ("rodagem_rota", "Rodagem por rota", "rodagem_por_rota", backend.load_rodagem_rota),
+    ("rotas", "Rotas importadas", "rotas", backend.load_rotas),
+    ("rota_entregas", "Entregas das rotas", "rota_entregas", backend.load_rota_entregas),
     ("pedagio", "Pedágio e Extras", "pedagio_extras", backend.load_pedagio),
     ("aluguel_veiculos", "Aluguel de Veículos Vex", "aluguel_veiculos_vex", backend.load_aluguel_veiculos),
     ("alertas_vex", "Alertas Vex", "alertas_vex", backend.load_alertas_vex),
@@ -136,6 +144,7 @@ ROUTES = {
     "frota": backend.data_frota,
     "alertas": backend.data_alertas_vex,
     "velocidade": backend.data_velocidade,
+    "rotas": backend.data_rotas,
     "overview": backend.data_overview,
     "overview_options": backend.data_overview_options,
 }
@@ -148,6 +157,7 @@ DASHBOARD_META = {
     "vex": {"label": "Vex", "color": "#7C3AED", "supports_plate": True},
     "frota": {"label": "Ranking da frota", "color": JR_BLUE, "supports_plate": True},
     "velocidade": {"label": "Velocidade", "color": "#0F766E", "supports_plate": True},
+    "rotas": {"label": "Rotas", "color": JR_RED, "supports_plate": True},
 }
 COMPARE_ALLOWED_ROUTES = {"combustivel", "manutencao", "pedagio"}
 
@@ -7033,6 +7043,12 @@ def render_home() -> None:
     st.markdown(
         """
         <section id="dashboards" class="home-grid">
+          <a class="home-card" href="?page=rotas" target="_self" aria-label="Abrir dashboard Rotas">
+            <div><span class="home-chip">Rotas</span><h2>Manifestos, entregas e motoristas</h2></div>
+            <p class="home-card-text">Pesquise todos os dados extraídos dos PDFs e acompanhe cada rota por placa, motorista e dia.</p>
+            <ul class="home-list"><li>Ranking de motoristas, placas, rotas e cidades</li><li>Saída, retorno, duração e KM realizados</li><li>Clientes, pedidos, endereços, peso e valores das entregas</li></ul>
+            <span class="home-link">Abrir dashboard &rarr;</span>
+          </a>
           <a class="home-card" href="?page=frota" target="_self" aria-label="Abrir dashboard Ranking">
             <div><span class="home-chip">Ranking</span><h2>Ranking de gastos por caminhão</h2></div>
             <p class="home-card-text">Veja todos os caminhões em formato de tabela, do maior para o menor gasto, com detalhamento por placa.</p>
@@ -11021,6 +11037,206 @@ def _render_pedagio_reset_options() -> None:
             st.rerun()
 
 
+def _render_route_pdf_import(plate_map: dict[str, str]) -> None:
+    st.markdown("### Importar rotas em grande escala por PDF")
+    st.caption(
+        "Cada PDF cria ou atualiza uma rota independente. Cabeçalho, carga, placa, motorista, veículo, "
+        "peso, clientes, pedidos, cidades, endereços, vendedores, valores e demais textos encontrados são registrados. "
+        "Nada desta importação é lançado em Peso."
+    )
+    if message := st.session_state.pop("route_import_message", None):
+        st.success(message)
+    uploaded_files = st.file_uploader(
+        "Selecione os manifestos de rota",
+        type=["pdf"],
+        accept_multiple_files=True,
+        key="cad_rotas_pdf_files",
+        help="Você pode selecionar muitos PDFs de uma vez. Reenviar o mesmo manifesto não duplica a rota.",
+    )
+    if not uploaded_files:
+        st.info("Envie um ou mais PDFs para conferir a prévia antes de importar.")
+        return
+
+    parsed_routes: list[dict] = []
+    parsed_deliveries: list[dict] = []
+    parse_errors: list[str] = []
+    parse_warnings: list[str] = []
+    with st.spinner("Lendo os manifestos..."):
+        for uploaded in uploaded_files:
+            try:
+                route, deliveries, warnings = parse_route_pdf(uploaded.getvalue(), uploaded.name, plate_map)
+                parsed_routes.append(route)
+                parsed_deliveries.extend(deliveries)
+                parse_warnings.extend(f"{uploaded.name}: {warning}" for warning in warnings)
+            except Exception as exc:
+                parse_errors.append(f"{uploaded.name}: {exc}")
+
+    if parse_errors:
+        st.error("Alguns arquivos não puderam ser lidos:\n- " + "\n- ".join(parse_errors))
+    for warning in parse_warnings:
+        st.warning(warning)
+    if not parsed_routes:
+        return
+
+    route_preview_columns = [
+        "Arquivo", "Previsao", "Rota", "Carga", "PLACA", "Motorista", "Veiculo",
+        "Peso Carga", "Entregas", "Status",
+    ]
+    st.markdown("#### Prévia das rotas")
+    st.dataframe(
+        pd.DataFrame(parsed_routes)[route_preview_columns],
+        width="stretch",
+        hide_index=True,
+        column_config={
+            "Previsao": st.column_config.DatetimeColumn("Previsão", format="DD/MM/YYYY"),
+            "Peso Carga": _number_col("Peso da carga (kg)", format="%.3f"),
+        },
+    )
+    with st.expander(f"Ver {len(parsed_deliveries)} entrega(s) extraída(s)"):
+        delivery_preview = pd.DataFrame(parsed_deliveries)
+        visible = [
+            "Carga", "Documento", "Cliente Codigo", "Cliente", "Pedido", "Vendedor", "Ordem",
+            "Carrinho", "Cidade", "Endereco", "Peso Pedido", "Valor Nota", "Forma Recebimento",
+            "Valor Recebimento", "Corte", "Pagina",
+        ]
+        st.dataframe(
+            delivery_preview[visible] if not delivery_preview.empty else delivery_preview,
+            width="stretch",
+            hide_index=True,
+        )
+
+    if st.button(
+        f"Importar {len(parsed_routes)} rota(s) e {len(parsed_deliveries)} entrega(s)",
+        type="primary",
+        width="stretch",
+        key="cad_rotas_pdf_import",
+    ):
+        try:
+            result = backend.import_route_manifests(parsed_routes, parsed_deliveries)
+        except Exception as exc:
+            st.error("Não foi possível importar as rotas no Neon.")
+            st.exception(exc)
+            return
+        clear_cached_reads()
+        st.session_state["route_import_message"] = (
+            f"Importação concluída: {result['rotas']} rota(s) e {result['entregas']} entrega(s) registradas."
+        )
+        st.rerun()
+
+
+def _route_row_datetime(row: pd.Series, column: str, fallback: datetime) -> datetime:
+    value = pd.to_datetime(row.get(column), errors="coerce")
+    if pd.isna(value):
+        return fallback
+    return value.to_pydatetime()
+
+
+def _render_route_completion(plate_map: dict[str, str]) -> None:
+    st.markdown("### Finalizar dados operacionais da rota")
+    st.caption(
+        "Complete a saída real, o retorno e os KM feitos. Esses campos alimentam o cálculo de duração, dias, "
+        "quilometragem e os rankings de motorista, placa e rota."
+    )
+    try:
+        routes = backend.load_rotas()
+    except Exception as exc:
+        st.error("Não foi possível carregar as rotas importadas.")
+        st.exception(exc)
+        return
+    if routes.empty:
+        st.info("Importe o primeiro manifesto para liberar o preenchimento operacional.")
+        return
+
+    routes = routes.sort_values(["Status", "Data", "Rota"], ascending=[False, False, True]).reset_index(drop=True)
+    label_map: dict[str, str] = {}
+    for _, row in routes.iterrows():
+        route_id = clean_text(row.get("Rota ID"))
+        date_value = pd.to_datetime(row.get("Data"), errors="coerce")
+        date_label = date_value.strftime("%d/%m/%Y") if pd.notna(date_value) else "sem data"
+        label_map[route_id] = (
+            f"{clean_text(row.get('Status'))} · {date_label} · {clean_text(row.get('Rota'))} · "
+            f"{clean_text(row.get('PLACA'))} · carga {clean_text(row.get('Carga'))}"
+        )
+    selected_id = st.selectbox(
+        "Rota para preencher",
+        list(label_map),
+        format_func=lambda value: label_map.get(value, value),
+        key="cad_route_complete_id",
+    )
+    row = routes.loc[routes["Rota ID"].astype("string") == selected_id].iloc[0]
+    base_date = pd.to_datetime(row.get("Previsao"), errors="coerce")
+    if pd.isna(base_date):
+        base_date = pd.to_datetime(row.get("Data"), errors="coerce")
+    if pd.isna(base_date):
+        base_date = pd.Timestamp.now()
+    departure_default = _route_row_datetime(row, "Saida", base_date.replace(hour=7, minute=0).to_pydatetime())
+    return_default = _route_row_datetime(row, "Retorno", departure_default + timedelta(hours=10))
+    current_plate = clean_text(row.get("PLACA")).upper()
+    plate_options = sorted(set([*plate_map.keys(), current_plate]) - {""})
+
+    with st.form(f"form_route_complete_{selected_id}"):
+        c1, c2, c3 = st.columns(3)
+        with c1:
+            plate = st.selectbox(
+                "Placa",
+                plate_options,
+                index=plate_options.index(current_plate) if current_plate in plate_options else 0,
+            )
+            driver = st.text_input("Motorista", value=clean_text(row.get("Motorista")))
+        with c2:
+            departure_date = st.date_input("Data de saída", value=departure_default.date())
+            departure_time = st.time_input("Hora de saída", value=departure_default.time().replace(second=0, microsecond=0))
+        with c3:
+            return_date = st.date_input("Data de retorno", value=return_default.date())
+            return_time = st.time_input("Hora de retorno", value=return_default.time().replace(second=0, microsecond=0))
+        stored_km = pd.to_numeric(row.get("KM Rodados"), errors="coerce")
+        km = st.number_input(
+            "KM feitos para realizar a rota",
+            min_value=0.0,
+            value=float(stored_km) if pd.notna(stored_km) else 0.0,
+            step=1.0,
+            format="%.1f",
+        )
+        observation = st.text_area("Observação operacional", value=clean_text(row.get("Observacao")))
+        submitted = st.form_submit_button("Salvar e concluir rota", type="primary", width="stretch")
+        if submitted:
+            try:
+                backend.update_route_operation(
+                    selected_id,
+                    saida=datetime.combine(departure_date, departure_time),
+                    retorno=datetime.combine(return_date, return_time),
+                    km_rodados=km,
+                    placa=plate,
+                    motorista=driver,
+                    observacao=observation,
+                )
+            except Exception as exc:
+                st.error(str(exc))
+            else:
+                clear_cached_reads()
+                st.success("Rota concluída. Duração, dias, KM e rankings foram atualizados.")
+                st.rerun()
+
+    with st.expander("Ver todos os dados extraídos desta rota", expanded=False):
+        route_display = row.to_frame(name="Valor").reset_index().rename(columns={"index": "Campo"})
+        st.dataframe(route_display, width="stretch", hide_index=True)
+        try:
+            deliveries = backend.load_rota_entregas()
+            deliveries = deliveries[deliveries["Rota ID"].astype("string") == selected_id]
+        except Exception:
+            deliveries = pd.DataFrame()
+        st.markdown(f"**Entregas: {len(deliveries)}**")
+        st.dataframe(deliveries, width="stretch", hide_index=True)
+
+
+def _render_route_registry(plate_map: dict[str, str]) -> None:
+    with st.container(border=True):
+        _render_route_pdf_import(plate_map)
+    with st.container(border=True):
+        _render_route_completion(plate_map)
+    st.info("A pesquisa completa e os rankings ficam no dashboard Rotas, acessível pela página inicial.")
+
+
 def render_cadastro() -> None:
     topbar("JR DASHBOARD • Adicionar dados", back=True)
     enable_numeric_input_overwrite()
@@ -11180,6 +11396,9 @@ def render_cadastro() -> None:
                     _save_plate_sheet(plate_map, edited_plates, plate_daily_map)
             else:
                 st.info("Cadastre a primeira placa para liberar a edição.")
+
+        if active_tab == "Rotas":
+            _render_route_registry(plate_map)
 
         if active_tab == "Empilhadeiras":
             with st.form("form_empilhadeiras", clear_on_submit=True):
@@ -11588,8 +11807,6 @@ def render_cadastro() -> None:
 
         if active_tab == "Peso":
             _render_peso_sheet_import(plate_map)
-            _render_peso_route_import()
-            _render_rodagem_rota_management(plate_map)
             _render_peso_month_reset()
 
             with st.form("form_peso", clear_on_submit=True):
@@ -12668,6 +12885,127 @@ def render_velocidade() -> None:
     footer("Velocidade calculada por viagem com base na distancia e no tempo em movimento. © JR")
 
 
+def render_rotas() -> None:
+    topbar("JR Dashboard - Rotas")
+    st.markdown("## Rotas, entregas e desempenho operacional")
+    st.caption(
+        "Dados importados dos manifestos em PDF e complementados com saída, retorno e KM reais. "
+        "A pesquisa consulta tanto a rota quanto clientes, pedidos, endereços, cidades, vendedores e observações."
+    )
+
+    options = route_json("rotas")
+    search = st.text_input(
+        "Pesquisar em todos os dados",
+        placeholder="Ex.: cliente, pedido, carga, cidade, endereço, motorista, placa ou rota",
+        key="routes_search",
+    )
+    f1, f2, f3 = st.columns(3)
+    with f1:
+        year_options = ["Todos", *(options.get("anos") or [])]
+        year = st.selectbox("Ano", year_options, key="routes_year")
+        statuses = st.multiselect("Status", options.get("status") or [], key="routes_status")
+    with f2:
+        month_options = options.get("meses") or []
+        months = st.multiselect(
+            "Mês",
+            month_options,
+            format_func=lambda value: month_label(int(str(value).split("-")[-1])) if "-" in str(value) else str(value),
+            key="routes_months",
+        )
+        plates = st.multiselect("Placa", options.get("placas") or [], key="routes_plates")
+    with f3:
+        drivers = st.multiselect("Motorista", options.get("motoristas") or [], key="routes_drivers")
+        route_names = st.multiselect("Rota", options.get("rotas") or [], key="routes_names")
+
+    params: dict[str, object] = {}
+    if year != "Todos":
+        params["ano"] = year
+    if months:
+        params["mes"] = months
+    if statuses:
+        params["status"] = statuses
+    if plates:
+        params["placa"] = plates
+    if drivers:
+        params["motorista"] = drivers
+    if route_names:
+        params["rota"] = route_names
+    if search.strip():
+        params["busca"] = search.strip()
+    data = route_json("rotas", params)
+
+    render_kpis(
+        [
+            ("Rotas", fmt_num(data.get("total_rotas"), decimals=0), JR_BLUE),
+            ("Concluídas", fmt_num(data.get("rotas_concluidas"), decimals=0), "#0F766E"),
+            ("Pendentes", fmt_num(data.get("rotas_pendentes"), decimals=0), JR_RED),
+            ("Entregas", fmt_num(data.get("entregas_total"), decimals=0), JR_BLUE),
+            ("Peso", fmt_peso(data.get("peso_total")), "#7C3AED"),
+            ("KM realizados", fmt_num(data.get("km_total"), decimals=1), "#D97706"),
+            ("Horas em rota", fmt_num(data.get("horas_total"), decimals=1), "#0F766E"),
+        ]
+    )
+
+    st.markdown("### Rankings")
+    rank_driver, rank_plate, rank_route, rank_city = st.tabs(
+        ["Motoristas", "Placas", "Rotas", "Cidades atendidas"]
+    )
+    with rank_driver:
+        st.caption("Ordenado primeiro por rotas concluídas, depois por quantidade de rotas e KM realizados.")
+        st.dataframe(pd.DataFrame(data.get("ranking_motoristas") or []), width="stretch", hide_index=True)
+    with rank_plate:
+        st.dataframe(pd.DataFrame(data.get("ranking_placas") or []), width="stretch", hide_index=True)
+    with rank_route:
+        st.dataframe(pd.DataFrame(data.get("ranking_rotas") or []), width="stretch", hide_index=True)
+    with rank_city:
+        st.dataframe(pd.DataFrame(data.get("ranking_cidades") or []), width="stretch", hide_index=True)
+
+    route_records = data.get("rotas_detalhes") or []
+    delivery_records = data.get("entregas_detalhes") or []
+    routes_df = pd.DataFrame(route_records)
+    deliveries_df = pd.DataFrame(delivery_records)
+    st.markdown("### Rotas encontradas")
+    if routes_df.empty:
+        st.info("Nenhuma rota encontrada para os filtros informados.")
+    else:
+        route_visible = [
+            "Status", "Data", "Previsao", "Rota", "Carga", "PLACA", "Motorista", "Veiculo",
+            "Peso Carga", "Entregas", "Saida", "Retorno", "Duracao Horas", "Dias Rota", "KM Rodados", "Arquivo",
+        ]
+        route_visible = [column for column in route_visible if column in routes_df.columns]
+        st.dataframe(routes_df[route_visible], width="stretch", hide_index=True)
+
+        label_map = {}
+        for row in route_records:
+            route_id = clean_text(row.get("Rota ID"))
+            label_map[route_id] = (
+                f"{clean_text(row.get('Status'))} · {clean_text(row.get('Rota'))} · "
+                f"{clean_text(row.get('PLACA'))} · carga {clean_text(row.get('Carga'))}"
+            )
+        selected_id = st.selectbox(
+            "Abrir detalhes completos da rota",
+            list(label_map),
+            format_func=lambda value: label_map.get(value, value),
+            key="routes_detail_id",
+        )
+        selected_route = next(row for row in route_records if clean_text(row.get("Rota ID")) == selected_id)
+        detail_table = pd.DataFrame(
+            [{"Campo": key, "Valor": value} for key, value in selected_route.items() if key != "Texto Extraido"]
+        )
+        st.dataframe(detail_table, width="stretch", hide_index=True)
+        selected_deliveries = (
+            deliveries_df[deliveries_df["Rota ID"].astype("string") == selected_id]
+            if not deliveries_df.empty and "Rota ID" in deliveries_df.columns
+            else pd.DataFrame()
+        )
+        st.markdown(f"#### Entregas da rota ({len(selected_deliveries)})")
+        st.dataframe(selected_deliveries, width="stretch", hide_index=True)
+        with st.expander("Texto integral extraído do PDF"):
+            st.text(selected_route.get("Texto Extraido") or "Sem texto armazenado.")
+
+    footer("Manifestos de rota armazenados separadamente dos lançamentos de Peso. © JR")
+
+
 def footer(text: str) -> None:
     st.markdown(f'<div class="footer-note">{h(text)}</div>', unsafe_allow_html=True)
 
@@ -12691,6 +13029,8 @@ def main() -> None:
             render_alertas()
         elif page == "velocidade":
             render_velocidade()
+        elif page in {"rotas", "rota"}:
+            render_rotas()
         elif page in {"calculadora-frete", "frete"}:
             render_calculadora_frete()
         elif page in {"frota", "ranking"}:

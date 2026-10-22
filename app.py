@@ -49,6 +49,8 @@ DB_TABLES = {
     "aluguel_veiculos": "dashboard_aluguel_veiculos",
     "peso": "dashboard_peso",
     "rodagem_rota": "dashboard_rodagem_rota",
+    "rotas": "dashboard_rotas",
+    "rota_entregas": "dashboard_rota_entregas",
     "velocidade": "dashboard_velocidade",
     "placas": "dashboard_placas",
     "salarios_transporte": "dashboard_salarios_transporte",
@@ -56,6 +58,7 @@ DB_TABLES = {
 }
 DB_METADATA_TABLE = "dashboard_metadata"
 BACKEND_BUILD_VERSION = "aluguel-multiplicar-meses-v1"
+ROUTES_BUILD_VERSION = "rotas-pdf-v1"
 PEDAGIO_CHART_VERSION = "all-types-v1"
 BACKUP_METADATA_KEY = "backup.last_downloaded_at"
 _DB_ENGINE = None
@@ -72,6 +75,8 @@ _PNEUS_CACHE = {"mtime": None, "df": None, "lock": threading.Lock()}
 _HOTEIS_CACHE = {"mtime": None, "df": None, "lock": threading.Lock()}
 _PESO_CACHE = {"mtime": None, "df": None, "lock": threading.Lock()}
 _RODAGEM_ROTA_CACHE = {"mtime": None, "df": None, "lock": threading.Lock()}
+_ROTAS_CACHE = {"mtime": None, "df": None, "lock": threading.Lock()}
+_ROTA_ENTREGAS_CACHE = {"mtime": None, "df": None, "lock": threading.Lock()}
 _VELOCIDADE_CACHE = {"mtime": None, "df": None, "lock": threading.Lock()}
 _OVERVIEW_CACHE = {"mtimes": None, "dados": None}
 _PLATE_REGISTRY_CACHE = {"mtime": None, "df": None, "lock": threading.Lock()}
@@ -93,6 +98,8 @@ _CACHE_MAP = {
     "aluguel_veiculos": _ALUGUEL_VEICULOS_CACHE,
     "peso": _PESO_CACHE,
     "rodagem_rota": _RODAGEM_ROTA_CACHE,
+    "rotas": _ROTAS_CACHE,
+    "rota_entregas": _ROTA_ENTREGAS_CACHE,
     "velocidade": _VELOCIDADE_CACHE,
     "placas": _PLACAS_CACHE,
     "salarios_transporte": _SALARIOS_TRANSPORTE_CACHE,
@@ -148,6 +155,58 @@ _ALUGUEL_VEICULOS_COLUMNS = [
 ]
 _PESO_COLUMNS = ["Data", "Mes", "Cidade", "Rota", "Peso", "Valor", "PLACA", "Categoria"]
 _RODAGEM_ROTA_COLUMNS = ["Mes", "Rota", "PLACA", "Km Rodados"]
+_ROTAS_COLUMNS = [
+    "Rota ID",
+    "Hash PDF",
+    "Arquivo",
+    "Data",
+    "Mes",
+    "Emissao",
+    "Previsao",
+    "Saida",
+    "Retorno",
+    "Codigo Rota",
+    "Rota",
+    "Carga",
+    "PLACA",
+    "Categoria",
+    "Veiculo",
+    "Motorista",
+    "Peso Carga",
+    "Telefone",
+    "Empresa",
+    "KM Rodados",
+    "Status",
+    "Paginas",
+    "Entregas",
+    "Observacao",
+    "Texto Extraido",
+    "Importado Em",
+]
+_ROTA_ENTREGAS_COLUMNS = [
+    "Entrega ID",
+    "Rota ID",
+    "Carga",
+    "Documento",
+    "Cliente Codigo",
+    "Cliente",
+    "Pedido Filial",
+    "Pedido",
+    "Vendedor",
+    "Ordem",
+    "Carrinho",
+    "Cidade",
+    "Endereco",
+    "Telefone",
+    "Observacao",
+    "Peso Pedido",
+    "Valor Nota",
+    "Forma Recebimento",
+    "Valor Recebimento",
+    "Corte",
+    "Pagina",
+    "Texto Extraido",
+]
 _VELOCIDADE_COLUMNS = [
     "Data",
     "Mes",
@@ -188,6 +247,8 @@ _DATASET_COLUMNS = {
     "aluguel_veiculos": _ALUGUEL_VEICULOS_COLUMNS,
     "peso": _PESO_COLUMNS,
     "rodagem_rota": _RODAGEM_ROTA_COLUMNS,
+    "rotas": _ROTAS_COLUMNS,
+    "rota_entregas": _ROTA_ENTREGAS_COLUMNS,
     "velocidade": _VELOCIDADE_COLUMNS,
     "placas": _PLACAS_COLUMNS,
     "salarios_transporte": _SALARIOS_TRANSPORTE_COLUMNS,
@@ -198,9 +259,22 @@ _COLUMN_SQL_TYPES = {
     "Inicio": "TIMESTAMP",
     "Fim": "TIMESTAMP",
     "Saida": "TIMESTAMP",
+    "Retorno": "TIMESTAMP",
+    "Emissao": "TIMESTAMP",
+    "Previsao": "TIMESTAMP",
+    "Importado Em": "TIMESTAMPTZ",
     "Chegada": "TIMESTAMP",
     "Mes": "TEXT",
     "Km Rodados": "DOUBLE PRECISION",
+    "Peso Carga": "DOUBLE PRECISION",
+    "Peso Pedido": "DOUBLE PRECISION",
+    "Valor Nota": "DOUBLE PRECISION",
+    "Valor Recebimento": "DOUBLE PRECISION",
+    "Paginas": "DOUBLE PRECISION",
+    "Entregas": "DOUBLE PRECISION",
+    "Ordem": "DOUBLE PRECISION",
+    "Pagina": "DOUBLE PRECISION",
+    "Corte": "BOOLEAN",
     "Horas": "DOUBLE PRECISION",
     "Litros": "DOUBLE PRECISION",
     "Custo": "DOUBLE PRECISION",
@@ -478,6 +552,8 @@ def _clear_dataset_cache(dataset: str) -> None:
             "aluguel_veiculos",
             "peso",
             "rodagem_rota",
+            "rotas",
+            "rota_entregas",
             "velocidade",
         ]
     elif dataset in {"combustiveis", "postos"}:
@@ -774,6 +850,32 @@ def _ensure_dataset_table(conn, dataset: str) -> None:
                 f"ON {table} ({_quote_identifier('Reserva ID')})"
             )
         )
+    if dataset == "rotas":
+        conn.execute(
+            text(
+                f"CREATE UNIQUE INDEX IF NOT EXISTS uq_dashboard_rotas_rota_id "
+                f"ON {table} ({_quote_identifier('Rota ID')})"
+            )
+        )
+        conn.execute(
+            text(
+                f"CREATE INDEX IF NOT EXISTS ix_dashboard_rotas_hash_pdf "
+                f"ON {table} ({_quote_identifier('Hash PDF')})"
+            )
+        )
+    if dataset == "rota_entregas":
+        conn.execute(
+            text(
+                f"CREATE UNIQUE INDEX IF NOT EXISTS uq_dashboard_rota_entregas_id "
+                f"ON {table} ({_quote_identifier('Entrega ID')})"
+            )
+        )
+        conn.execute(
+            text(
+                f"CREATE INDEX IF NOT EXISTS ix_dashboard_rota_entregas_rota_id "
+                f"ON {table} ({_quote_identifier('Rota ID')})"
+            )
+        )
     if dataset == "aluguel_veiculos":
         conn.execute(
             text(
@@ -822,7 +924,7 @@ def save_dashboard_record(dataset: str, row: dict, *, replace_keys: list[str] | 
                     replace_params,
                 )
         conn.execute(text(f"INSERT INTO {table} ({column_sql}) VALUES ({value_sql})"), value_params)
-        if dataset in {"combustivel", "manutencao", "pneus", "pedagio", "peso", "velocidade"} and prepared.get("PLACA") and prepared.get("Categoria"):
+        if dataset in {"combustivel", "manutencao", "pneus", "pedagio", "peso", "velocidade", "rotas"} and prepared.get("PLACA") and prepared.get("Categoria"):
             _ensure_dataset_table(conn, "placas")
             placas_table = _quote_identifier(DB_TABLES["placas"])
             registry_result = conn.execute(
@@ -909,7 +1011,7 @@ def replace_dashboard_records(dataset: str, rows: list[dict]) -> str:
             value_sql = ", ".join(value_refs[column] for column in columns)
             conn.execute(text(f"INSERT INTO {table} ({column_sql}) VALUES ({value_sql})"), value_params)
 
-            if dataset in {"combustivel", "manutencao", "pneus", "pedagio", "peso", "velocidade"} and prepared.get("PLACA") and prepared.get("Categoria"):
+            if dataset in {"combustivel", "manutencao", "pneus", "pedagio", "peso", "velocidade", "rotas"} and prepared.get("PLACA") and prepared.get("Categoria"):
                 _ensure_dataset_table(conn, "placas")
                 placas_table = _quote_identifier(DB_TABLES["placas"])
                 conn.execute(
@@ -948,12 +1050,12 @@ def replace_dashboard_records(dataset: str, rows: list[dict]) -> str:
                     )
                     _write_metadata(conn, f"{registry_dataset}.version", version)
 
-        if dataset in {"combustivel", "manutencao", "pneus", "pedagio", "peso", "velocidade"}:
+        if dataset in {"combustivel", "manutencao", "pneus", "pedagio", "peso", "velocidade", "rotas"}:
             _write_metadata(conn, "placas.version", version)
         _write_metadata(conn, f"{dataset}.version", version)
         _write_metadata(conn, "import.version", version)
 
-    if dataset in {"combustivel", "manutencao", "pneus", "pedagio", "peso", "velocidade"}:
+    if dataset in {"combustivel", "manutencao", "pneus", "pedagio", "peso", "velocidade", "rotas"}:
         _clear_dataset_cache("placas")
     _clear_dataset_cache(dataset)
     for registry_dataset in text_registry_changed:
@@ -988,7 +1090,7 @@ def append_dashboard_records(dataset: str, rows: list[dict], *, update_plate_reg
             value_sql = ", ".join(value_refs[column] for column in columns)
             conn.execute(text(f"INSERT INTO {table} ({column_sql}) VALUES ({value_sql})"), value_params)
 
-            if update_plate_registry and dataset in {"combustivel", "manutencao", "pneus", "pedagio", "peso", "velocidade"} and prepared.get("PLACA") and prepared.get("Categoria"):
+            if update_plate_registry and dataset in {"combustivel", "manutencao", "pneus", "pedagio", "peso", "velocidade", "rotas"} and prepared.get("PLACA") and prepared.get("Categoria"):
                 _ensure_dataset_table(conn, "placas")
                 placas_table = _quote_identifier(DB_TABLES["placas"])
                 conn.execute(
@@ -1027,12 +1129,12 @@ def append_dashboard_records(dataset: str, rows: list[dict], *, update_plate_reg
                     )
                     _write_metadata(conn, f"{registry_dataset}.version", version)
 
-        if update_plate_registry and dataset in {"combustivel", "manutencao", "pneus", "pedagio", "peso", "velocidade"}:
+        if update_plate_registry and dataset in {"combustivel", "manutencao", "pneus", "pedagio", "peso", "velocidade", "rotas"}:
             _write_metadata(conn, "placas.version", version)
         _write_metadata(conn, f"{dataset}.version", version)
         _write_metadata(conn, "import.version", version)
 
-    if update_plate_registry and dataset in {"combustivel", "manutencao", "pneus", "pedagio", "peso", "velocidade"}:
+    if update_plate_registry and dataset in {"combustivel", "manutencao", "pneus", "pedagio", "peso", "velocidade", "rotas"}:
         _clear_dataset_cache("placas")
     _clear_dataset_cache(dataset)
     for registry_dataset in text_registry_changed:
@@ -1133,7 +1235,7 @@ def append_missing_dashboard_records(
                 insert_params,
             )
 
-            if update_plate_registry and dataset in {"combustivel", "manutencao", "pneus", "pedagio", "peso"}:
+            if update_plate_registry and dataset in {"combustivel", "manutencao", "pneus", "pedagio", "peso", "rotas"}:
                 plate_categories = {
                     str(row["PLACA"]): str(row["Categoria"])
                     for row in inserted_rows
@@ -1195,7 +1297,7 @@ def append_missing_dashboard_records(
             _write_metadata(conn, "import.version", version)
 
     if inserted_rows:
-        if update_plate_registry and dataset in {"combustivel", "manutencao", "pneus", "pedagio", "peso"}:
+        if update_plate_registry and dataset in {"combustivel", "manutencao", "pneus", "pedagio", "peso", "rotas"}:
             _clear_dataset_cache("placas")
         _clear_dataset_cache(dataset)
         for registry_dataset in text_registry_changed:
@@ -1486,12 +1588,12 @@ def delete_matching_dashboard_records(dataset: str, rows: list[dict]) -> int:
             )
             deleted += max(result.rowcount or 0, 0)
 
-        if dataset in {"combustivel", "manutencao", "pneus", "pedagio", "peso", "velocidade"}:
+        if dataset in {"combustivel", "manutencao", "pneus", "pedagio", "peso", "velocidade", "rotas"}:
             _write_metadata(conn, "placas.version", version)
         _write_metadata(conn, f"{dataset}.version", version)
         _write_metadata(conn, "import.version", version)
 
-    if dataset in {"combustivel", "manutencao", "pneus", "pedagio", "peso", "velocidade"}:
+    if dataset in {"combustivel", "manutencao", "pneus", "pedagio", "peso", "velocidade", "rotas"}:
         _clear_dataset_cache("placas")
     _clear_dataset_cache(dataset)
     return deleted
@@ -1524,12 +1626,12 @@ def delete_dashboard_month(dataset: str, mes: str) -> int:
         result = conn.execute(text(delete_sql), params)
         deleted = max(result.rowcount or 0, 0)
 
-        if dataset in {"combustivel", "manutencao", "pneus", "pedagio", "peso", "velocidade"}:
+        if dataset in {"combustivel", "manutencao", "pneus", "pedagio", "peso", "velocidade", "rotas"}:
             _write_metadata(conn, "placas.version", version)
         _write_metadata(conn, f"{dataset}.version", version)
         _write_metadata(conn, "import.version", version)
 
-    if dataset in {"combustivel", "manutencao", "pneus", "pedagio", "peso", "velocidade"}:
+    if dataset in {"combustivel", "manutencao", "pneus", "pedagio", "peso", "velocidade", "rotas"}:
         _clear_dataset_cache("placas")
     _clear_dataset_cache(dataset)
     return deleted
@@ -1549,12 +1651,12 @@ def delete_dashboard_all(dataset: str) -> int:
         result = conn.execute(text(f"DELETE FROM {table}"))
         deleted = max(result.rowcount or 0, 0)
 
-        if dataset in {"combustivel", "manutencao", "pneus", "pedagio", "peso", "velocidade"}:
+        if dataset in {"combustivel", "manutencao", "pneus", "pedagio", "peso", "velocidade", "rotas"}:
             _write_metadata(conn, "placas.version", version)
         _write_metadata(conn, f"{dataset}.version", version)
         _write_metadata(conn, "import.version", version)
 
-    if dataset in {"combustivel", "manutencao", "pneus", "pedagio", "peso", "velocidade"}:
+    if dataset in {"combustivel", "manutencao", "pneus", "pedagio", "peso", "velocidade", "rotas"}:
         _clear_dataset_cache("placas")
     _clear_dataset_cache(dataset)
     return deleted
@@ -1817,6 +1919,7 @@ def rename_plate(old_plate, new_plate, categoria: str, diaria: float | None = No
             "aluguel_veiculos",
             "peso",
             "rodagem_rota",
+            "rotas",
             "velocidade",
         ):
             _ensure_dataset_table(conn, dataset)
@@ -1840,6 +1943,193 @@ def rename_plate(old_plate, new_plate, categoria: str, diaria: float | None = No
         _write_metadata(conn, "placas.version", version)
         _write_metadata(conn, "import.version", version)
 
+    _clear_dataset_cache("placas")
+    return version
+
+
+def import_route_manifests(routes: list[dict], deliveries: list[dict]) -> dict:
+    """Importa manifestos sem tocar nas tabelas de peso ou de rodagem legadas."""
+    if not routes:
+        raise ValueError("Nenhuma rota valida foi encontrada nos PDFs.")
+
+    from sqlalchemy import text
+
+    prepared_routes = [_prepare_insert_row("rotas", row) for row in routes]
+    prepared_deliveries = [_prepare_insert_row("rota_entregas", row) for row in deliveries]
+    route_ids = [str(row.get("Rota ID") or "").strip() for row in prepared_routes]
+    if any(not route_id for route_id in route_ids):
+        raise ValueError("Uma das rotas nao possui identificador.")
+
+    route_table = _quote_identifier(DB_TABLES["rotas"])
+    delivery_table = _quote_identifier(DB_TABLES["rota_entregas"])
+    route_columns = _ROTAS_COLUMNS
+    delivery_columns = _ROTA_ENTREGAS_COLUMNS
+    version = datetime.now(timezone.utc).isoformat()
+
+    extracted_columns = [
+        column
+        for column in route_columns
+        if column not in {"Rota ID", "Saida", "Retorno", "KM Rodados", "Status", "Observacao"}
+    ]
+    update_parts = [
+        f"{_quote_identifier(column)} = EXCLUDED.{_quote_identifier(column)}"
+        for column in extracted_columns
+    ]
+    update_parts.extend(
+        [
+            f'"Saida" = COALESCE({route_table}."Saida", EXCLUDED."Saida")',
+            f'"Retorno" = COALESCE({route_table}."Retorno", EXCLUDED."Retorno")',
+            f'"KM Rodados" = COALESCE({route_table}."KM Rodados", EXCLUDED."KM Rodados")',
+            f'"Observacao" = COALESCE(NULLIF({route_table}."Observacao", \'\'), EXCLUDED."Observacao")',
+            (
+                f'"Status" = CASE WHEN {route_table}."Saida" IS NOT NULL '
+                f'AND {route_table}."Retorno" IS NOT NULL AND COALESCE({route_table}."KM Rodados", 0) > 0 '
+                f'THEN \'Concluída\' ELSE EXCLUDED."Status" END'
+            ),
+        ]
+    )
+
+    with _db_engine().begin() as conn:
+        _ensure_dataset_table(conn, "rotas")
+        _ensure_dataset_table(conn, "rota_entregas")
+        _ensure_dataset_table(conn, "placas")
+
+        route_column_sql = ", ".join(_quote_identifier(column) for column in route_columns)
+        route_value_refs = ", ".join(f":route_{index}" for index in range(len(route_columns)))
+        route_sql = text(
+            f"INSERT INTO {route_table} ({route_column_sql}) VALUES ({route_value_refs}) "
+            f'ON CONFLICT ("Rota ID") DO UPDATE SET {", ".join(update_parts)}'
+        )
+        for row in prepared_routes:
+            params = {f"route_{index}": row.get(column) for index, column in enumerate(route_columns)}
+            conn.execute(route_sql, params)
+            if row.get("PLACA") and row.get("Categoria"):
+                placas_table = _quote_identifier(DB_TABLES["placas"])
+                conn.execute(
+                    text(
+                        f'INSERT INTO {placas_table} ("PLACA", "Categoria") '
+                        f'VALUES (:placa, :categoria) ON CONFLICT ("PLACA") '
+                        f'DO UPDATE SET "Categoria" = EXCLUDED."Categoria"'
+                    ),
+                    {"placa": row["PLACA"], "categoria": row["Categoria"]},
+                )
+
+        conn.execute(
+            text(f'DELETE FROM {delivery_table} WHERE "Rota ID" = ANY(:route_ids)'),
+            {"route_ids": route_ids},
+        )
+        if prepared_deliveries:
+            delivery_column_sql = ", ".join(_quote_identifier(column) for column in delivery_columns)
+            delivery_value_refs = ", ".join(f":delivery_{index}" for index in range(len(delivery_columns)))
+            delivery_sql = text(
+                f"INSERT INTO {delivery_table} ({delivery_column_sql}) VALUES ({delivery_value_refs}) "
+                f'ON CONFLICT ("Entrega ID") DO UPDATE SET '
+                + ", ".join(
+                    f"{_quote_identifier(column)} = EXCLUDED.{_quote_identifier(column)}"
+                    for column in delivery_columns
+                    if column != "Entrega ID"
+                )
+            )
+            for row in prepared_deliveries:
+                params = {f"delivery_{index}": row.get(column) for index, column in enumerate(delivery_columns)}
+                conn.execute(delivery_sql, params)
+
+        for dataset in ("rotas", "rota_entregas", "placas"):
+            _write_metadata(conn, f"{dataset}.version", version)
+        _write_metadata(conn, "import.version", version)
+
+    for dataset in ("rotas", "rota_entregas", "placas"):
+        _clear_dataset_cache(dataset)
+    return {
+        "rotas": len(prepared_routes),
+        "entregas": len(prepared_deliveries),
+        "rota_ids": route_ids,
+        "version": version,
+    }
+
+
+def update_route_operation(
+    route_id: str,
+    *,
+    saida,
+    retorno,
+    km_rodados: float,
+    placa: str,
+    motorista: str,
+    observacao: str = "",
+) -> str:
+    route_id = str(route_id or "").strip()
+    if not route_id:
+        raise ValueError("Selecione uma rota.")
+    saida_dt = pd.to_datetime(saida, errors="coerce")
+    retorno_dt = pd.to_datetime(retorno, errors="coerce")
+    if pd.isna(saida_dt) or pd.isna(retorno_dt):
+        raise ValueError("Informe a saida e o retorno da rota.")
+    if retorno_dt <= saida_dt:
+        raise ValueError("O retorno deve ser posterior a saida.")
+    km_value = pd.to_numeric(pd.Series([km_rodados]), errors="coerce").iloc[0]
+    if pd.isna(km_value) or float(km_value) <= 0:
+        raise ValueError("Informe uma quilometragem maior que zero.")
+    plate_value = _normalize_plate_value(placa)
+    if not _is_plate_or_asset_identifier(plate_value):
+        raise ValueError("Informe uma placa valida.")
+    driver_value = str(motorista or "").strip()
+    if not driver_value:
+        raise ValueError("Informe o motorista.")
+
+    from sqlalchemy import text
+
+    version = datetime.now(timezone.utc).isoformat()
+    route_table = _quote_identifier(DB_TABLES["rotas"])
+    with _db_engine().begin() as conn:
+        _ensure_dataset_table(conn, "rotas")
+        result = conn.execute(
+            text(
+                f"""
+                UPDATE {route_table}
+                SET "Saida" = :saida,
+                    "Retorno" = :retorno,
+                    "KM Rodados" = :km,
+                    "PLACA" = :placa,
+                    "Motorista" = :motorista,
+                    "Observacao" = :observacao,
+                    "Status" = 'Concluída',
+                    "Data" = COALESCE("Data", :saida),
+                    "Mes" = TO_CHAR(COALESCE("Data", :saida), 'YYYY-MM')
+                WHERE "Rota ID" = :route_id
+                """
+            ),
+            {
+                "saida": saida_dt.to_pydatetime(),
+                "retorno": retorno_dt.to_pydatetime(),
+                "km": float(km_value),
+                "placa": plate_value,
+                "motorista": driver_value,
+                "observacao": str(observacao or "").strip() or None,
+                "route_id": route_id,
+            },
+        )
+        if not (result.rowcount or 0):
+            raise ValueError("Rota nao encontrada.")
+
+        category = conn.execute(
+            text(f'SELECT "Categoria" FROM {route_table} WHERE "Rota ID" = :route_id'),
+            {"route_id": route_id},
+        ).scalar() or "Transporte"
+        _ensure_dataset_table(conn, "placas")
+        placas_table = _quote_identifier(DB_TABLES["placas"])
+        conn.execute(
+            text(
+                f'INSERT INTO {placas_table} ("PLACA", "Categoria") VALUES (:placa, :categoria) '
+                f'ON CONFLICT ("PLACA") DO UPDATE SET "Categoria" = EXCLUDED."Categoria"'
+            ),
+            {"placa": plate_value, "categoria": category},
+        )
+        for dataset in ("rotas", "placas"):
+            _write_metadata(conn, f"{dataset}.version", version)
+        _write_metadata(conn, "import.version", version)
+
+    _clear_dataset_cache("rotas")
     _clear_dataset_cache("placas")
     return version
 
@@ -2077,6 +2367,7 @@ def _derived_plate_registry() -> pd.DataFrame:
         load_pedagio,
         load_peso,
         load_rodagem_rota,
+        load_rotas,
         load_velocidade,
     ):
         try:
@@ -3218,6 +3509,92 @@ def load_rodagem_rota() -> pd.DataFrame:
         return df.copy(deep=False)
 
 
+def load_rotas() -> pd.DataFrame:
+    cache = _ROTAS_CACHE
+    with cache["lock"]:
+        version = _db_version("rotas")
+        cached = cache.get("df")
+        if cached is not None and cache.get("mtime") == version:
+            return cached.copy(deep=False)
+
+        df = _read_database_table(
+            "rotas",
+            _ROTAS_COLUMNS,
+            date_columns=["Data", "Emissao", "Previsao", "Saida", "Retorno", "Importado Em"],
+        )
+        df = _finalize_common(
+            df,
+            date_columns=["Data", "Emissao", "Previsao", "Saida", "Retorno", "Importado Em"],
+            numeric_columns=["Peso Carga", "KM Rodados", "Paginas", "Entregas"],
+            text_columns=[
+                "Rota ID",
+                "Hash PDF",
+                "Arquivo",
+                "Codigo Rota",
+                "Rota",
+                "Carga",
+                "Veiculo",
+                "Motorista",
+                "Telefone",
+                "Empresa",
+                "Status",
+                "Observacao",
+                "Texto Extraido",
+            ],
+            plate_columns=["PLACA"],
+        )
+        df = _apply_plate_categories(df)
+        duration = (df["Retorno"] - df["Saida"]).dt.total_seconds() / 3600
+        df["Duracao Horas"] = duration.where(duration >= 0)
+        df["Dias Rota"] = (df["Duracao Horas"] / 24).apply(
+            lambda value: max(1, int(-(-float(value) // 1))) if pd.notna(value) and value > 0 else pd.NA
+        )
+        completed = df["Saida"].notna() & df["Retorno"].notna() & df["KM Rodados"].fillna(0).gt(0)
+        df.loc[completed, "Status"] = "Concluída"
+        df.loc[~completed, "Status"] = "Pendente"
+        cache["mtime"] = version
+        cache["df"] = df.copy()
+        return df.copy(deep=False)
+
+
+def load_rota_entregas() -> pd.DataFrame:
+    cache = _ROTA_ENTREGAS_CACHE
+    with cache["lock"]:
+        version = _db_version("rota_entregas")
+        cached = cache.get("df")
+        if cached is not None and cache.get("mtime") == version:
+            return cached.copy(deep=False)
+
+        df = _read_database_table("rota_entregas", _ROTA_ENTREGAS_COLUMNS)
+        df = _finalize_common(
+            df,
+            numeric_columns=["Ordem", "Peso Pedido", "Valor Nota", "Valor Recebimento", "Pagina"],
+            text_columns=[
+                "Entrega ID",
+                "Rota ID",
+                "Carga",
+                "Documento",
+                "Cliente Codigo",
+                "Cliente",
+                "Pedido Filial",
+                "Pedido",
+                "Vendedor",
+                "Carrinho",
+                "Cidade",
+                "Endereco",
+                "Telefone",
+                "Observacao",
+                "Forma Recebimento",
+                "Texto Extraido",
+            ],
+        )
+        if "Corte" in df.columns:
+            df["Corte"] = df["Corte"].fillna(False).astype(bool)
+        cache["mtime"] = version
+        cache["df"] = df.copy()
+        return df.copy(deep=False)
+
+
 def load_velocidade() -> pd.DataFrame:
     cache = _VELOCIDADE_CACHE
     with cache["lock"]:
@@ -3780,6 +4157,159 @@ def data_velocidade(params: dict | None = None) -> dict:
     resultado = agg_velocidade(df)
     resultado.update(options)
     return resultado
+
+
+def _route_record_value(value):
+    if value is None or value is pd.NA:
+        return None
+    if isinstance(value, (pd.Timestamp, datetime)):
+        return value.isoformat()
+    try:
+        if pd.isna(value):
+            return None
+    except (TypeError, ValueError):
+        pass
+    if hasattr(value, "item"):
+        try:
+            return value.item()
+        except (ValueError, AttributeError):
+            pass
+    return value
+
+
+def _route_records(df: pd.DataFrame) -> list[dict]:
+    if df is None or df.empty:
+        return []
+    return [
+        {column: _route_record_value(value) for column, value in row.items()}
+        for row in df.to_dict(orient="records")
+    ]
+
+
+def _route_filter_values(df: pd.DataFrame, column: str, raw) -> pd.DataFrame:
+    values = [str(value).strip() for value in _as_list(raw) if str(value or "").strip() not in {"", "Todos"}]
+    if not values or df.empty or column not in df.columns:
+        return df
+    normalized_targets = {_normalize_ascii(value).casefold() for value in values}
+    normalized = df[column].astype("string").fillna("").apply(lambda value: _normalize_ascii(value).casefold())
+    return df.loc[normalized.isin(normalized_targets)].copy()
+
+
+def data_rotas(params: dict | None = None) -> dict:
+    params = params or {}
+    routes = load_rotas()
+    deliveries = load_rota_entregas()
+    all_routes = routes.copy()
+
+    options = {
+        "anos": _unique_years(all_routes),
+        "meses": _unique_sorted(all_routes, "Mes"),
+        "status": _unique_sorted(all_routes, "Status"),
+        "placas": _unique_sorted(all_routes, "PLACA"),
+        "motoristas": _unique_sorted(all_routes, "Motorista"),
+        "rotas": _unique_sorted(all_routes, "Rota"),
+    }
+
+    ano = _parse_int(_param(params, "ano"))
+    meses = _parse_mes_list(params.get("mes"))
+    if ano is not None:
+        routes = _filter_by_period(routes, ano=ano)
+    if meses:
+        routes = routes[routes["Mes"].isin(meses)].copy()
+    routes = _route_filter_values(routes, "Status", params.get("status"))
+    routes = _route_filter_values(routes, "PLACA", params.get("placa"))
+    routes = _route_filter_values(routes, "Motorista", params.get("motorista"))
+    routes = _route_filter_values(routes, "Rota", params.get("rota"))
+
+    search = str(_param(params, "busca") or "").strip()
+    if search:
+        target = _normalize_ascii(search).casefold()
+        route_text = routes.astype("string").fillna("").apply(
+            lambda column: column.map(lambda value: _normalize_ascii(value).casefold())
+        )
+        route_match = route_text.apply(lambda column: column.str.contains(target, regex=False, na=False)).any(axis=1)
+        delivery_text = deliveries.astype("string").fillna("").apply(
+            lambda column: column.map(lambda value: _normalize_ascii(value).casefold())
+        )
+        delivery_match = delivery_text.apply(
+            lambda column: column.str.contains(target, regex=False, na=False)
+        ).any(axis=1)
+        matching_ids = set(deliveries.loc[delivery_match, "Rota ID"].astype("string").tolist())
+        route_match |= routes["Rota ID"].astype("string").isin(matching_ids)
+        routes = routes.loc[route_match].copy()
+
+    route_ids = set(routes["Rota ID"].dropna().astype("string").tolist())
+    filtered_deliveries = deliveries[deliveries["Rota ID"].astype("string").isin(route_ids)].copy()
+    route_context_columns = ["Rota ID", "Data", "Rota", "Carga", "PLACA", "Motorista", "Status"]
+    delivery_details = filtered_deliveries.merge(
+        routes[route_context_columns],
+        on="Rota ID",
+        how="left",
+        suffixes=("", " Rota"),
+    )
+
+    completed = (
+        routes["Status"].astype("string").fillna("").apply(lambda value: _normalize_ascii(value).casefold()).eq("concluida")
+        if not routes.empty
+        else pd.Series(dtype=bool)
+    )
+    ranking_source = routes.copy()
+    ranking_source["Entregas"] = pd.to_numeric(ranking_source.get("Entregas"), errors="coerce").fillna(0)
+    ranking_source["Peso Carga"] = pd.to_numeric(ranking_source.get("Peso Carga"), errors="coerce").fillna(0)
+    ranking_source["KM Rodados"] = pd.to_numeric(ranking_source.get("KM Rodados"), errors="coerce").fillna(0)
+    ranking_source["Duracao Horas"] = pd.to_numeric(ranking_source.get("Duracao Horas"), errors="coerce").fillna(0)
+    ranking_source["Dias Rota"] = pd.to_numeric(ranking_source.get("Dias Rota"), errors="coerce").fillna(0)
+
+    def ranking(column: str) -> pd.DataFrame:
+        if ranking_source.empty or column not in ranking_source.columns:
+            return _empty([column, "Rotas", "Concluidas", "Entregas", "Peso kg", "KM", "Horas", "Dias"])
+        source = ranking_source[ranking_source[column].astype("string").fillna("").str.strip().ne("")].copy()
+        if source.empty:
+            return _empty([column, "Rotas", "Concluidas", "Entregas", "Peso kg", "KM", "Horas", "Dias"])
+        source["_Concluida"] = source["Status"].astype("string").fillna("").apply(
+            lambda value: _normalize_ascii(value).casefold() == "concluida"
+        ).astype(int)
+        grouped = source.groupby(column, as_index=False).agg(
+            Rotas=("Rota ID", "nunique"),
+            Concluidas=("_Concluida", "sum"),
+            Entregas=("Entregas", "sum"),
+            **{
+                "Peso kg": ("Peso Carga", "sum"),
+                "KM": ("KM Rodados", "sum"),
+                "Horas": ("Duracao Horas", "sum"),
+                "Dias": ("Dias Rota", "sum"),
+            },
+        )
+        return grouped.sort_values(["Concluidas", "Rotas", "KM"], ascending=[False, False, False]).reset_index(drop=True)
+
+    if filtered_deliveries.empty:
+        city_ranking = _empty(["Cidade", "Rotas", "Entregas", "Peso kg", "Valor Notas"])
+    else:
+        city_source = filtered_deliveries.copy()
+        city_source["Peso Pedido"] = pd.to_numeric(city_source["Peso Pedido"], errors="coerce").fillna(0)
+        city_source["Valor Nota"] = pd.to_numeric(city_source["Valor Nota"], errors="coerce").fillna(0)
+        city_ranking = city_source.groupby("Cidade", dropna=False, as_index=False).agg(
+            Rotas=("Rota ID", "nunique"),
+            Entregas=("Entrega ID", "nunique"),
+            **{"Peso kg": ("Peso Pedido", "sum"), "Valor Notas": ("Valor Nota", "sum")},
+        ).sort_values(["Entregas", "Peso kg"], ascending=[False, False])
+
+    return {
+        **options,
+        "total_rotas": int(routes["Rota ID"].nunique()) if not routes.empty else 0,
+        "rotas_concluidas": int(completed.sum()) if not routes.empty else 0,
+        "rotas_pendentes": int((~completed).sum()) if not routes.empty else 0,
+        "entregas_total": int(filtered_deliveries["Entrega ID"].nunique()) if not filtered_deliveries.empty else 0,
+        "peso_total": float(pd.to_numeric(routes.get("Peso Carga"), errors="coerce").sum()) if not routes.empty else 0.0,
+        "km_total": float(pd.to_numeric(routes.get("KM Rodados"), errors="coerce").sum()) if not routes.empty else 0.0,
+        "horas_total": float(pd.to_numeric(routes.get("Duracao Horas"), errors="coerce").sum()) if not routes.empty else 0.0,
+        "rotas_detalhes": _route_records(routes.sort_values(["Data", "Rota"], ascending=[False, True])),
+        "entregas_detalhes": _route_records(delivery_details),
+        "ranking_motoristas": _route_records(ranking("Motorista")),
+        "ranking_placas": _route_records(ranking("PLACA")),
+        "ranking_rotas": _route_records(ranking("Rota")),
+        "ranking_cidades": _route_records(city_ranking),
+    }
 
 
 def data_vex(params: dict | None = None) -> dict:
