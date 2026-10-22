@@ -55,7 +55,7 @@ MUTED = "#6B7280"
 CARD_BORDER = "#c2d2f3"
 LOGO_PATH = Path(__file__).parent / "static" / "logo-jr.png"
 CURRENT_YEAR = date.today().year
-APP_VERSION = "deploy-cadastro-rapido-velocidade-v1"
+APP_VERSION = "freight-calculator-v1"
 RANK_ROUTES_ENABLED = False
 ROUTE_CACHE_TTL_SECONDS = max(int(os.environ.get("JR_ROUTE_CACHE_TTL_SECONDS", "180") or 180), 30)
 DATA_EDITOR_PAGE_SIZE = 100
@@ -811,10 +811,38 @@ def inject_css() -> None:
         }}
 
         .home-header h1 {{
-          margin: 4px 0 12px;
+          margin: 0;
           font-size: 34px;
           font-weight: 800;
           color: var(--jr-blue);
+        }}
+
+        .home-title-row {{
+          display: flex;
+          align-items: center;
+          flex-wrap: wrap;
+          gap: 12px;
+          margin: 4px 0 12px;
+        }}
+
+        .home-freight-link {{
+          display: inline-flex;
+          align-items: center;
+          justify-content: center;
+          min-height: 34px;
+          padding: 0 14px;
+          border-radius: 999px;
+          background: var(--jr-red);
+          color: #fff !important;
+          font-size: 12px;
+          font-weight: 800;
+          text-decoration: none !important;
+          white-space: nowrap;
+          box-shadow: 0 8px 18px rgba(190,30,45,.20);
+        }}
+
+        .home-freight-link:hover {{
+          background: #a51924;
         }}
 
         .home-subtitle {{
@@ -901,6 +929,152 @@ def inject_css() -> None:
         .st-key-alertas_shell {{
           max-width: 1180px;
           margin: 28px auto 48px;
+        }}
+
+        .st-key-frete_shell {{
+          max-width: 1120px;
+          margin: 30px auto 52px;
+        }}
+
+        .frete-intro {{
+          margin-bottom: 20px;
+          padding: 26px 28px;
+          border: 1px solid rgba(194,210,243,.72);
+          border-radius: 18px;
+          background: rgba(255,255,255,.72);
+          box-shadow: 0 10px 28px rgba(16,24,40,.08);
+        }}
+
+        .frete-intro h2 {{
+          margin: 0 0 8px;
+          color: var(--jr-blue);
+          font-size: clamp(24px, 3vw, 34px);
+        }}
+
+        .frete-intro p {{
+          max-width: 780px;
+          margin: 0;
+          color: #4B5563;
+          line-height: 1.6;
+        }}
+
+        .frete-mode-active {{
+          display: flex;
+          min-height: 58px;
+          align-items: center;
+          justify-content: space-between;
+          gap: 12px;
+          padding: 12px 16px;
+          border: 1.5px solid rgba(190,30,45,.34);
+          border-radius: 14px;
+          background: rgba(190,30,45,.07);
+          color: var(--jr-blue);
+          font-weight: 800;
+        }}
+
+        .frete-mode-active span {{
+          padding: 4px 9px;
+          border-radius: 999px;
+          background: var(--jr-red);
+          color: #fff;
+          font-size: 10px;
+          text-transform: uppercase;
+          letter-spacing: .05em;
+        }}
+
+        .st-key-frete_mode_disabled button {{
+          min-height: 58px;
+          border-radius: 14px;
+          font-weight: 800;
+        }}
+
+        .st-key-frete_form {{
+          margin-top: 20px;
+          padding: 24px;
+          border: 1px solid rgba(194,210,243,.66);
+          border-radius: 18px;
+          background: rgba(255,255,255,.74);
+          box-shadow: 0 10px 28px rgba(16,24,40,.08);
+        }}
+
+        .st-key-frete_form [data-testid="stForm"] {{
+          border: 0;
+          padding: 0;
+          background: transparent;
+        }}
+
+        .frete-result-hero {{
+          margin-top: 22px;
+          padding: 28px;
+          border-radius: 18px;
+          background: linear-gradient(135deg, #17265d, var(--jr-blue));
+          color: #fff;
+          box-shadow: 0 16px 34px rgba(28,45,107,.22);
+        }}
+
+        .frete-result-label {{
+          margin: 0 0 8px;
+          font-size: 12px;
+          font-weight: 800;
+          text-transform: uppercase;
+          letter-spacing: .08em;
+          opacity: .78;
+        }}
+
+        .frete-result-value {{
+          margin: 0;
+          font-size: clamp(34px, 6vw, 54px);
+          font-weight: 900;
+          line-height: 1;
+        }}
+
+        .frete-result-note {{
+          margin: 12px 0 0;
+          color: rgba(255,255,255,.82);
+          font-size: 13px;
+        }}
+
+        .frete-breakdown {{
+          display: grid;
+          grid-template-columns: repeat(3, minmax(0, 1fr));
+          gap: 14px;
+          margin: 16px 0 0;
+        }}
+
+        .frete-breakdown-card {{
+          padding: 18px;
+          border: 1px solid rgba(194,210,243,.62);
+          border-radius: 14px;
+          background: rgba(255,255,255,.82);
+          box-shadow: 0 6px 18px rgba(16,24,40,.06);
+        }}
+
+        .frete-breakdown-card p {{
+          margin: 0 0 8px;
+          color: var(--muted);
+          font-size: 11px;
+          font-weight: 800;
+          text-transform: uppercase;
+          letter-spacing: .05em;
+        }}
+
+        .frete-breakdown-card strong {{
+          color: var(--jr-blue);
+          font-size: 22px;
+        }}
+
+        .frete-memory {{
+          margin-top: 16px;
+          padding: 18px 20px;
+          border-left: 4px solid var(--jr-red);
+          border-radius: 12px;
+          background: rgba(255,255,255,.72);
+          color: #4B5563;
+          line-height: 1.65;
+        }}
+
+        .frete-memory strong {{
+          color: var(--jr-blue);
         }}
 
         .st-key-cadastro_shell {{
@@ -2639,6 +2813,14 @@ def inject_css() -> None:
             font-size: 28px;
           }}
 
+          .home-title-row {{
+            align-items: flex-start;
+          }}
+
+          .frete-breakdown {{
+            grid-template-columns: 1fr;
+          }}
+
           .home-total-grid,
           .kpi-sections,
           .kpis,
@@ -2958,6 +3140,73 @@ def fmt_peso(value: object) -> str:
         tons = int(number / 1000) if number >= 0 else -int(abs(number) / 1000)
         return f"{fmt_num(tons)} ton"
     return f"{fmt_num(number, 2)} kg"
+
+
+def _freight_reference(totals: dict) -> dict[str, float]:
+    """Transforma os totais historicos do dashboard em tarifas de referencia."""
+    total_cost = max(float(totals.get("total") or 0.0), 0.0)
+    salary_cost = max(float(totals.get("salario_transporte") or 0.0), 0.0)
+    operating_cost = max(total_cost - salary_cost, 0.0)
+    total_km = max(float(totals.get("km_total") or 0.0), 0.0)
+    total_weight = max(
+        float(totals.get("peso_total_filtrado") or totals.get("peso_total") or 0.0),
+        0.0,
+    )
+    delivery_value = max(float(totals.get("valor_peso") or 0.0), 0.0)
+    service_days = max(
+        float(totals.get("salario_transporte_dias") or totals.get("dias_servico") or 0.0),
+        0.0,
+    )
+    # O cadastro de hospedagem representa a equipe padrao como motorista + ajudante.
+    reference_crew_size = 2.0
+    return {
+        "operating_cost": operating_cost,
+        "salary_cost": salary_cost,
+        "total_km": total_km,
+        "total_weight": total_weight,
+        "delivery_value": delivery_value,
+        "service_days": service_days,
+        "rate_per_km": operating_cost / total_km if total_km else 0.0,
+        "rate_per_kg": delivery_value / total_weight if total_weight else 0.0,
+        "rate_per_employee_day": (
+            salary_cost / service_days / reference_crew_size
+            if service_days and salary_cost
+            else 0.0
+        ),
+    }
+
+
+def _calculate_freight_quote(
+    reference: dict[str, float],
+    *,
+    weight_kg: float,
+    distance_km: float,
+    employees: int,
+    operation_days: int,
+    margin_percent: float,
+) -> dict[str, float | str]:
+    weight_component = max(weight_kg, 0.0) * reference["rate_per_kg"]
+    distance_component = max(distance_km, 0.0) * reference["rate_per_km"]
+    employee_component = (
+        max(int(employees), 0)
+        * max(int(operation_days), 0)
+        * reference["rate_per_employee_day"]
+    )
+    operating_floor = distance_component + employee_component
+    calculation_base = max(weight_component, operating_floor)
+    margin_value = calculation_base * max(margin_percent, 0.0) / 100.0
+    suggested_freight = calculation_base + margin_value
+    source = "peso" if weight_component >= operating_floor else "km + equipe"
+    return {
+        "weight_component": weight_component,
+        "distance_component": distance_component,
+        "employee_component": employee_component,
+        "operating_floor": operating_floor,
+        "calculation_base": calculation_base,
+        "margin_value": margin_value,
+        "suggested_freight": suggested_freight,
+        "source": source,
+    }
 
 
 @st.cache_data(ttl=600, show_spinner=False)
@@ -6309,6 +6558,171 @@ def render_frota() -> None:
     footer("Ranking calculado com dados de combustível, manutenção, diárias e pedágio/extras do Neon. © JR")
 
 
+def render_calculadora_frete() -> None:
+    topbar("JR DASHBOARD • Calculadora de frete", back=True)
+    with st.container(key="frete_shell"):
+        st.html(
+            """
+            <section class="frete-intro">
+              <h2>Quanto cobrar pelo frete?</h2>
+              <p>Informe a carga, a distância total da viagem e a equipe. A calculadora usa o histórico completo de entregas e custos do dashboard para montar uma estimativa rastreável.</p>
+            </section>
+            """
+        )
+
+        mode_cols = st.columns(2)
+        with mode_cols[0]:
+            st.html(
+                '<div class="frete-mode-active">Base histórica do dashboard <span>Ativa</span></div>'
+            )
+        with mode_cols[1], st.container(key="frete_mode_disabled"):
+            st.button(
+                "Outra modalidade — em breve",
+                disabled=True,
+                width="stretch",
+                key="frete_other_mode",
+                help="Esta modalidade permanece desativada.",
+            )
+
+        historical = route_json(
+            "frota",
+            {
+                "categoria": ["Transporte", "Freteiro"],
+                "incluir_hoteis": True,
+                "incluir_salario": True,
+                "ordenar_por": "total",
+            },
+        )
+        totals = historical.get("totais") or {}
+        reference = _freight_reference(totals)
+
+        valid_reference = any(
+            reference[key] > 0
+            for key in ("rate_per_km", "rate_per_kg", "rate_per_employee_day")
+        )
+        if not valid_reference:
+            st.warning(
+                "Ainda não há dados suficientes de peso, km, despesas e salários para calcular o frete. "
+                "Cadastre esses dados em Adicionar dados e tente novamente."
+            )
+            footer("Calculadora baseada no histórico operacional do Neon. © JR")
+            return
+
+        with st.container(key="frete_form"):
+            st.markdown("### Dados do frete")
+            st.caption("Na distância, informe o total previsto da viagem, incluindo ida e volta.")
+            with st.form("frete_calculator_form"):
+                input_cols = st.columns(3)
+                with input_cols[0]:
+                    weight_kg = st.number_input(
+                        "Peso da carga (kg)",
+                        min_value=0.0,
+                        value=1000.0,
+                        step=100.0,
+                        format="%.2f",
+                    )
+                    distance_km = st.number_input(
+                        "Distância total (km)",
+                        min_value=0.0,
+                        value=100.0,
+                        step=10.0,
+                        format="%.1f",
+                    )
+                with input_cols[1]:
+                    employees = st.number_input(
+                        "Funcionários na viagem",
+                        min_value=1,
+                        max_value=20,
+                        value=2,
+                        step=1,
+                    )
+                    operation_days = st.number_input(
+                        "Dias de operação",
+                        min_value=1,
+                        max_value=60,
+                        value=1,
+                        step=1,
+                    )
+                with input_cols[2]:
+                    margin_percent = st.number_input(
+                        "Margem de segurança (%)",
+                        min_value=0.0,
+                        max_value=100.0,
+                        value=10.0,
+                        step=1.0,
+                        format="%.1f",
+                        help="Percentual aplicado sobre a maior base encontrada.",
+                    )
+                    st.write("")
+                    submitted = st.form_submit_button(
+                        "Calcular frete",
+                        type="primary",
+                        width="stretch",
+                    )
+
+        if submitted:
+            st.session_state["frete_quote_inputs"] = {
+                "weight_kg": float(weight_kg),
+                "distance_km": float(distance_km),
+                "employees": int(employees),
+                "operation_days": int(operation_days),
+                "margin_percent": float(margin_percent),
+            }
+
+        quote_inputs = st.session_state.get("frete_quote_inputs")
+        if quote_inputs:
+            quote = _calculate_freight_quote(reference, **quote_inputs)
+            base_source = "referência histórica pelo peso" if quote["source"] == "peso" else "piso operacional de km + equipe"
+            st.html(
+                f"""
+                <section class="frete-result-hero">
+                  <p class="frete-result-label">Frete sugerido</p>
+                  <p class="frete-result-value">{h(fmt_brl(quote['suggested_freight'], compact_threshold=float('inf')))}</p>
+                  <p class="frete-result-note">Base utilizada: {h(base_source)} · margem de {h(fmt_num(quote_inputs['margin_percent'], 1))}% incluída.</p>
+                </section>
+                <section class="frete-breakdown">
+                  <div class="frete-breakdown-card"><p>Referência pelo peso</p><strong>{h(fmt_brl(quote['weight_component'], compact_threshold=float('inf')))}</strong></div>
+                  <div class="frete-breakdown-card"><p>Custo pela distância</p><strong>{h(fmt_brl(quote['distance_component'], compact_threshold=float('inf')))}</strong></div>
+                  <div class="frete-breakdown-card"><p>Custo da equipe</p><strong>{h(fmt_brl(quote['employee_component'], compact_threshold=float('inf')))}</strong></div>
+                </section>
+                <div class="frete-memory">
+                  <strong>Memória do cálculo:</strong> o piso operacional é distância + equipe ({h(fmt_brl(quote['operating_floor'], compact_threshold=float('inf')))}). Ele é comparado com a referência pelo peso ({h(fmt_brl(quote['weight_component'], compact_threshold=float('inf')))}). A calculadora usa o maior valor e acrescenta {h(fmt_brl(quote['margin_value'], compact_threshold=float('inf')))} de margem.
+                </div>
+                """
+            )
+
+        years = historical.get("anos") or []
+        period_label = (
+            f"{min(years)} a {max(years)}"
+            if len(years) > 1
+            else str(years[0])
+            if years
+            else "histórico disponível"
+        )
+        with st.expander("Ver tarifas e dados usados", expanded=False):
+            rate_cols = st.columns(3)
+            rate_cols[0].metric(
+                "Operação por km",
+                fmt_brl(reference["rate_per_km"], compact_threshold=float("inf")),
+            )
+            rate_cols[1].metric(
+                "Referência por tonelada",
+                fmt_brl(reference["rate_per_kg"] * 1000, compact_threshold=float("inf")),
+            )
+            rate_cols[2].metric(
+                "Funcionário por dia",
+                fmt_brl(reference["rate_per_employee_day"], compact_threshold=float("inf")),
+            )
+            st.caption(
+                f"Base: {period_label}; {fmt_num(reference['total_km'])} km, "
+                f"{fmt_peso(reference['total_weight'])} e {fmt_brl(reference['salary_cost'])} em salários. "
+                "A tarifa de km reúne combustível, manutenção, pedágio/extras, hotéis e diárias de freteiros. "
+                "Como o banco registra o salário total, a tarifa individual considera a equipe padrão de motorista + ajudante."
+            )
+
+    footer("Estimativa calculada com o histórico operacional do Neon. Confira pedágios e condições especiais antes de fechar. © JR")
+
+
 def render_home() -> None:
     logo = logo_data_uri()
     last_update = h(last_update_label(APP_VERSION))
@@ -6325,7 +6739,10 @@ def render_home() -> None:
             <img src="{logo}" alt="JR" class="home-logo">
             <div>
               <p class="home-eyebrow">JR Ferragens &amp; Madeiras</p>
-              <h1>Dashboards operacionais</h1>
+              <div class="home-title-row">
+                <h1>Dashboards operacionais</h1>
+                <a class="home-freight-link" href="?page=calculadora-frete" target="_self">Calculadora de frete</a>
+              </div>
               <p class="home-subtitle">Monitore velocidade, combustível, manutenção, hospedagens e despesas de pedágio/extras em tempo real, com dados centralizados no Neon.</p>
             </div>
           </div>
@@ -12120,6 +12537,8 @@ def main() -> None:
             render_alertas()
         elif page == "velocidade":
             render_velocidade()
+        elif page in {"calculadora-frete", "frete"}:
+            render_calculadora_frete()
         elif page in {"frota", "ranking"}:
             render_frota()
         elif page in {"cadastro", "dados"}:

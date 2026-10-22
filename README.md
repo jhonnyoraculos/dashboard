@@ -60,3 +60,11 @@ incluidos manualmente ou em lote em `Adicionar dados > Velocidade`.
 Nessa aba tambem estao disponiveis modelos de importacao em Excel e CSV. O modelo
 Excel inclui as abas `Importacao`, `Exemplo` e `Instrucoes`; preencha a aba
 `Importacao` antes de enviar o arquivo.
+
+## Calculadora de frete
+
+A calculadora e acessada pelo atalho ao lado do titulo da pagina inicial. Ela
+combina a referencia historica por peso com o piso operacional de distancia e
+equipe, usando os dados de entregas, km, combustivel, manutencao,
+pedagio/extras, hoteis, salarios e diarias ja cadastrados no dashboard. O valor
+sugerido usa a maior base e aplica a margem de seguranca informada pelo usuario.
