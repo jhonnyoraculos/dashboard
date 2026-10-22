@@ -64,8 +64,9 @@ Excel inclui as abas `Importacao`, `Exemplo` e `Instrucoes`; preencha a aba
 ## Calculadora de frete
 
 A calculadora e acessada pelo atalho ao lado do titulo da pagina inicial. O
-usuario escolhe a placa do caminhao, e o custo por km e obtido do historico de
-combustivel, manutencao, pedagio/extras, hoteis e diarias da placa. O peso e
+usuario pode usar a media da frota ou escolher a placa do caminhao; nesse caso,
+o custo por km e obtido do historico de combustivel, manutencao,
+pedagio/extras, hoteis e diarias da placa. O peso e
 convertido em horas de descarga pela produtividade de 100 kg por hora; essas
 horas sao multiplicadas pela quantidade de funcionarios e pelo salario medio
 por hora, que pode ser ajustado na simulacao. O resultado separa o custo

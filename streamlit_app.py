@@ -55,7 +55,7 @@ MUTED = "#6B7280"
 CARD_BORDER = "#c2d2f3"
 LOGO_PATH = Path(__file__).parent / "static" / "logo-jr.png"
 CURRENT_YEAR = date.today().year
-APP_VERSION = "freight-calculator-plate-hourly-weight-v1"
+APP_VERSION = "freight-calculator-optional-plate-v1"
 RANK_ROUTES_ENABLED = False
 ROUTE_CACHE_TTL_SECONDS = max(int(os.environ.get("JR_ROUTE_CACHE_TTL_SECONDS", "180") or 180), 30)
 DATA_EDITOR_PAGE_SIZE = 100
@@ -65,6 +65,7 @@ BR_TZ = ZoneInfo("America/Sao_Paulo")
 FREIGHT_UNLOAD_KG_PER_HOUR = 100.0
 FREIGHT_WORKDAY_HOURS = 8.0
 FREIGHT_REFERENCE_CREW_SIZE = 2.0
+FREIGHT_FLEET_AVERAGE_LABEL = "Média da frota (sem placa)"
 CATEGORY_OPTIONS = ["Transporte", "Freteiro", "Empilhadeira", "Estoque", "Vex", "Equipamento"]
 CADASTRO_TABS = ["Placas", "Empilhadeiras", "Combustível", "KM mensal", "Manutenção", "Pneus", "Hotéis", "Peso", "Velocidade", "Pedágio/Extras", "Aluguel de veículos"]
 PEDAGIO_TIPO_OPTIONS = ["Pedágio", "Extras", "Táxi", "IPVA", "Seguro", "Licenciamento", "DPVAT", "Outros"]
@@ -6617,7 +6618,7 @@ def render_calculadora_frete() -> None:
             """
             <section class="frete-intro">
               <h2>Quanto cobrar pelo frete?</h2>
-              <p>Escolha o caminhão e informe a carga, a distância total e a equipe. O custo do peso considera a produtividade da descarga de 100 kg por hora e o salário por hora de cada funcionário.</p>
+              <p>Use a média da frota ou escolha um caminhão específico e informe a carga, a distância total e a equipe. O custo do peso considera a produtividade da descarga de 100 kg por hora e o salário por hora de cada funcionário.</p>
             </section>
             """
         )
@@ -6653,24 +6654,21 @@ def render_calculadora_frete() -> None:
             for row in ranking
             if str(row.get("placa") or "").strip()
         }
-        plate_options = sorted(rows_by_plate)
-
-        if not plate_options:
-            st.warning(
-                "Ainda não há caminhões com dados históricos para calcular o frete. "
-                "Cadastre uma placa e seus lançamentos em Adicionar dados."
-            )
-            footer("Calculadora baseada no histórico operacional do Neon. © JR")
-            return
+        plate_options = [FREIGHT_FLEET_AVERAGE_LABEL, *sorted(rows_by_plate)]
 
         with st.container(key="frete_form"):
             st.markdown("### Dados do frete")
-            selected_plate = st.selectbox(
-                "Placa do caminhão",
+            vehicle_choice = st.selectbox(
+                "Base de cálculo do caminhão",
                 plate_options,
-                index=None,
-                placeholder="Selecione a placa que fará o frete",
+                index=0,
                 key="frete_plate",
+                help="Use a média da frota ou escolha uma placa para aplicar o histórico específico do caminhão.",
+            ) or FREIGHT_FLEET_AVERAGE_LABEL
+            selected_plate = (
+                None
+                if vehicle_choice == FREIGHT_FLEET_AVERAGE_LABEL
+                else vehicle_choice
             )
             st.caption(
                 "Na distância, informe ida + volta. O salário por hora vem do histórico, "
@@ -6680,9 +6678,9 @@ def render_calculadora_frete() -> None:
             selected_row = rows_by_plate.get(str(selected_plate or ""), {})
             plate_reference = _freight_plate_reference(selected_row, general_reference)
             default_hourly_rate = float(plate_reference["rate_per_employee_hour"] or 0.0)
-            if selected_plate and default_hourly_rate <= 0:
+            if default_hourly_rate <= 0:
                 st.warning(
-                    "Esta placa não possui salário histórico calculável. "
+                    "A base escolhida não possui salário histórico calculável. "
                     "Informe abaixo o salário por funcionário/hora para incluir o peso no custo."
                 )
             with st.form("frete_calculator_form"):
@@ -6737,23 +6735,21 @@ def render_calculadora_frete() -> None:
                     )
 
         if submitted:
-            if selected_plate is None:
-                st.warning("Selecione a placa do caminhão antes de calcular.")
-            else:
-                st.session_state["frete_quote_inputs_v2"] = {
-                    "plate": selected_plate,
-                    "weight_kg": float(weight_kg),
-                    "distance_km": float(distance_km),
-                    "employees": int(employees),
-                    "employee_hourly_rate": float(employee_hourly_rate),
-                    "margin_percent": float(margin_percent),
-                }
+            st.session_state["frete_quote_inputs_v2"] = {
+                "plate": selected_plate,
+                "weight_kg": float(weight_kg),
+                "distance_km": float(distance_km),
+                "employees": int(employees),
+                "employee_hourly_rate": float(employee_hourly_rate),
+                "margin_percent": float(margin_percent),
+            }
 
         stored_inputs = st.session_state.get("frete_quote_inputs_v2")
-        if stored_inputs and stored_inputs.get("plate") in rows_by_plate:
-            result_plate = str(stored_inputs["plate"])
+        stored_plate = stored_inputs.get("plate") if stored_inputs else None
+        if stored_inputs and (stored_plate is None or stored_plate in rows_by_plate):
+            result_plate = str(stored_plate) if stored_plate else FREIGHT_FLEET_AVERAGE_LABEL
             result_reference = _freight_plate_reference(
-                rows_by_plate[result_plate],
+                rows_by_plate.get(str(stored_plate), {}),
                 general_reference,
             )
             quote_inputs = {
@@ -6769,7 +6765,7 @@ def render_calculadora_frete() -> None:
                     <div class="frete-result-item">
                       <p class="frete-result-label">Frete sugerido</p>
                       <p class="frete-result-value">{h(fmt_brl(quote['suggested_freight'], compact_threshold=float('inf')))}</p>
-                      <p class="frete-result-note">Placa {h(result_plate)} · margem de {h(fmt_num(quote_inputs['margin_percent'], 1))}% incluída.</p>
+                      <p class="frete-result-note">Base: {h(result_plate)} · margem de {h(fmt_num(quote_inputs['margin_percent'], 1))}% incluída.</p>
                     </div>
                     <div class="frete-result-item frete-result-item--cost">
                       <p class="frete-result-label">Custo estimado</p>
@@ -6800,8 +6796,8 @@ def render_calculadora_frete() -> None:
         with st.expander("Ver tarifas e dados usados", expanded=False):
             rate_cols = st.columns(3)
             rate_cols[0].metric(
-                "Placa selecionada",
-                selected_plate or "—",
+                "Base selecionada",
+                vehicle_choice,
             )
             rate_cols[1].metric(
                 "Operação por km",
