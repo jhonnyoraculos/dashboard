@@ -51,7 +51,7 @@ _backend_aluguel_period_ready = {"Inicio", "Fim"}.issubset(
 )
 _backend_aluguel_monthly_ready = getattr(backend, "BACKEND_BUILD_VERSION", "") == "aluguel-multiplicar-meses-v1"
 _backend_pedagio_chart_ready = getattr(backend, "PEDAGIO_CHART_VERSION", "") == "all-types-v1"
-_backend_routes_ready = getattr(backend, "ROUTES_BUILD_VERSION", "") == "rotas-pdf-v5"
+_backend_routes_ready = getattr(backend, "ROUTES_BUILD_VERSION", "") == "rotas-pdf-v6"
 if not _backend_features_ready or not _backend_aluguel_period_ready or not _backend_aluguel_monthly_ready or not _backend_pedagio_chart_ready or not _backend_routes_ready:
     backend = importlib.reload(backend)
 
@@ -62,7 +62,7 @@ MUTED = "#6B7280"
 CARD_BORDER = "#c2d2f3"
 LOGO_PATH = Path(__file__).parent / "static" / "logo-jr.png"
 CURRENT_YEAR = date.today().year
-APP_VERSION = "route-manifests-pdf-v5"
+APP_VERSION = "route-manifests-pdf-v6"
 RANK_ROUTES_ENABLED = False
 ROUTE_CACHE_TTL_SECONDS = max(int(os.environ.get("JR_ROUTE_CACHE_TTL_SECONDS", "180") or 180), 30)
 DATA_EDITOR_PAGE_SIZE = 100
@@ -11155,6 +11155,9 @@ def _render_route_completion(plate_map: dict[str, str]) -> None:
     pending_cols[0].metric("Rotas pendentes", fmt_num(pending_count))
     pending_cols[1].metric("Rotas concluídas", fmt_num(completed_count))
     pending_cols[2].metric("Total importado", fmt_num(routes["Rota ID"].nunique()))
+    completion_message = st.session_state.pop("route_completion_message", "")
+    if completion_message:
+        st.success(completion_message)
     if pending_count:
         st.warning(f"Ainda faltam preencher {pending_count} rota(s).")
     else:
@@ -11205,13 +11208,34 @@ def _render_route_completion(plate_map: dict[str, str]) -> None:
         with c3:
             return_date = st.date_input("Data de retorno", value=return_default.date())
             return_time = st.time_input("Hora de retorno", value=return_default.time().replace(second=0, microsecond=0))
+
+        route_dates = pd.to_datetime(routes["Data"], errors="coerce")
+        if "Previsao" in routes.columns:
+            route_dates = route_dates.fillna(pd.to_datetime(routes["Previsao"], errors="coerce"))
+        same_plate_day = (
+            routes["PLACA"].astype("string").fillna("").str.strip().str.upper().eq(plate.strip().upper())
+            & route_dates.dt.date.eq(base_date.date())
+        )
+        matching_ids = set(routes.loc[same_plate_day, "Rota ID"].astype("string"))
+        duplicate_count = len(matching_ids | {selected_id})
+        if duplicate_count > 1:
+            st.info(
+                f"Esta placa aparece em {duplicate_count} rotas no dia {base_date.strftime('%d/%m/%Y')}. "
+                "O mesmo horário de saída e retorno será aplicado a todas. O KM informado abaixo deve ser o "
+                "total da placa no dia e será dividido igualmente entre essas rotas."
+            )
         if is_freighter:
             km = None
             st.info("Placa classificada como Freteiro: não é necessário informar os KM desta rota.")
         else:
-            stored_km = pd.to_numeric(row.get("KM Rodados"), errors="coerce")
+            grouped_km = pd.to_numeric(routes.loc[same_plate_day, "KM Rodados"], errors="coerce")
+            stored_km = grouped_km.sum(min_count=1)
+            if selected_id not in matching_ids:
+                selected_km = pd.to_numeric(row.get("KM Rodados"), errors="coerce")
+                if pd.notna(selected_km):
+                    stored_km = (float(stored_km) if pd.notna(stored_km) else 0.0) + float(selected_km)
             km = st.number_input(
-                "KM feitos para realizar a rota",
+                "KM total da placa no dia" if duplicate_count > 1 else "KM feitos para realizar a rota",
                 min_value=0.0,
                 value=float(stored_km) if pd.notna(stored_km) else 0.0,
                 step=1.0,
@@ -11223,7 +11247,7 @@ def _render_route_completion(plate_map: dict[str, str]) -> None:
         submitted = st.form_submit_button("Salvar e concluir rota", type="primary", width="stretch")
         if submitted:
             try:
-                backend.update_route_operation(
+                result = backend.update_route_operation(
                     selected_id,
                     saida=datetime.combine(departure_date, departure_time),
                     retorno=datetime.combine(return_date, return_time),
@@ -11236,10 +11260,23 @@ def _render_route_completion(plate_map: dict[str, str]) -> None:
                 st.error(str(exc))
             else:
                 clear_cached_reads()
-                if is_freighter:
-                    st.success("Rota de freteiro concluída sem KM. Duração, dias e rankings foram atualizados.")
+                updated_count = int(result.get("updated", 1))
+                if is_freighter and updated_count > 1:
+                    message = (
+                        f"{updated_count} rotas desta placa foram concluídas com o mesmo horário, sem KM por ser "
+                        "freteiro. Duração, dias e rankings foram atualizados."
+                    )
+                elif is_freighter:
+                    message = "Rota de freteiro concluída sem KM. Duração, dias e rankings foram atualizados."
+                elif updated_count > 1:
+                    message = (
+                        f"{updated_count} rotas desta placa foram concluídas com o mesmo horário. "
+                        f"Os {fmt_num(result.get('km_total'), 1)} km totais foram divididos igualmente: "
+                        f"{fmt_num(result.get('km_per_route'), 1)} km em cada rota."
+                    )
                 else:
-                    st.success("Rota concluída. Duração, dias, KM e rankings foram atualizados.")
+                    message = "Rota concluída. Duração, dias, KM e rankings foram atualizados."
+                st.session_state["route_completion_message"] = message
                 st.rerun()
 
     with st.expander("Ver todos os dados extraídos desta rota", expanded=False):

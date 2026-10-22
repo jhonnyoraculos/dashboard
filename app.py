@@ -58,7 +58,7 @@ DB_TABLES = {
 }
 DB_METADATA_TABLE = "dashboard_metadata"
 BACKEND_BUILD_VERSION = "aluguel-multiplicar-meses-v1"
-ROUTES_BUILD_VERSION = "rotas-pdf-v5"
+ROUTES_BUILD_VERSION = "rotas-pdf-v6"
 PEDAGIO_CHART_VERSION = "all-types-v1"
 BACKUP_METADATA_KEY = "backup.last_downloaded_at"
 _DB_ENGINE = None
@@ -2094,7 +2094,7 @@ def update_route_operation(
     placa: str,
     motorista: str,
     observacao: str = "",
-) -> str:
+) -> dict:
     route_id = str(route_id or "").strip()
     if not route_id:
         raise ValueError("Selecione uma rota.")
@@ -2139,6 +2139,41 @@ def update_route_operation(
         if not is_freighter and km_value is None:
             raise ValueError("Informe uma quilometragem maior que zero. Para freteiros, o KM nao e obrigatorio.")
 
+        route_date = conn.execute(
+            text(
+                f"""
+                SELECT DATE(COALESCE("Data", "Previsao", :saida))
+                FROM {route_table}
+                WHERE "Rota ID" = :route_id
+                """
+            ),
+            {"saida": saida_dt.to_pydatetime(), "route_id": route_id},
+        ).scalar()
+        if route_date is None:
+            raise ValueError("Rota nao encontrada.")
+
+        grouped_route_ids = list(
+            conn.execute(
+                text(
+                    f"""
+                    SELECT "Rota ID"
+                    FROM {route_table}
+                    WHERE UPPER(TRIM(COALESCE("PLACA", ''))) = :placa
+                      AND DATE(COALESCE("Data", "Previsao")) = :route_date
+                    ORDER BY "Rota ID"
+                    """
+                ),
+                {"placa": plate_value, "route_date": route_date},
+            ).scalars()
+        )
+        grouped_route_ids = [str(value) for value in grouped_route_ids if str(value or "").strip()]
+        if route_id not in grouped_route_ids:
+            grouped_route_ids.append(route_id)
+        route_count = len(grouped_route_ids)
+        km_per_route = None if is_freighter else float(km_value) / route_count
+        group_params = {f"group_route_{index}": value for index, value in enumerate(grouped_route_ids)}
+        group_placeholders = ", ".join(f":{name}" for name in group_params)
+
         result = conn.execute(
             text(
                 f"""
@@ -2148,24 +2183,31 @@ def update_route_operation(
                     "KM Rodados" = :km,
                     "PLACA" = :placa,
                     "Categoria" = :categoria,
-                    "Motorista" = :motorista,
-                    "Observacao" = :observacao,
+                    "Motorista" = CASE
+                        WHEN "Rota ID" = :selected_route_id THEN :motorista
+                        ELSE "Motorista"
+                    END,
+                    "Observacao" = CASE
+                        WHEN "Rota ID" = :selected_route_id THEN :observacao
+                        ELSE "Observacao"
+                    END,
                     "Status" = 'Concluída',
                     "Atualizado Em" = CURRENT_TIMESTAMP,
                     "Data" = COALESCE("Data", :saida),
                     "Mes" = TO_CHAR(COALESCE("Data", :saida), 'YYYY-MM')
-                WHERE "Rota ID" = :route_id
+                WHERE "Rota ID" IN ({group_placeholders})
                 """
             ),
             {
                 "saida": saida_dt.to_pydatetime(),
                 "retorno": retorno_dt.to_pydatetime(),
-                "km": km_value,
+                "km": km_per_route,
                 "placa": plate_value,
                 "categoria": category,
                 "motorista": driver_value,
                 "observacao": str(observacao or "").strip() or None,
-                "route_id": route_id,
+                "selected_route_id": route_id,
+                **group_params,
             },
         )
         if not (result.rowcount or 0):
@@ -2184,7 +2226,14 @@ def update_route_operation(
 
     _clear_dataset_cache("rotas")
     _clear_dataset_cache("placas")
-    return version
+    return {
+        "version": version,
+        "updated": route_count,
+        "route_ids": grouped_route_ids,
+        "route_date": str(route_date),
+        "km_total": None if km_value is None else float(km_value),
+        "km_per_route": None if km_per_route is None else float(km_per_route),
+    }
 
 
 def update_route_history_rows(rows: list[dict]) -> dict:
