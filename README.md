@@ -65,8 +65,8 @@ Excel inclui as abas `Importacao`, `Exemplo` e `Instrucoes`; preencha a aba
 
 A calculadora e acessada pelo atalho ao lado do titulo da pagina inicial. O
 usuario pode usar a media da frota ou escolher a placa do caminhao; nesse caso,
-o custo por km e obtido do historico de combustivel, manutencao,
-pedagio/extras, hoteis e diarias da placa. A viagem usa a velocidade media de
+o custo direto por km e obtido do historico de combustivel, manutencao,
+pedagio/extras e diarias da placa. A viagem usa a velocidade media de
 80 km/h, e o peso e convertido em horas de descarga pela produtividade de uma
 tonelada por hora. O tempo da viagem e o tempo da descarga sao somados e
 multiplicados pela quantidade de funcionarios e pelo salario medio por hora,
@@ -81,3 +81,8 @@ As despesas de hotel podem ser marcadas ou desmarcadas na calculadora. Quando
 incluidas sem uma placa especifica, entram diretamente na media da frota. Para
 uma placa especifica, sao rateadas pela quilometragem media porque os registros
 de hospedagem nao possuem placa.
+
+O resumo mostra a composicao completa: custo direto por km + hoteis rateados
+por km = tarifa final por km. O salario da equipe nao entra nessa tarifa; ele e
+calculado separadamente pelo tempo de viagem e descarga, quantidade de
+funcionarios e valor por hora.

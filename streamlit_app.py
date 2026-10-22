@@ -55,7 +55,7 @@ MUTED = "#6B7280"
 CARD_BORDER = "#c2d2f3"
 LOGO_PATH = Path(__file__).parent / "static" / "logo-jr.png"
 CURRENT_YEAR = date.today().year
-APP_VERSION = "freight-calculator-live-values-v1"
+APP_VERSION = "freight-calculator-rate-breakdown-v1"
 RANK_ROUTES_ENABLED = False
 ROUTE_CACHE_TTL_SECONDS = max(int(os.environ.get("JR_ROUTE_CACHE_TTL_SECONDS", "180") or 180), 30)
 DATA_EDITOR_PAGE_SIZE = 100
@@ -3218,12 +3218,17 @@ def _freight_plate_reference(row: dict, general: dict[str, float]) -> dict[str, 
     has_plate_km_rate = bool(total_km and operating_cost)
     has_plate_hourly_rate = bool(service_days and salary_cost)
     hotel_rate_per_km = float(general.get("hotel_rate_per_km") or 0.0)
+    general_rate_per_km = float(general.get("rate_per_km") or 0.0)
+    general_direct_rate_per_km = max(general_rate_per_km - hotel_rate_per_km, 0.0)
+    direct_rate_per_km = (
+        operating_cost / total_km
+        if has_plate_km_rate
+        else general_direct_rate_per_km
+    )
     return {
-        "rate_per_km": (
-            operating_cost / total_km + hotel_rate_per_km
-            if has_plate_km_rate
-            else float(general.get("rate_per_km") or 0.0)
-        ),
+        "rate_per_km": direct_rate_per_km + hotel_rate_per_km,
+        "direct_rate_per_km": direct_rate_per_km,
+        "hotel_rate_per_km": hotel_rate_per_km,
         "rate_per_employee_hour": (
             salary_cost
             / service_days
@@ -6809,18 +6814,45 @@ def render_calculadora_frete() -> None:
             else "histórico disponível"
         )
         with st.expander("Ver tarifas e dados usados", expanded=False):
-            rate_cols = st.columns(3)
+            rate_cols = st.columns(4)
             rate_cols[0].metric(
                 "Base selecionada",
                 vehicle_choice,
             )
             rate_cols[1].metric(
-                "Operação por km",
-                fmt_brl(plate_reference["rate_per_km"], compact_threshold=float("inf")),
+                "Custo direto por km",
+                fmt_brl(plate_reference["direct_rate_per_km"], compact_threshold=float("inf")),
             )
             rate_cols[2].metric(
+                "Hotéis rateados por km",
+                fmt_brl(plate_reference["hotel_rate_per_km"], compact_threshold=float("inf")),
+            )
+            rate_cols[3].metric(
+                "Tarifa final por km",
+                fmt_brl(plate_reference["rate_per_km"], compact_threshold=float("inf")),
+            )
+            hotel_explanation = (
+                f"Como os hotéis não possuem uma placa vinculada, o total histórico de hospedagens "
+                f"({fmt_brl(general_reference['hotel_cost'])}) é dividido pelos quilômetros da frota. "
+                f"Esse rateio acrescenta {fmt_brl(plate_reference['hotel_rate_per_km'], compact_threshold=float('inf'))} por km."
+                if include_hotels
+                else "Os hotéis estão desmarcados e, por isso, não acrescentam nenhum valor à tarifa por km."
+            )
+            st.info(
+                f"**Como a tarifa foi formada:** "
+                f"{fmt_brl(plate_reference['direct_rate_per_km'], compact_threshold=float('inf'))} de custo direto por km "
+                f"+ {fmt_brl(plate_reference['hotel_rate_per_km'], compact_threshold=float('inf'))} de hotéis por km "
+                f"= **{fmt_brl(plate_reference['rate_per_km'], compact_threshold=float('inf'))} por km**. "
+                f"{hotel_explanation} O custo do caminhão na simulação é essa tarifa final multiplicada pela distância informada."
+            )
+            employee_cols = st.columns(2)
+            employee_cols[0].metric(
                 "Funcionário por hora",
                 fmt_brl(plate_reference["rate_per_employee_hour"], compact_threshold=float("inf")),
+            )
+            employee_cols[1].markdown(
+                "**Equipe calculada separadamente**  \n"
+                "O salário por hora não entra na tarifa do caminhão por km. Ele é multiplicado pelo tempo de viagem + descarga e pela quantidade de funcionários."
             )
             st.caption(
                 f"Base: {period_label}. A tarifa de km usa {plate_reference['km_rate_source']} e reúne combustível, "
