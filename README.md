@@ -67,8 +67,8 @@ A calculadora e acessada pelo atalho ao lado do titulo da pagina inicial. O
 usuario pode usar a media da frota ou escolher a placa do caminhao; nesse caso,
 o custo direto por km e obtido do historico de combustivel, manutencao,
 pedagio/extras e diarias da placa. A viagem usa a velocidade media de
-80 km/h, e o peso e convertido em horas de descarga pela produtividade de uma
-tonelada por hora. O tempo da viagem e o tempo da descarga sao somados e
+80 km/h, e o peso e convertido em horas de descarga pela produtividade media de
+350 kg por hora. O tempo da viagem e o tempo da descarga sao somados e
 multiplicados pela quantidade de funcionarios e pelo salario medio por hora,
 que pode ser ajustado na simulacao. O resultado separa o custo estimado do
 valor sugerido com a margem informada.
