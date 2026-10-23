@@ -8362,6 +8362,10 @@ def _peso_workbook_bytes(entregas: pd.DataFrame, rodagem_rota: pd.DataFrame) -> 
                 values = [str(cell.value) if cell.value is not None else "" for cell in column_cells]
                 width = min(max((len(value) for value in values), default=10) + 2, 42)
                 worksheet.column_dimensions[column_cells[0].column_letter].width = max(width, 12)
+
+    return output.getvalue()
+
+
 @st.cache_data(show_spinner=False, max_entries=2)
 def _velocity_model_xlsx_bytes() -> bytes:
     from openpyxl.styles import Alignment, Font, PatternFill
