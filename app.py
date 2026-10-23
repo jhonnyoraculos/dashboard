@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import concurrent.futures
+from difflib import SequenceMatcher
 import json
 import os
 import re
@@ -58,7 +59,7 @@ DB_TABLES = {
 }
 DB_METADATA_TABLE = "dashboard_metadata"
 BACKEND_BUILD_VERSION = "aluguel-multiplicar-meses-v1"
-ROUTES_BUILD_VERSION = "rotas-pdf-v11"
+ROUTES_BUILD_VERSION = "rotas-pdf-v12"
 PEDAGIO_CHART_VERSION = "all-types-v1"
 BACKUP_METADATA_KEY = "backup.last_downloaded_at"
 _DB_ENGINE = None
@@ -5052,6 +5053,304 @@ def _ranking_filter_route_day_rows(df: pd.DataFrame, route_weight_rows: pd.DataF
     return matched.drop(columns=["__RouteDate", "__RoutePlate"])
 
 
+def _ranking_imported_route_frames() -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
+    """Converte as rotas dos PDFs em fontes compatíveis com o ranking."""
+    weight_columns = [*_PESO_COLUMNS, "Rota ID", "_RouteSourceId", "_DeliveryCount"]
+    km_columns = [*_RODAGEM_ROTA_COLUMNS, "Data", "Rota ID", "Categoria"]
+    context_columns = [
+        "Rota ID",
+        "Rota",
+        "PLACA",
+        "Categoria",
+        "Data",
+        "Mes",
+        "Saida",
+        "Retorno",
+        "KM Rodados",
+        "Cidades",
+    ]
+    try:
+        routes = load_rotas()
+        deliveries = load_rota_entregas()
+    except Exception:
+        return (
+            pd.DataFrame(columns=weight_columns),
+            pd.DataFrame(columns=km_columns),
+            pd.DataFrame(columns=context_columns),
+        )
+    if routes.empty:
+        return (
+            pd.DataFrame(columns=weight_columns),
+            pd.DataFrame(columns=km_columns),
+            pd.DataFrame(columns=context_columns),
+        )
+
+    work = routes.copy()
+    for column in ("Saida", "Retorno", "Data", "Previsao"):
+        work[column] = pd.to_datetime(work.get(column), errors="coerce")
+    route_date = work["Saida"].combine_first(work["Data"]).combine_first(work["Previsao"])
+    work["Data"] = route_date.dt.normalize()
+    work["Mes"] = work["Data"].dt.to_period("M").astype("string")
+    work["Rota"] = work["Rota"].astype("string").fillna("").str.strip()
+    work["PLACA"] = _normalize_plate_series(work["PLACA"])
+    work["Categoria"] = work["Categoria"].apply(_normalize_category_value)
+    work["KM Rodados"] = pd.to_numeric(work["KM Rodados"], errors="coerce").fillna(0.0).clip(lower=0)
+    completed = (
+        work["Status"]
+        .astype("string")
+        .fillna("")
+        .map(_normalize_ascii)
+        .str.casefold()
+        .eq("concluida")
+    )
+    work = work.loc[
+        completed
+        & work["Data"].notna()
+        & work["Rota"].ne("")
+        & work["PLACA"].apply(_ranking_valid_plate)
+    ].copy()
+    if work.empty:
+        return (
+            pd.DataFrame(columns=weight_columns),
+            pd.DataFrame(columns=km_columns),
+            pd.DataFrame(columns=context_columns),
+        )
+
+    city_map: dict[str, list[str]] = {}
+    if not deliveries.empty and {"Rota ID", "Cidade"}.issubset(deliveries.columns):
+        delivery_cities = deliveries[["Rota ID", "Cidade"]].copy()
+        delivery_cities["Rota ID"] = delivery_cities["Rota ID"].astype("string").fillna("").str.strip()
+        delivery_cities["Cidade"] = delivery_cities["Cidade"].astype("string").fillna("").str.strip()
+        city_map = {
+            str(route_id): sorted(
+                {city for city in values if city},
+                key=str.casefold,
+            )
+            for route_id, values in delivery_cities.groupby("Rota ID")["Cidade"]
+        }
+    work["Cidades"] = work["Rota ID"].map(lambda value: city_map.get(str(value), []))
+    context = work[context_columns].copy()
+
+    km_rows = work[["Mes", "Rota", "PLACA", "KM Rodados", "Data", "Rota ID", "Categoria"]].rename(
+        columns={"KM Rodados": "Km Rodados"}
+    )
+
+    weight_rows = pd.DataFrame(columns=weight_columns)
+    if not deliveries.empty and "Rota ID" in deliveries.columns:
+        delivery_rows = deliveries.copy()
+        delivery_rows["Rota ID"] = delivery_rows["Rota ID"].astype("string").fillna("").str.strip()
+        route_details = work[["Rota ID", "Data", "Mes", "Rota", "PLACA", "Categoria"]].copy()
+        delivery_rows = delivery_rows.merge(route_details, on="Rota ID", how="inner")
+        if not delivery_rows.empty:
+            weight_rows = pd.DataFrame(
+                {
+                    "Data": delivery_rows["Data"],
+                    "Mes": delivery_rows["Mes"],
+                    "Cidade": delivery_rows.get("Cidade", ""),
+                    "Rota": delivery_rows["Rota"],
+                    "Peso": pd.to_numeric(delivery_rows.get("Peso Pedido"), errors="coerce").fillna(0.0),
+                    "Valor": pd.to_numeric(delivery_rows.get("Valor Nota"), errors="coerce").fillna(0.0),
+                    "PLACA": delivery_rows["PLACA"],
+                    "Categoria": delivery_rows["Categoria"],
+                    "Rota ID": delivery_rows["Rota ID"],
+                    "_RouteSourceId": delivery_rows.get("Entrega ID", delivery_rows.index).astype("string"),
+                    "_DeliveryCount": 1,
+                }
+            )
+
+    represented_ids = set(weight_rows.get("Rota ID", pd.Series(dtype="string")).astype("string"))
+    missing_routes = work.loc[~work["Rota ID"].astype("string").isin(represented_ids)].copy()
+    if not missing_routes.empty:
+        placeholders = pd.DataFrame(
+            {
+                "Data": missing_routes["Data"],
+                "Mes": missing_routes["Mes"],
+                "Cidade": "",
+                "Rota": missing_routes["Rota"],
+                "Peso": pd.to_numeric(missing_routes["Peso Carga"], errors="coerce").fillna(0.0),
+                "Valor": 0.0,
+                "PLACA": missing_routes["PLACA"],
+                "Categoria": missing_routes["Categoria"],
+                "Rota ID": missing_routes["Rota ID"],
+                "_RouteSourceId": missing_routes["Rota ID"].astype("string"),
+                "_DeliveryCount": 0,
+            }
+        )
+        weight_rows = pd.concat([weight_rows, placeholders], ignore_index=True)
+
+    # Uma linha sem peso para cada dia adicional mantém manutenção, pedágio,
+    # salário e hotel alinhados aos dias reais da viagem sem duplicar entregas.
+    additional_days: list[dict] = []
+    for _, route in work.iterrows():
+        start = pd.to_datetime(route.get("Saida"), errors="coerce")
+        end = pd.to_datetime(route.get("Retorno"), errors="coerce")
+        if pd.isna(start):
+            start = pd.to_datetime(route.get("Data"), errors="coerce")
+        if pd.isna(end):
+            end = start
+        if pd.isna(start) or pd.isna(end):
+            continue
+        for day in pd.date_range(start.normalize(), end.normalize(), freq="D")[1:]:
+            route_id = str(route.get("Rota ID") or "")
+            additional_days.append(
+                {
+                    "Data": day,
+                    "Mes": day.to_period("M").strftime("%Y-%m"),
+                    "Cidade": "",
+                    "Rota": route.get("Rota"),
+                    "Peso": 0.0,
+                    "Valor": 0.0,
+                    "PLACA": route.get("PLACA"),
+                    "Categoria": route.get("Categoria"),
+                    "Rota ID": route_id,
+                    "_RouteSourceId": f"route-day:{route_id}:{day.date().isoformat()}",
+                    "_DeliveryCount": 0,
+                }
+            )
+    if additional_days:
+        weight_rows = pd.concat([weight_rows, pd.DataFrame(additional_days)], ignore_index=True)
+
+    return (
+        weight_rows[weight_columns].reset_index(drop=True),
+        km_rows[km_columns].reset_index(drop=True),
+        context[context_columns].reset_index(drop=True),
+    )
+
+
+def _ranking_location_score(station: object, cities: object) -> float:
+    if station is None or pd.isna(station):
+        return 0.0
+    station_text = re.sub(r"[^a-z0-9 ]+", " ", str(_normalize_ascii(station)).casefold())
+    station_text = re.sub(r"\s+", " ", station_text).strip()
+    if not station_text or not isinstance(cities, (list, tuple, set)):
+        return 0.0
+    ignored = {"posto", "postos", "auto", "rede", "combustivel", "combustiveis", "ltda", "br"}
+    station_tokens = {token for token in station_text.split() if len(token) > 2 and token not in ignored}
+    best = 0.0
+    for city in cities:
+        if city is None or pd.isna(city):
+            continue
+        city_text = re.sub(r"[^a-z0-9 ]+", " ", str(_normalize_ascii(city)).casefold())
+        city_text = re.sub(r"\s+", " ", city_text).strip()
+        if not city_text:
+            continue
+        city_tokens = {token for token in city_text.split() if len(token) > 2}
+        overlap = len(station_tokens & city_tokens) / max(len(city_tokens), 1)
+        similarity = SequenceMatcher(None, station_text, city_text).ratio()
+        exact_bonus = 1.0 if city_text in station_text else 0.0
+        best = max(best, exact_bonus * 2.0 + overlap + similarity * 0.25)
+    return best
+
+
+def _ranking_allocate_fuel_to_imported_routes(
+    df_comb: pd.DataFrame,
+    route_context: pd.DataFrame,
+) -> tuple[pd.DataFrame, list[str]]:
+    """Associa abastecimentos por placa, janela da viagem e proximidade textual."""
+    output_columns = [*df_comb.columns.tolist(), "Rota", "Rota ID", "Criterio Rota"]
+    output_columns = list(dict.fromkeys(output_columns))
+    if df_comb.empty or route_context.empty or not {"Data", "PLACA"}.issubset(df_comb.columns):
+        return pd.DataFrame(columns=output_columns), []
+
+    context = route_context.copy()
+    context["Saida"] = pd.to_datetime(context["Saida"], errors="coerce")
+    context["Retorno"] = pd.to_datetime(context["Retorno"], errors="coerce")
+    context["Data"] = pd.to_datetime(context["Data"], errors="coerce").dt.normalize()
+    context["__Start"] = context["Saida"].combine_first(context["Data"])
+    context["__End"] = context["Retorno"].combine_first(context["__Start"])
+    context["__StartDay"] = context["__Start"].dt.normalize()
+    context["__EndDay"] = context["__End"].dt.normalize()
+    context["PLACA"] = context["PLACA"].astype("string").fillna("").str.strip()
+    context = context.dropna(subset=["__StartDay", "__EndDay"])
+    if context.empty:
+        return pd.DataFrame(columns=output_columns), []
+
+    allocated: list[dict] = []
+    unmatched = 0
+    ambiguous = 0
+    no_location = 0
+    for fuel_index, fuel_row in df_comb.iterrows():
+        fuel_date = pd.to_datetime(fuel_row.get("Data"), errors="coerce")
+        plate = str(fuel_row.get("PLACA") or "").strip()
+        if pd.isna(fuel_date) or not plate:
+            unmatched += 1
+            continue
+        fuel_day = fuel_date.normalize()
+        candidates = context.loc[context["PLACA"].eq(plate)].copy()
+        if candidates.empty:
+            unmatched += 1
+            continue
+        candidates["__DayDistance"] = candidates.apply(
+            lambda row: (
+                0
+                if row["__StartDay"] <= fuel_day <= row["__EndDay"]
+                else min(abs((fuel_day - row["__StartDay"]).days), abs((fuel_day - row["__EndDay"]).days))
+            ),
+            axis=1,
+        )
+        candidates = candidates.loc[candidates["__DayDistance"] <= 1].copy()
+        if candidates.empty:
+            unmatched += 1
+            continue
+        station = fuel_row.get("POSTOS", "")
+        candidates["__LocationScore"] = candidates["Cidades"].map(
+            lambda cities: _ranking_location_score(station, cities)
+        )
+        candidates["__TimeDistance"] = candidates["__Start"].map(
+            lambda value: abs((fuel_date - value).total_seconds()) if pd.notna(value) else float("inf")
+        )
+        min_day = candidates["__DayDistance"].min()
+        candidates = candidates.loc[candidates["__DayDistance"].eq(min_day)]
+        max_location = candidates["__LocationScore"].max()
+        if max_location >= 0.5:
+            candidates = candidates.loc[candidates["__LocationScore"].eq(max_location)]
+            criterion = "placa, período e proximidade do posto"
+        else:
+            no_location += 1
+            min_time = candidates["__TimeDistance"].min()
+            candidates = candidates.loc[candidates["__TimeDistance"].eq(min_time)]
+            criterion = "placa e período; posto sem cidade identificável"
+
+        route_names = candidates["Rota"].astype("string").fillna("").str.strip()
+        unique_route_names = route_names[route_names.ne("")].drop_duplicates().tolist()
+        if len(unique_route_names) > 1:
+            ambiguous += 1
+            criterion += "; valor dividido entre rotas empatadas"
+        divisor = max(len(candidates), 1)
+        for _, candidate in candidates.iterrows():
+            output = fuel_row.to_dict()
+            for value_column in ("Custo", "Litros"):
+                value = pd.to_numeric(pd.Series([output.get(value_column)]), errors="coerce").iloc[0]
+                output[value_column] = float(value) / divisor if pd.notna(value) else 0.0
+            output["Rota"] = candidate["Rota"]
+            output["Rota ID"] = candidate["Rota ID"]
+            output["Criterio Rota"] = criterion
+            output["_FuelSourceId"] = f"fuel:{fuel_index}"
+            output["_RouteSourceId"] = f"fuel:{fuel_index}:{candidate['Rota ID']}"
+            allocated.append(output)
+
+    warnings: list[str] = []
+    if unmatched:
+        warnings.append(
+            f"{unmatched} abastecimento(s) não foram ligados a uma rota: não havia viagem da mesma placa até 1 dia antes/depois."
+        )
+    if no_location:
+        warnings.append(
+            f"Em {no_location} abastecimento(s), o posto não indicava uma cidade reconhecível; foi usada a rota mais próxima no tempo."
+        )
+    if ambiguous:
+        warnings.append(
+            f"{ambiguous} abastecimento(s) ficaram empatados entre rotas e tiveram custo e litros divididos para não duplicar valores."
+        )
+    result = pd.DataFrame(allocated)
+    if result.empty:
+        return pd.DataFrame(columns=output_columns), warnings
+    for column in output_columns:
+        if column not in result.columns:
+            result[column] = pd.NA
+    return result, warnings
+
+
 def _ranking_route_fuel_costs(
     df_route_km: pd.DataFrame,
     df_comb: pd.DataFrame,
@@ -5674,6 +5973,10 @@ def data_frota(params: dict | None = None) -> dict:
     df_peso_all = _apply_plate_categories(load_peso())
     df_peso = _ranking_filter_valid_plates(df_peso_all)
     df_rodagem_rota = _ranking_filter_valid_plates(_apply_plate_categories(load_rodagem_rota()))
+    imported_weight_all, imported_route_km_all, imported_route_context_all = _ranking_imported_route_frames()
+    imported_weight_all = _ranking_filter_valid_plates(imported_weight_all)
+    imported_route_km_all = _ranking_filter_valid_plates(imported_route_km_all)
+    imported_route_context_all = _ranking_filter_valid_plates(imported_route_context_all)
     df_hoteis = _apply_plate_categories(load_hoteis())
     df_salarios_transporte = (
         load_salarios_transporte()
@@ -5687,10 +5990,23 @@ def data_frota(params: dict | None = None) -> dict:
     df_comb_base, df_manu_base, df_ped_base, df_peso_base = categoria_frames
     df_km_base = _ranking_filter_categories(df_km, categorias_filtro)
     df_rodagem_rota_base = _ranking_filter_categories(df_rodagem_rota, categorias_filtro)
+    imported_weight_base = _ranking_filter_categories(imported_weight_all, categorias_filtro)
+    imported_route_km_base = _ranking_filter_categories(imported_route_km_all, categorias_filtro)
+    imported_route_context_base = _ranking_filter_categories(imported_route_context_all, categorias_filtro)
     df_hoteis_base = _ranking_filter_categories(df_hoteis, categorias_filtro)
 
     anos_disponiveis: set[int] = set()
-    year_frames = [df_comb_base, df_manu_base, df_ped_base, df_km_base, df_peso_base, df_peso_all, df_rodagem_rota_base]
+    year_frames = [
+        df_comb_base,
+        df_manu_base,
+        df_ped_base,
+        df_km_base,
+        df_peso_base,
+        df_peso_all,
+        df_rodagem_rota_base,
+        imported_weight_base,
+        imported_route_km_base,
+    ]
     if incluir_hoteis:
         year_frames.append(df_hoteis_base)
     if include_transport_salary:
@@ -5699,7 +6015,17 @@ def data_frota(params: dict | None = None) -> dict:
         anos_disponiveis.update(_unique_years(df_src))
         anos_disponiveis.update(df_src.attrs.get("anos_sheets", []))
 
-    month_frames = [df_comb_base, df_manu_base, df_ped_base, df_km_base, df_peso_base, df_peso_all, df_rodagem_rota_base]
+    month_frames = [
+        df_comb_base,
+        df_manu_base,
+        df_ped_base,
+        df_km_base,
+        df_peso_base,
+        df_peso_all,
+        df_rodagem_rota_base,
+        imported_weight_base,
+        imported_route_km_base,
+    ]
     if incluir_hoteis:
         month_frames.append(df_hoteis_base)
     if include_transport_salary:
@@ -5724,6 +6050,9 @@ def data_frota(params: dict | None = None) -> dict:
     df_peso = _apply_period(df_peso_base)
     df_peso_total = _apply_period(df_peso_all)
     df_rodagem_rota = _apply_period(df_rodagem_rota_base)
+    imported_weight = _apply_period(imported_weight_base)
+    imported_route_km = _apply_period(imported_route_km_base)
+    imported_route_context = _apply_period(imported_route_context_base)
     df_peso_transport_general = _apply_period(df_peso_transport_base)
     df_hoteis_period = _apply_period(df_hoteis_base) if incluir_hoteis else df_hoteis_base.iloc[0:0].copy()
     df_salarios_period = (
@@ -5734,11 +6063,42 @@ def data_frota(params: dict | None = None) -> dict:
 
     df_manu_general = df_manu.copy()
     df_peso_general = df_peso.copy()
-    df_peso_route_eligible = _ranking_eligible_route_weight_rows(
+    legacy_route_weight = _ranking_eligible_route_weight_rows(
         df_peso_general,
         df_rodagem_rota,
     )
-    general_days_by_plate = _ranking_active_days_by_plate(df_peso_general)
+    imported_route_keys = {
+        str(value).strip().casefold()
+        for value in _ranking_route_labels(imported_weight).dropna().tolist()
+        if str(value).strip()
+    }
+    if imported_route_keys and not legacy_route_weight.empty:
+        legacy_route_weight = legacy_route_weight.loc[
+            ~_ranking_route_labels(legacy_route_weight).str.casefold().isin(imported_route_keys)
+        ].copy()
+    if imported_route_keys and not df_rodagem_rota.empty:
+        legacy_route_km = df_rodagem_rota.loc[
+            ~_ranking_route_labels(df_rodagem_rota).str.casefold().isin(imported_route_keys)
+        ].copy()
+    else:
+        legacy_route_km = df_rodagem_rota.copy()
+    df_peso_route_eligible = pd.concat(
+        [legacy_route_weight, imported_weight],
+        ignore_index=True,
+        sort=False,
+    )
+    route_km_available = pd.concat(
+        [legacy_route_km, imported_route_km],
+        ignore_index=True,
+        sort=False,
+    )
+    activity_weight = pd.concat([df_peso_general, imported_weight], ignore_index=True, sort=False)
+    df_peso_transport_general = pd.concat(
+        [df_peso_transport_general, _ranking_filter_categories(imported_weight, ["Transporte"])],
+        ignore_index=True,
+        sort=False,
+    )
+    general_days_by_plate = _ranking_active_days_by_plate(activity_weight)
     general_maintenance_by_plate = _ranking_sum_by_plate(df_manu_general, "Custo")
     maintenance_daily_by_plate = {
         plate: general_maintenance_by_plate.get(plate, 0.0) / active_days
@@ -5771,10 +6131,19 @@ def data_frota(params: dict | None = None) -> dict:
         else 0.0
     )
     daily_rates = _ranking_freighter_daily_rates()
-    route_fuel_costs_all, _route_fuel_warnings_all = _ranking_route_fuel_costs(
-        df_rodagem_rota,
+    imported_fuel_costs, _imported_fuel_warnings = _ranking_allocate_fuel_to_imported_routes(
+        df_comb,
+        imported_route_context,
+    )
+    legacy_fuel_costs, legacy_fuel_warnings = _ranking_route_fuel_costs(
+        legacy_route_km,
         df_comb,
         df_km,
+    )
+    route_fuel_costs_all = pd.concat(
+        [legacy_fuel_costs, imported_fuel_costs],
+        ignore_index=True,
+        sort=False,
     )
     route_cost_gain_analysis = _ranking_route_cost_gain_analysis(
         _ranking_filter_plates(df_peso_route_eligible, placas),
@@ -5806,13 +6175,47 @@ def data_frota(params: dict | None = None) -> dict:
             else []
         )
         if route_plates:
-            selected_route_km = _ranking_filter_routes(df_rodagem_rota, rotas)
+            selected_route_km = _ranking_filter_routes(route_km_available, rotas)
             selected_route_km = _ranking_filter_plates(selected_route_km, route_plates)
             selected_route_km = _ranking_filter_plates(selected_route_km, placas)
-            df_comb, route_fuel_warnings = _ranking_route_fuel_costs(
-                selected_route_km,
-                df_comb,
-                df_km,
+            df_comb = _ranking_filter_routes(route_fuel_costs_all, rotas)
+            df_comb = _ranking_filter_plates(df_comb, route_plates)
+            df_comb = _ranking_filter_plates(df_comb, placas)
+            selected_imported = bool(
+                imported_route_keys
+                & {str(route).strip().casefold() for route in rotas if str(route).strip()}
+            )
+            if selected_imported:
+                if df_comb.empty:
+                    route_fuel_warnings.append(
+                        "Nenhum abastecimento da mesma placa foi encontrado durante a viagem ou até 1 dia antes/depois."
+                    )
+                elif "Criterio Rota" in df_comb.columns:
+                    criteria = df_comb["Criterio Rota"].astype("string").fillna("")
+                    source_ids = (
+                        df_comb["_FuelSourceId"].astype("string")
+                        if "_FuelSourceId" in df_comb.columns
+                        else pd.Series(df_comb.index.astype("string"), index=df_comb.index)
+                    )
+                    no_city_count = int(
+                        source_ids.loc[criteria.str.contains("sem cidade", case=False, regex=False)].nunique()
+                    )
+                    split_count = int(
+                        source_ids.loc[criteria.str.contains("dividido", case=False, regex=False)].nunique()
+                    )
+                    if no_city_count:
+                        route_fuel_warnings.append(
+                            f"Em {no_city_count} abastecimento(s), o posto não indicava uma cidade reconhecível; "
+                            "foi usada a rota mais próxima no tempo."
+                        )
+                    if split_count:
+                        route_fuel_warnings.append(
+                            f"{split_count} abastecimento(s) tiveram custo e litros divididos entre rotas empatadas."
+                        )
+            route_fuel_warnings.extend(
+                warning
+                for warning in legacy_fuel_warnings
+                if any(str(route).casefold() in warning.casefold() for route in rotas)
             )
             needs_mileage = (
                 "Categoria" in df_peso.columns
@@ -5822,11 +6225,10 @@ def data_frota(params: dict | None = None) -> dict:
                 route_fuel_warnings.append(
                     "Nenhuma rodagem em KM foi cadastrada para as rotas, placas e meses selecionados."
                 )
-            df_comb = _ranking_filter_route_day_rows(df_comb, df_peso)
             df_ped = _ranking_filter_route_day_rows(df_ped, df_peso)
-            df_comb_metrics = _ranking_filter_plates(df_comb_metrics, route_plates)
+            df_comb_metrics = df_comb.copy()
             df_manu = _ranking_filter_plates(df_manu, route_plates)
-            df_km = _ranking_filter_plates(df_km, route_plates)
+            df_km = selected_route_km.copy()
         else:
             df_comb = df_comb.iloc[0:0].copy()
             df_ped = df_ped.iloc[0:0].copy()
@@ -5855,10 +6257,16 @@ def data_frota(params: dict | None = None) -> dict:
     service_days_map = _ranking_active_days_by_plate(df_peso)
 
     categorias = set()
-    for df_src in source_frames:
+    for df_src in [*source_frames, imported_weight_all]:
         categorias.update(_unique_sorted(df_src, "Categoria"))
 
-    category_map = _ranking_category_map(df_comb_base, df_manu_base, df_ped_base, df_peso_base)
+    category_map = _ranking_category_map(
+        df_comb_base,
+        df_manu_base,
+        df_ped_base,
+        df_peso_base,
+        imported_weight_base,
+    )
     total_comb = _ranking_sum_by_plate(df_comb, "Custo")
     if rotas:
         df_manu_costs = _ranking_daily_plate_costs(
@@ -6046,7 +6454,11 @@ def data_frota(params: dict | None = None) -> dict:
         if "Peso" in df_peso_total.columns
         else 0.0
     )
-    total_entregas = int(len(df_peso_total))
+    total_entregas = (
+        int(pd.to_numeric(df_peso_total["_DeliveryCount"], errors="coerce").fillna(1).sum())
+        if "_DeliveryCount" in df_peso_total.columns
+        else int(len(df_peso_total))
+    )
     total_dias_servico = sum(row["dias_servico"] for row in ranking)
     peso_sem_rota = (
         float(

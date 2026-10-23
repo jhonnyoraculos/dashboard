@@ -53,7 +53,7 @@ _backend_aluguel_period_ready = {"Inicio", "Fim"}.issubset(
 )
 _backend_aluguel_monthly_ready = getattr(backend, "BACKEND_BUILD_VERSION", "") == "aluguel-multiplicar-meses-v1"
 _backend_pedagio_chart_ready = getattr(backend, "PEDAGIO_CHART_VERSION", "") == "all-types-v1"
-_backend_routes_ready = getattr(backend, "ROUTES_BUILD_VERSION", "") == "rotas-pdf-v11"
+_backend_routes_ready = getattr(backend, "ROUTES_BUILD_VERSION", "") == "rotas-pdf-v12"
 if not _backend_features_ready or not _backend_aluguel_period_ready or not _backend_aluguel_monthly_ready or not _backend_pedagio_chart_ready or not _backend_routes_ready:
     backend = importlib.reload(backend)
 
@@ -64,8 +64,8 @@ MUTED = "#6B7280"
 CARD_BORDER = "#c2d2f3"
 LOGO_PATH = Path(__file__).parent / "static" / "logo-jr.png"
 CURRENT_YEAR = date.today().year
-APP_VERSION = "route-manifests-pdf-v14"
-RANK_ROUTES_ENABLED = False
+APP_VERSION = "route-manifests-pdf-v15"
+RANK_ROUTES_ENABLED = True
 ROUTE_CACHE_TTL_SECONDS = max(int(os.environ.get("JR_ROUTE_CACHE_TTL_SECONDS", "180") or 180), 30)
 DATA_EDITOR_PAGE_SIZE = 100
 DATA_EDITOR_ALL_PAGES = "__todos_os_registros__"
@@ -6501,9 +6501,17 @@ def render_frota() -> None:
     with st.container(key="frota_kpis"):
         render_kpis(kpi_items)
 
+    if selected_routes and not freteiro_mode:
+        st.info(
+            "Combustível das rotas: os abastecimentos são ligados pela placa e pelo período da viagem. "
+            "Quando existe mais de uma rota possível, o sistema compara o local do posto com as cidades "
+            "atendidas; sem cidade identificável, usa a rota mais próxima no tempo e informa abaixo.",
+            icon="⛽",
+        )
+
     route_km_warnings = data.get("avisos_rodagem_rota", []) or []
     if selected_routes and route_km_warnings:
-        st.warning("Revise a rodagem em KM usada no cálculo de combustível da rota:")
+        st.warning("Revise os dados usados no cálculo das rotas:")
         for warning in route_km_warnings[:8]:
             st.write(f"- {warning}")
         if len(route_km_warnings) > 8:
