@@ -58,7 +58,7 @@ DB_TABLES = {
 }
 DB_METADATA_TABLE = "dashboard_metadata"
 BACKEND_BUILD_VERSION = "aluguel-multiplicar-meses-v1"
-ROUTES_BUILD_VERSION = "rotas-pdf-v7"
+ROUTES_BUILD_VERSION = "rotas-pdf-v8"
 PEDAGIO_CHART_VERSION = "all-types-v1"
 BACKUP_METADATA_KEY = "backup.last_downloaded_at"
 _DB_ENGINE = None
@@ -1982,6 +1982,65 @@ def rename_plate(old_plate, new_plate, categoria: str, diaria: float | None = No
     return version
 
 
+def _complete_pending_freighter_routes(conn, route_table: str, placas_table: str, updated_at: datetime) -> int:
+    """Conclui freteiros sem KM, preservando horários já extraídos ou informados."""
+    from sqlalchemy import text
+
+    result = conn.execute(
+        text(
+            f"""
+            WITH pending_freighters AS (
+                SELECT
+                    r."Rota ID",
+                    COALESCE(
+                        r."Saida",
+                        COALESCE(r."Data", r."Previsao", r."Emissao", CURRENT_TIMESTAMP)::DATE
+                            + TIME '07:00'
+                    ) AS auto_saida
+                FROM {route_table} AS r
+                LEFT JOIN {placas_table} AS p ON p."PLACA" = r."PLACA"
+                WHERE LOWER(TRIM(COALESCE(p."Categoria", r."Categoria", ''))) = 'freteiro'
+                  AND (
+                      r."Saida" IS NULL
+                      OR r."Retorno" IS NULL
+                      OR COALESCE(r."Status", '') <> 'Concluída'
+                  )
+            )
+            UPDATE {route_table} AS r
+            SET "Saida" = pending.auto_saida,
+                "Retorno" = COALESCE(r."Retorno", pending.auto_saida + INTERVAL '10 hours'),
+                "KM Rodados" = NULL,
+                "Categoria" = 'Freteiro',
+                "Status" = 'Concluída',
+                "Atualizado Em" = :updated_at
+            FROM pending_freighters AS pending
+            WHERE r."Rota ID" = pending."Rota ID"
+            """
+        ),
+        {"updated_at": updated_at},
+    )
+    return int(result.rowcount or 0)
+
+
+def auto_complete_freighter_routes() -> dict:
+    """Conclui automaticamente todas as rotas pendentes de placas Freteiro."""
+    updated_at = datetime.now(timezone.utc)
+    version = updated_at.isoformat()
+    route_table = _quote_identifier(DB_TABLES["rotas"])
+    placas_table = _quote_identifier(DB_TABLES["placas"])
+    with _db_engine().begin() as conn:
+        _ensure_dataset_table(conn, "rotas")
+        _ensure_dataset_table(conn, "placas")
+        updated = _complete_pending_freighter_routes(conn, route_table, placas_table, updated_at)
+        if updated:
+            _write_metadata(conn, "rotas.version", version)
+            _write_metadata(conn, "import.version", version)
+
+    if updated:
+        _clear_dataset_cache("rotas")
+    return {"updated": updated, "version": version}
+
+
 def import_route_manifests(routes: list[dict], deliveries: list[dict]) -> dict:
     """Importa manifestos sem tocar nas tabelas de peso ou de rodagem legadas."""
     if not routes:
@@ -1999,7 +2058,8 @@ def import_route_manifests(routes: list[dict], deliveries: list[dict]) -> dict:
     delivery_table = _quote_identifier(DB_TABLES["rota_entregas"])
     route_columns = _ROTAS_COLUMNS
     delivery_columns = _ROTA_ENTREGAS_COLUMNS
-    version = datetime.now(timezone.utc).isoformat()
+    imported_at = datetime.now(timezone.utc)
+    version = imported_at.isoformat()
 
     extracted_columns = [
         column
@@ -2051,6 +2111,13 @@ def import_route_manifests(routes: list[dict], deliveries: list[dict]) -> dict:
                     {"placa": row["PLACA"], "categoria": row["Categoria"]},
                 )
 
+        auto_completed_freighters = _complete_pending_freighter_routes(
+            conn,
+            route_table,
+            _quote_identifier(DB_TABLES["placas"]),
+            imported_at,
+        )
+
         conn.execute(
             text(f'DELETE FROM {delivery_table} WHERE "Rota ID" = ANY(:route_ids)'),
             {"route_ids": route_ids},
@@ -2081,6 +2148,7 @@ def import_route_manifests(routes: list[dict], deliveries: list[dict]) -> dict:
         "rotas": len(prepared_routes),
         "entregas": len(prepared_deliveries),
         "rota_ids": route_ids,
+        "freteiros_concluidos": auto_completed_freighters,
         "version": version,
     }
 

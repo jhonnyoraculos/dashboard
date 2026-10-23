@@ -42,6 +42,7 @@ _backend_features_ready = all(
         "load_rotas",
         "load_rota_entregas",
         "import_route_manifests",
+        "auto_complete_freighter_routes",
         "update_route_operation",
         "update_route_history_rows",
     )
@@ -51,7 +52,7 @@ _backend_aluguel_period_ready = {"Inicio", "Fim"}.issubset(
 )
 _backend_aluguel_monthly_ready = getattr(backend, "BACKEND_BUILD_VERSION", "") == "aluguel-multiplicar-meses-v1"
 _backend_pedagio_chart_ready = getattr(backend, "PEDAGIO_CHART_VERSION", "") == "all-types-v1"
-_backend_routes_ready = getattr(backend, "ROUTES_BUILD_VERSION", "") == "rotas-pdf-v7"
+_backend_routes_ready = getattr(backend, "ROUTES_BUILD_VERSION", "") == "rotas-pdf-v8"
 if not _backend_features_ready or not _backend_aluguel_period_ready or not _backend_aluguel_monthly_ready or not _backend_pedagio_chart_ready or not _backend_routes_ready:
     backend = importlib.reload(backend)
 
@@ -62,7 +63,7 @@ MUTED = "#6B7280"
 CARD_BORDER = "#c2d2f3"
 LOGO_PATH = Path(__file__).parent / "static" / "logo-jr.png"
 CURRENT_YEAR = date.today().year
-APP_VERSION = "route-manifests-pdf-v7"
+APP_VERSION = "route-manifests-pdf-v8"
 RANK_ROUTES_ENABLED = False
 ROUTE_CACHE_TTL_SECONDS = max(int(os.environ.get("JR_ROUTE_CACHE_TTL_SECONDS", "180") or 180), 30)
 DATA_EDITOR_PAGE_SIZE = 100
@@ -11120,8 +11121,15 @@ def _render_route_pdf_import(plate_map: dict[str, str]) -> None:
             st.exception(exc)
             return
         clear_cached_reads()
+        freighter_count = int(result.get("freteiros_concluidos", 0))
+        freighter_message = (
+            f" {freighter_count} rota(s) de freteiro foram concluídas automaticamente, sem KM."
+            if freighter_count
+            else ""
+        )
         st.session_state["route_import_message"] = (
             f"Importação concluída: {result['rotas']} rota(s) e {result['entregas']} entrega(s) registradas."
+            f"{freighter_message}"
         )
         st.rerun()
 
@@ -11136,9 +11144,21 @@ def _route_row_datetime(row: pd.Series, column: str, fallback: datetime) -> date
 def _render_route_completion(plate_map: dict[str, str]) -> None:
     st.markdown("### Finalizar dados operacionais da rota")
     st.caption(
-        "Complete a saída real e o retorno. O KM é obrigatório para a frota própria e opcional para freteiros. "
+        "Complete a saída real e o retorno. O KM é obrigatório para a frota própria. As rotas de freteiros são "
+        "concluídas automaticamente, sem KM, usando 07:00–17:00 quando o PDF não informa horários. "
         "Esses campos alimentam o cálculo de duração, dias e os rankings de motorista, placa e rota."
     )
+    try:
+        auto_result = backend.auto_complete_freighter_routes()
+    except Exception as exc:
+        st.error(f"Não foi possível concluir automaticamente as rotas de freteiros: {exc}")
+        auto_result = {"updated": 0}
+    auto_completed = int(auto_result.get("updated", 0))
+    if auto_completed:
+        clear_cached_reads()
+        st.success(
+            f"{auto_completed} rota(s) de freteiro foram concluídas automaticamente com os horários padrão e sem KM."
+        )
     try:
         routes = backend.load_rotas()
     except Exception as exc:
@@ -11226,7 +11246,10 @@ def _render_route_completion(plate_map: dict[str, str]) -> None:
             )
         if is_freighter:
             km = None
-            st.info("Placa classificada como Freteiro: não é necessário informar os KM desta rota.")
+            st.info(
+                "Esta rota de freteiro já é salva automaticamente sem KM. Use o botão abaixo somente se quiser "
+                "corrigir os horários, o motorista ou a observação."
+            )
         else:
             grouped_km = pd.to_numeric(routes.loc[same_plate_day, "KM Rodados"], errors="coerce")
             stored_km = grouped_km.sum(min_count=1)
@@ -11244,7 +11267,8 @@ def _render_route_completion(plate_map: dict[str, str]) -> None:
         raw_observation = row.get("Observacao")
         observation_default = "" if pd.isna(raw_observation) else clean_text(raw_observation)
         observation = st.text_area("Observação operacional", value=observation_default)
-        submitted = st.form_submit_button("Salvar e concluir rota", type="primary", width="stretch")
+        submit_label = "Atualizar dados do freteiro" if is_freighter else "Salvar e concluir rota"
+        submitted = st.form_submit_button(submit_label, type="primary", width="stretch")
         if submitted:
             try:
                 result = backend.update_route_operation(
