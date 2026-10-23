@@ -59,7 +59,7 @@ DB_TABLES = {
 }
 DB_METADATA_TABLE = "dashboard_metadata"
 BACKEND_BUILD_VERSION = "aluguel-multiplicar-meses-v1"
-ROUTES_BUILD_VERSION = "rotas-pdf-v12"
+ROUTES_BUILD_VERSION = "rotas-pdf-v13"
 PEDAGIO_CHART_VERSION = "all-types-v1"
 BACKUP_METADATA_KEY = "backup.last_downloaded_at"
 _DB_ENGINE = None
@@ -5137,7 +5137,15 @@ def _ranking_imported_route_frames() -> tuple[pd.DataFrame, pd.DataFrame, pd.Dat
 
     weight_rows = pd.DataFrame(columns=weight_columns)
     if not deliveries.empty and "Rota ID" in deliveries.columns:
+        delivery_columns = ["Entrega ID", "Rota ID", "Cidade", "Peso Pedido", "Valor Nota"]
         delivery_rows = deliveries.copy()
+        for column in delivery_columns:
+            if column not in delivery_rows.columns:
+                delivery_rows[column] = pd.NA
+        # O Neon pode conter colunas extras de importações anteriores (como
+        # Mes, Data ou PLACA). Se elas entrarem no merge, o pandas cria
+        # sufixos _x/_y e a coluna oficial da rota deixa de ser encontrada.
+        delivery_rows = delivery_rows[delivery_columns].copy()
         delivery_rows["Rota ID"] = delivery_rows["Rota ID"].astype("string").fillna("").str.strip()
         route_details = work[["Rota ID", "Data", "Mes", "Rota", "PLACA", "Categoria"]].copy()
         delivery_rows = delivery_rows.merge(route_details, on="Rota ID", how="inner")
