@@ -12,6 +12,7 @@ import re
 import subprocess
 import unicodedata
 import zipfile
+from difflib import SequenceMatcher
 from io import BytesIO
 from datetime import date, datetime, time as datetime_time, timedelta, timezone
 from pathlib import Path
@@ -23,7 +24,7 @@ import pandas as pd
 import plotly.graph_objects as go
 import streamlit as st
 import streamlit.components.v1 as components
-from PIL import Image, ImageDraw, ImageFilter, ImageFont
+from PIL import Image, ImageDraw, ImageEnhance, ImageFilter, ImageFont, ImageOps
 
 import app as backend
 from route_pdf import parse_route_pdf
@@ -64,7 +65,7 @@ MUTED = "#6B7280"
 CARD_BORDER = "#c2d2f3"
 LOGO_PATH = Path(__file__).parent / "static" / "logo-jr.png"
 CURRENT_YEAR = date.today().year
-APP_VERSION = "route-manifests-pdf-v18"
+APP_VERSION = "fuel-receipt-photo-v1"
 RANK_ROUTES_ENABLED = True
 ROUTE_CACHE_TTL_SECONDS = max(int(os.environ.get("JR_ROUTE_CACHE_TTL_SECONDS", "180") or 180), 30)
 DATA_EDITOR_PAGE_SIZE = 100
@@ -8996,6 +8997,188 @@ def _combustivel_rows_from_sheet(df: pd.DataFrame, plate_map: dict[str, str]) ->
     return rows, errors
 
 
+def _receipt_search_text(value: object) -> str:
+    text = unicodedata.normalize("NFKD", clean_text(value)).encode("ascii", "ignore").decode("ascii").upper()
+    text = re.sub(r"(?<=\d)\s*([,.])\s*(?=\d)", r"\1", text)
+    for mistaken, corrected in {
+        "TOTA1": "TOTAL",
+        "VAL0R": "VALOR",
+        "PR0DUTO": "PRODUTO",
+        "RAZA0": "RAZAO",
+        "P1ACA": "PLACA",
+        "L1TROS": "LITROS",
+    }.items():
+        text = text.replace(mistaken, corrected)
+    return re.sub(r"[ \t]+", " ", text)
+
+
+def _receipt_compact(value: object) -> str:
+    return re.sub(r"[^A-Z0-9]", "", _receipt_search_text(value))
+
+
+def _receipt_registered_match(candidate: str, options: list[str], *, minimum: float = 0.58) -> str:
+    candidate_key = _receipt_compact(candidate)
+    if not candidate_key or not options:
+        return ""
+
+    best_option = ""
+    best_score = 0.0
+    for option in options:
+        option_key = _receipt_compact(option)
+        if not option_key:
+            continue
+        if candidate_key == option_key:
+            return option
+        containment = 0.96 if option_key in candidate_key or candidate_key in option_key else 0.0
+        similarity = SequenceMatcher(None, candidate_key, option_key).ratio()
+        candidate_tokens = set(re.findall(r"[A-Z0-9]+", _receipt_search_text(candidate)))
+        option_tokens = set(re.findall(r"[A-Z0-9]+", _receipt_search_text(option)))
+        token_score = len(candidate_tokens & option_tokens) / max(len(option_tokens), 1)
+        score = max(containment, similarity, token_score * 0.9)
+        if score > best_score:
+            best_option, best_score = option, score
+    return best_option if best_score >= minimum else ""
+
+
+def _receipt_fuel_name(product: str) -> str:
+    key = _receipt_compact(product)
+    if "ARLA" in key:
+        return "Arla 32" if "32" in key else "Arla"
+    if "DIESEL" in key or "OLEO" in key:
+        if "S10" in key or "S010" in key:
+            return "Diesel S10"
+        if "S50" in key or "S050" in key:
+            return "Diesel S50"
+        return "Diesel"
+    if "GASOLINA" in key:
+        return "Gasolina Aditivada" if "ADIT" in key else "Gasolina Comum"
+    if "ETANOL" in key or "ALCOOL" in key:
+        return "Etanol"
+    return clean_text(product).strip()
+
+
+def _receipt_number(text: str, labels: list[str]) -> float | None:
+    for label in labels:
+        match = re.search(
+            rf"(?:{label})\s*(?:\(?\s*R?\$?\s*\)?)?\s*[:.=\-]*\s*"
+            rf"([0-9]{{1,3}}(?:\.[0-9]{{3}})+,[0-9]{{1,3}}|[0-9]{{1,7}}(?:[.,][0-9]{{1,3}})?)",
+            text,
+            flags=re.IGNORECASE,
+        )
+        if match:
+            parsed = _parse_brl_number(match.group(1))
+            if parsed is not None:
+                return parsed
+    return None
+
+
+def _parse_fuel_receipt_text(
+    raw_text: str,
+    plate_map: dict[str, str],
+    fuel_options: list[str],
+    posto_options: list[str],
+) -> dict[str, object]:
+    lines = [clean_text(line).strip() for line in raw_text.splitlines() if clean_text(line).strip()]
+    search_lines = [_receipt_search_text(line) for line in lines]
+    search_text = "\n".join(search_lines)
+    compact_text = _receipt_compact(search_text)
+
+    receipt_date = None
+    date_match = re.search(
+        r"(?:DATA(?:\s+DA\s+COMPRA)?|DATA/HORA(?:\s+IMPRESSAO)?)\D{0,24}(\d{1,2}[./-]\d{1,2}[./-]\d{2,4})",
+        search_text,
+    )
+    if date_match is None:
+        date_match = re.search(r"\b(\d{1,2}[./-]\d{1,2}[./-]\d{2,4})\b", search_text)
+    if date_match:
+        parsed_date = _parse_sheet_date(date_match.group(1))
+        receipt_date = parsed_date[0] if parsed_date else None
+
+    raw_plate = ""
+    plate_match = re.search(r"PLACA\D{0,18}([A-Z]{3}\s*[- ]?\s*[0-9][A-Z0-9][0-9]{2}|[A-Z]{3}\s*[- ]?\s*[0-9]{4})", search_text)
+    if plate_match:
+        normalized_plate = backend._normalize_plate_value(plate_match.group(1))
+        raw_plate = "" if pd.isna(normalized_plate) else str(normalized_plate)
+    registered_plate = next((plate for plate in plate_map if _receipt_compact(plate) == _receipt_compact(raw_plate)), "")
+    if not registered_plate:
+        plate_hits = [plate for plate in plate_map if _receipt_compact(plate) and _receipt_compact(plate) in compact_text]
+        if len(plate_hits) == 1:
+            registered_plate = plate_hits[0]
+            raw_plate = raw_plate or registered_plate
+
+    product = ""
+    station = ""
+    for index, line in enumerate(search_lines):
+        if not product and re.search(r"\bPRODUTO\b", line):
+            product = re.split(r"\bPRODUTO\b\s*[:.\-]*", line, maxsplit=1)[-1].strip(" :-.")
+            if not product and index + 1 < len(lines):
+                product = lines[index + 1]
+        if not station and re.search(r"\b(?:RAZAO|POSTO)\b", line):
+            candidate = re.split(r"\b(?:RAZAO|POSTO)\b\s*[:.\-]*", line, maxsplit=1)[-1].strip(" :-.")
+            station = f"POSTO {candidate}" if line.startswith("POSTO") and not candidate.startswith("POSTO") else candidate
+
+    fuel_hint = _receipt_fuel_name(product)
+    registered_fuel = _receipt_registered_match(fuel_hint, fuel_options, minimum=0.55)
+    if not registered_fuel:
+        registered_fuel = next(
+            (option for option in fuel_options if _receipt_compact(option) and _receipt_compact(option) in compact_text),
+            "",
+        )
+
+    registered_station = _receipt_registered_match(station, posto_options, minimum=0.55)
+    if not registered_station:
+        registered_station = next(
+            (option for option in posto_options if _receipt_compact(option) and _receipt_compact(option) in compact_text),
+            "",
+        )
+
+    liters = _receipt_number(search_text, [r"QTDE", r"QTD", r"QUANTIDADE", r"LITROS?"])
+    cost = _receipt_number(search_text, [r"TOTAL\s*\(?\s*R?\$?\s*\)?", r"VALOR\s*R?\$?"])
+
+    return {
+        "date": receipt_date,
+        "plate": registered_plate,
+        "raw_plate": raw_plate,
+        "fuel": registered_fuel,
+        "raw_fuel": product,
+        "station": registered_station,
+        "raw_station": station,
+        "liters": liters,
+        "cost": cost,
+        "raw_text": raw_text,
+    }
+
+
+@st.cache_resource(show_spinner=False)
+def _fuel_receipt_ocr_engine():
+    from rapidocr import RapidOCR
+
+    return RapidOCR()
+
+
+@st.cache_data(show_spinner=False, max_entries=24)
+def _read_fuel_receipt_image(image_bytes: bytes) -> dict[str, object]:
+    import numpy as np
+
+    image = ImageOps.exif_transpose(Image.open(BytesIO(image_bytes))).convert("RGB")
+    longest_side = max(image.size)
+    if longest_side > 2800:
+        ratio = 2800 / longest_side
+        image = image.resize((max(int(image.width * ratio), 1), max(int(image.height * ratio), 1)), Image.Resampling.LANCZOS)
+    image = ImageOps.autocontrast(image.convert("L"), cutoff=1).convert("RGB")
+    image = ImageEnhance.Contrast(image).enhance(1.25)
+    image = ImageEnhance.Sharpness(image).enhance(1.35)
+
+    result = _fuel_receipt_ocr_engine()(np.asarray(image))
+    lines = [clean_text(value).strip() for value in (getattr(result, "txts", None) or []) if clean_text(value).strip()]
+    scores = [float(value) for value in (getattr(result, "scores", None) or [])]
+    return {
+        "text": "\n".join(lines),
+        "confidence": (sum(scores) / len(scores)) if scores else 0.0,
+        "line_count": len(lines),
+    }
+
+
 def _km_rows_from_sheet(df: pd.DataFrame) -> tuple[list[dict], list[str]]:
     header_map = {_normalize_sheet_header(column): column for column in df.columns}
     aliases = {
@@ -10151,6 +10334,188 @@ def _render_combustivel_sheet_import(plate_map: dict[str, str]) -> None:
                 f"{skipped_rows} já existente(s) mantido(s)."
             )
             st.rerun()
+
+
+@st.fragment
+def _render_combustivel_photo_import(
+    plate_map: dict[str, str],
+    fuel_options: list[str],
+    posto_options: list[str],
+) -> None:
+    with st.expander("Adicionar combustível por foto", expanded=False):
+        st.caption(
+            "Envie uma foto nítida do comprovante ou tire a foto pelo celular. "
+            "O sistema lê os dados e permite conferir tudo antes de salvar."
+        )
+        source = st.radio(
+            "Como deseja informar a foto?",
+            ["Enviar uma foto", "Tirar uma foto agora"],
+            horizontal=True,
+            key="cad_comb_receipt_source",
+        )
+        if source == "Tirar uma foto agora":
+            uploaded = st.camera_input("Fotografe o comprovante inteiro", key="cad_comb_receipt_camera")
+        else:
+            uploaded = st.file_uploader(
+                "Selecione a foto do comprovante",
+                type=["jpg", "jpeg", "png", "webp"],
+                key="cad_comb_receipt_upload",
+            )
+        if uploaded is None:
+            return
+
+        image_bytes = uploaded.getvalue()
+        image_hash = hashlib.sha256(image_bytes).hexdigest()
+        st.image(image_bytes, caption="Foto que será lida", width=360)
+        if st.button("Ler dados da foto", type="primary", width="stretch", key="cad_comb_receipt_analyze"):
+            try:
+                with st.spinner("Lendo o comprovante e conferindo os cadastros..."):
+                    ocr_result = _read_fuel_receipt_image(image_bytes)
+                    if not clean_text(ocr_result.get("text")).strip():
+                        raise ValueError("Nenhum texto legível foi encontrado na foto.")
+                    parsed = _parse_fuel_receipt_text(
+                        clean_text(ocr_result.get("text")),
+                        plate_map,
+                        fuel_options,
+                        posto_options,
+                    )
+                    parsed.update(
+                        {
+                            "image_hash": image_hash,
+                            "confidence": float(ocr_result.get("confidence") or 0.0),
+                            "line_count": int(ocr_result.get("line_count") or 0),
+                        }
+                    )
+                    st.session_state["cad_comb_receipt_result"] = parsed
+                    st.session_state.pop("cad_comb_receipt_saved_hash", None)
+            except Exception as exc:
+                st.error("Não foi possível ler essa foto. Tente enquadrar somente o comprovante, com boa luz e sem sombras.")
+                st.exception(exc)
+                return
+
+        parsed = st.session_state.get("cad_comb_receipt_result") or {}
+        if parsed.get("image_hash") != image_hash:
+            return
+
+        plate_options = list(plate_map)
+        detected_plate = clean_text(parsed.get("plate"))
+        detected_fuel = clean_text(parsed.get("fuel"))
+        detected_station = clean_text(parsed.get("station"))
+        missing_labels = []
+        if not detected_plate:
+            missing_labels.append("placa")
+        if not detected_fuel:
+            missing_labels.append("tipo de combustível")
+        if not detected_station:
+            missing_labels.append("posto")
+        if parsed.get("liters") is None:
+            missing_labels.append("litros")
+        if parsed.get("cost") is None:
+            missing_labels.append("valor")
+        if parsed.get("date") is None:
+            missing_labels.append("data")
+
+        st.success(
+            f"Leitura concluída: {int(parsed.get('line_count') or 0)} linha(s) encontradas. "
+            "Confira os campos abaixo antes de salvar."
+        )
+        if missing_labels:
+            st.warning("Confira e complete: " + ", ".join(missing_labels) + ".")
+        raw_plate = clean_text(parsed.get("raw_plate"))
+        raw_fuel = clean_text(parsed.get("raw_fuel"))
+        raw_station = clean_text(parsed.get("raw_station"))
+        if raw_plate and not detected_plate:
+            st.info(f"A foto parece indicar a placa {raw_plate}, mas ela não foi localizada entre as placas cadastradas.")
+        if raw_fuel and not detected_fuel:
+            st.info(f"Produto lido: {raw_fuel}. Selecione abaixo o combustível já cadastrado correspondente.")
+        if raw_station and not detected_station:
+            st.info(f"Posto lido: {raw_station}. Selecione abaixo o posto já cadastrado correspondente.")
+
+        form_key = image_hash[:12]
+        with st.form(f"form_combustivel_foto_{form_key}"):
+            c1, c2, c3 = st.columns(3)
+            with c1:
+                receipt_date = st.date_input(
+                    "Data",
+                    value=parsed.get("date") or date.today(),
+                    key=f"cad_comb_receipt_date_{form_key}",
+                )
+                plate = st.selectbox(
+                    "Placa cadastrada",
+                    plate_options,
+                    index=plate_options.index(detected_plate) if detected_plate in plate_options else None,
+                    placeholder="Selecione a placa",
+                    disabled=not plate_options,
+                    key=f"cad_comb_receipt_plate_{form_key}",
+                )
+            with c2:
+                fuel = st.selectbox(
+                    "Combustível cadastrado",
+                    fuel_options,
+                    index=fuel_options.index(detected_fuel) if detected_fuel in fuel_options else None,
+                    placeholder="Selecione o combustível",
+                    disabled=not fuel_options,
+                    key=f"cad_comb_receipt_fuel_{form_key}",
+                )
+                station = st.selectbox(
+                    "Posto cadastrado",
+                    posto_options,
+                    index=posto_options.index(detected_station) if detected_station in posto_options else None,
+                    placeholder="Selecione o posto",
+                    disabled=not posto_options,
+                    key=f"cad_comb_receipt_station_{form_key}",
+                )
+            with c3:
+                liters = st.number_input(
+                    "Litros",
+                    min_value=0.0,
+                    value=float(parsed.get("liters") or 0.0),
+                    step=0.001,
+                    format="%.3f",
+                    key=f"cad_comb_receipt_liters_{form_key}",
+                )
+                cost = st.number_input(
+                    "Valor total",
+                    min_value=0.0,
+                    value=float(parsed.get("cost") or 0.0),
+                    step=0.01,
+                    format="%.2f",
+                    key=f"cad_comb_receipt_cost_{form_key}",
+                )
+            already_saved = st.session_state.get("cad_comb_receipt_saved_hash") == image_hash
+            submitted = st.form_submit_button(
+                "Comprovante já salvo" if already_saved else "Conferi os dados — salvar combustível",
+                type="primary",
+                width="stretch",
+                disabled=already_saved,
+            )
+
+        if submitted:
+            if liters <= 0 or cost <= 0:
+                st.warning("Informe uma quantidade de litros e um valor total maiores que zero.")
+            elif _save_entry(
+                "combustivel",
+                {
+                    "Data": receipt_date,
+                    "Mes": _entry_month(receipt_date),
+                    "Litros": liters,
+                    "Custo": cost,
+                    "Combustivel": fuel or "",
+                    "POSTOS": station or "",
+                    "PLACA": plate or "",
+                    "Categoria": plate_map.get(plate or "", "Transporte"),
+                },
+                required=["Data", "PLACA", "Combustivel", "POSTOS"],
+                success="Comprovante salvo em Combustível.",
+                reset_table_key="cad_comb_table",
+            ):
+                st.session_state["cad_comb_receipt_saved_hash"] = image_hash
+                st.rerun()
+
+        with st.expander("Ver texto identificado na foto"):
+            confidence = float(parsed.get("confidence") or 0.0)
+            st.caption(f"Confiança média da leitura: {confidence * 100:.1f}%")
+            st.code(clean_text(parsed.get("raw_text")) or "Nenhum texto identificado.", language=None)
 
 
 @st.fragment
@@ -11994,6 +12359,8 @@ def render_cadastro() -> None:
                         st.dataframe(pd.DataFrame({"Combustível": combustivel_options}), width="stretch", hide_index=True)
                     with l2:
                         st.dataframe(pd.DataFrame({"Posto": posto_options}), width="stretch", hide_index=True)
+
+            _render_combustivel_photo_import(plate_map, combustivel_options, posto_options)
 
             with st.form("form_combustivel", clear_on_submit=True):
                 c1, c2, c3 = st.columns(3)
