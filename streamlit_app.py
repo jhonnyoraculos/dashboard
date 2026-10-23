@@ -64,7 +64,7 @@ MUTED = "#6B7280"
 CARD_BORDER = "#c2d2f3"
 LOGO_PATH = Path(__file__).parent / "static" / "logo-jr.png"
 CURRENT_YEAR = date.today().year
-APP_VERSION = "route-manifests-pdf-v12"
+APP_VERSION = "route-manifests-pdf-v13"
 RANK_ROUTES_ENABLED = False
 ROUTE_CACHE_TTL_SECONDS = max(int(os.environ.get("JR_ROUTE_CACHE_TTL_SECONDS", "180") or 180), 30)
 DATA_EDITOR_PAGE_SIZE = 100
@@ -11162,6 +11162,23 @@ def _route_journey_defaults(row: pd.Series) -> dict[date, tuple[datetime_time, d
     return defaults
 
 
+def _previous_available_route_id(
+    ordered_ids: list[str],
+    current_id: str,
+    completed_ids: set[str],
+) -> str | None:
+    try:
+        current_index = ordered_ids.index(current_id)
+    except ValueError:
+        current_index = 0
+    previous_ids = reversed(ordered_ids[:current_index])
+    following_ids = ordered_ids[current_index + 1 :]
+    return next(
+        (route_id for route_id in [*previous_ids, *following_ids] if route_id not in completed_ids),
+        None,
+    )
+
+
 def _render_route_completion(plate_map: dict[str, str]) -> None:
     st.markdown("### Finalizar dados operacionais da rota")
     st.caption(
@@ -11241,6 +11258,9 @@ def _render_route_completion(plate_map: dict[str, str]) -> None:
             f"{clean_text(row.get('PLACA'))} · carga {clean_text(row.get('Carga'))}"
         )
     selector_key = "cad_route_edit_id" if editing_completed else "cad_route_complete_id"
+    requested_route_id = st.session_state.pop("route_completion_requested_id", None)
+    if requested_route_id in label_map:
+        st.session_state[selector_key] = requested_route_id
     if st.session_state.get(selector_key) not in label_map:
         st.session_state.pop(selector_key, None)
     selected_id = st.selectbox(
@@ -11434,6 +11454,15 @@ def _render_route_completion(plate_map: dict[str, str]) -> None:
             else:
                 clear_cached_reads()
                 updated_count = int(result.get("updated", 1))
+                if not editing_completed:
+                    completed_ids = set(result.get("route_ids") or [selected_id])
+                    next_route_id = _previous_available_route_id(
+                        list(label_map),
+                        selected_id,
+                        completed_ids,
+                    )
+                    if next_route_id:
+                        st.session_state["route_completion_requested_id"] = next_route_id
                 if editing_completed:
                     message = (
                         f"Alterações salvas em {updated_count} rota(s) desta placa. Tempo de viagem: "
