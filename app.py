@@ -59,7 +59,7 @@ DB_TABLES = {
 }
 DB_METADATA_TABLE = "dashboard_metadata"
 BACKEND_BUILD_VERSION = "aluguel-multiplicar-meses-v1"
-ROUTES_BUILD_VERSION = "rotas-pdf-v14"
+ROUTES_BUILD_VERSION = "rotas-pdf-v15"
 PEDAGIO_CHART_VERSION = "all-types-v1"
 BACKUP_METADATA_KEY = "backup.last_downloaded_at"
 _DB_ENGINE = None
@@ -5818,7 +5818,40 @@ def _ranking_route_cost_gain_analysis(
             )
         return rows
 
-    route_rows = _scope_rows(None)
+    months = sorted({str(month).strip() for month in peso["Mes"].dropna().tolist() if str(month).strip()})
+    monthly_rows = [row for month in months for row in _scope_rows(month)]
+    route_totals: dict[str, dict[str, float]] = {}
+    for row in monthly_rows:
+        route_name = str(row.get("rota") or "").strip()
+        if not route_name:
+            continue
+        total = route_totals.setdefault(route_name, {"custo": 0.0, "ganho": 0.0})
+        total["custo"] += float(row.get("custo") or 0.0)
+        total["ganho"] += float(row.get("ganho") or 0.0)
+    route_rows: list[dict] = []
+    for route_name, totals in route_totals.items():
+        cost_total = float(totals["custo"])
+        gain_total = float(totals["ganho"])
+        no_gain = gain_total <= 0 and cost_total > 0
+        percentage = (cost_total / gain_total * 100) if gain_total > 0 else None
+        level = (
+            "vermelho"
+            if no_gain or (percentage is not None and percentage >= 100)
+            else "amarelo"
+            if percentage is not None and percentage >= 80
+            else "normal"
+        )
+        route_rows.append(
+            {
+                "rota": route_name,
+                "mes": None,
+                "custo": round(cost_total, 2),
+                "ganho": round(gain_total, 2),
+                "percentual": round(percentage, 2) if percentage is not None else None,
+                "sem_ganho": no_gain,
+                "nivel": level,
+            }
+        )
     route_rows.sort(
         key=lambda row: (
             bool(row.get("sem_ganho")),
@@ -5827,8 +5860,6 @@ def _ranking_route_cost_gain_analysis(
         ),
         reverse=True,
     )
-    months = sorted({str(month).strip() for month in peso["Mes"].dropna().tolist() if str(month).strip()})
-    monthly_rows = [row for month in months for row in _scope_rows(month)]
     monthly_rows.sort(
         key=lambda row: (
             2 if row.get("nivel") == "vermelho" else 1 if row.get("nivel") == "amarelo" else 0,
@@ -6069,7 +6100,23 @@ def data_frota(params: dict | None = None) -> dict:
         else _empty(_SALARIOS_TRANSPORTE_COLUMNS)
     )
 
-    df_manu_general = df_manu.copy()
+    def _route_month_scope(df: pd.DataFrame, active_months: set[str]) -> pd.DataFrame:
+        if df.empty or not active_months or "Mes" not in df.columns:
+            return df.iloc[0:0].copy()
+        month_values = df["Mes"].astype("string").fillna("").str.strip()
+        return df.loc[month_values.isin(active_months)].copy()
+
+    route_months_available = {
+        str(value).strip()
+        for value in imported_weight.get("Mes", pd.Series(dtype="string")).dropna().tolist()
+        if str(value).strip()
+    }
+    route_comb_period = _route_month_scope(df_comb, route_months_available)
+    route_manu_period = _route_month_scope(df_manu, route_months_available)
+    route_ped_period = _route_month_scope(df_ped, route_months_available)
+    route_salary_period = _route_month_scope(df_salarios_period, route_months_available)
+    route_hotel_period = _route_month_scope(df_hoteis_period, route_months_available)
+
     imported_route_keys = {
         str(value).strip().casefold()
         for value in _ranking_route_labels(imported_weight).dropna().tolist()
@@ -6082,7 +6129,7 @@ def data_frota(params: dict | None = None) -> dict:
     route_km_available = imported_route_km.copy()
     df_peso_transport_route_general = _ranking_filter_categories(imported_weight, ["Transporte"])
     general_days_by_plate = _ranking_active_days_by_plate(imported_weight)
-    general_maintenance_by_plate = _ranking_sum_by_plate(df_manu_general, "Custo")
+    general_maintenance_by_plate = _ranking_sum_by_plate(route_manu_period, "Custo")
     maintenance_daily_by_plate = {
         plate: general_maintenance_by_plate.get(plate, 0.0) / active_days
         for plate, active_days in general_days_by_plate.items()
@@ -6115,18 +6162,18 @@ def data_frota(params: dict | None = None) -> dict:
     )
     daily_rates = _ranking_freighter_daily_rates()
     imported_fuel_costs, _imported_fuel_warnings = _ranking_allocate_fuel_to_imported_routes(
-        df_comb,
+        route_comb_period,
         imported_route_context,
     )
     route_fuel_costs_all = imported_fuel_costs
     route_cost_gain_analysis = _ranking_route_cost_gain_analysis(
         _ranking_filter_plates(df_peso_route_eligible, placas),
         _ranking_filter_plates(route_fuel_costs_all, placas),
-        _ranking_filter_plates(df_manu_general, placas),
-        _ranking_filter_plates(df_ped, placas),
+        _ranking_filter_plates(route_manu_period, placas),
+        _ranking_filter_plates(route_ped_period, placas),
         df_peso_transport_route_general,
-        df_salarios_period,
-        df_hoteis_period,
+        route_salary_period,
+        route_hotel_period,
         daily_rates,
     )
 
@@ -6137,6 +6184,49 @@ def data_frota(params: dict | None = None) -> dict:
     if rotas:
         df_peso = _ranking_filter_routes(df_peso_route_eligible, rotas)
         df_peso_total = df_peso.copy()
+        selected_route_months = {
+            str(value).strip()
+            for value in df_peso.get("Mes", pd.Series(dtype="string")).dropna().tolist()
+            if str(value).strip()
+        }
+        df_manu = _route_month_scope(route_manu_period, selected_route_months)
+        df_ped = _route_month_scope(route_ped_period, selected_route_months)
+        df_salarios_period = _route_month_scope(route_salary_period, selected_route_months)
+        df_hoteis_period = _route_month_scope(route_hotel_period, selected_route_months)
+        selected_month_activity = _route_month_scope(imported_weight, selected_route_months)
+        selected_days_by_plate = _ranking_active_days_by_plate(selected_month_activity)
+        selected_maintenance_by_plate = _ranking_sum_by_plate(df_manu, "Custo")
+        maintenance_daily_by_plate = {
+            plate: selected_maintenance_by_plate.get(plate, 0.0) / active_days
+            for plate, active_days in selected_days_by_plate.items()
+            if active_days
+        }
+        if incluir_hoteis:
+            general_hotel_total = (
+                float(pd.to_numeric(df_hoteis_period.get("Valor"), errors="coerce").fillna(0).sum())
+                if "Valor" in df_hoteis_period.columns
+                else 0.0
+            )
+            general_hotel_days = (
+                float(pd.to_numeric(df_hoteis_period.get("Dias"), errors="coerce").fillna(0).clip(lower=0).sum())
+                if "Dias" in df_hoteis_period.columns
+                else 0.0
+            )
+            general_hotel_reservations = (
+                int(df_hoteis_period["Data"].notna().sum())
+                if "Data" in df_hoteis_period.columns
+                else int(len(df_hoteis_period))
+            )
+            hotel_reservation_average = (
+                general_hotel_total / general_hotel_reservations
+                if general_hotel_reservations
+                else 0.0
+            )
+            hotel_daily_average = (
+                general_hotel_total / general_hotel_days
+                if general_hotel_days
+                else 0.0
+            )
         route_plates = (
             sorted(
                 {
@@ -6446,7 +6536,11 @@ def data_frota(params: dict | None = None) -> dict:
         if "Peso" in df_peso_total.columns
         else 0.0
     )
-    periodos_media = set(meses) if meses else {str(mes) for mes in meses_disponiveis if str(mes).strip()}
+    periodos_media = (
+        selected_route_months
+        if rotas
+        else set(meses) if meses else {str(mes) for mes in meses_disponiveis if str(mes).strip()}
+    )
     total_meses = len(periodos_media)
 
     return {
