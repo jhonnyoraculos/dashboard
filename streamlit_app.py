@@ -64,7 +64,7 @@ MUTED = "#6B7280"
 CARD_BORDER = "#c2d2f3"
 LOGO_PATH = Path(__file__).parent / "static" / "logo-jr.png"
 CURRENT_YEAR = date.today().year
-APP_VERSION = "route-manifests-pdf-v11"
+APP_VERSION = "route-manifests-pdf-v12"
 RANK_ROUTES_ENABLED = False
 ROUTE_CACHE_TTL_SECONDS = max(int(os.environ.get("JR_ROUTE_CACHE_TTL_SECONDS", "180") or 180), 30)
 DATA_EDITOR_PAGE_SIZE = 100
@@ -11204,14 +11204,33 @@ def _render_route_completion(plate_map: dict[str, str]) -> None:
     else:
         st.success("Todas as rotas importadas foram concluídas.")
 
+    route_mode = st.radio(
+        "Área de preenchimento",
+        ["Preencher pendentes", "Editar concluídas"],
+        horizontal=True,
+        label_visibility="collapsed",
+        key="route_completion_mode",
+    )
+    editing_completed = route_mode == "Editar concluídas"
     all_routes = routes.copy()
-    pending_mask = routes["Status"].astype("string").fillna("").str.strip().str.casefold().eq("pendente")
-    routes = routes.loc[pending_mask].copy()
+    status_values = routes["Status"].astype("string").fillna("").str.strip().str.casefold()
+    target_mask = status_values.str.startswith("conclu") if editing_completed else status_values.eq("pendente")
+    routes = routes.loc[target_mask].copy()
     if routes.empty:
-        st.info("Não há rotas pendentes para preencher. As rotas concluídas permanecem no histórico abaixo.")
+        if editing_completed:
+            st.info("Ainda não há rotas concluídas para editar.")
+        else:
+            st.info("Não há rotas pendentes para preencher. Use a aba Editar concluídas para fazer correções.")
         return
 
-    routes = routes.sort_values(["Data", "Rota"], ascending=[False, True]).reset_index(drop=True)
+    if editing_completed:
+        routes = routes.sort_values(
+            ["Atualizado Em", "Data", "Rota"],
+            ascending=[False, False, True],
+            na_position="last",
+        ).reset_index(drop=True)
+    else:
+        routes = routes.sort_values(["Data", "Rota"], ascending=[False, True]).reset_index(drop=True)
     label_map: dict[str, str] = {}
     for _, row in routes.iterrows():
         route_id = clean_text(row.get("Rota ID"))
@@ -11221,13 +11240,14 @@ def _render_route_completion(plate_map: dict[str, str]) -> None:
             f"{clean_text(row.get('Status'))} · {date_label} · {clean_text(row.get('Rota'))} · "
             f"{clean_text(row.get('PLACA'))} · carga {clean_text(row.get('Carga'))}"
         )
-    if st.session_state.get("cad_route_complete_id") not in label_map:
-        st.session_state.pop("cad_route_complete_id", None)
+    selector_key = "cad_route_edit_id" if editing_completed else "cad_route_complete_id"
+    if st.session_state.get(selector_key) not in label_map:
+        st.session_state.pop(selector_key, None)
     selected_id = st.selectbox(
-        "Rota para preencher",
+        "Rota concluída para editar" if editing_completed else "Rota para preencher",
         list(label_map),
         format_func=lambda value: label_map.get(value, value),
-        key="cad_route_complete_id",
+        key=selector_key,
     )
     row = routes.loc[routes["Rota ID"].astype("string") == selected_id].iloc[0]
     base_date = pd.to_datetime(row.get("Previsao"), errors="coerce")
@@ -11384,7 +11404,10 @@ def _render_route_completion(plate_map: dict[str, str]) -> None:
             value=observation_default,
             key=f"route_observation_{selected_id}",
         )
-        submit_label = "Atualizar dados do freteiro" if is_freighter else "Salvar e concluir rota"
+        if editing_completed:
+            submit_label = "Salvar alterações do freteiro" if is_freighter else "Salvar alterações da rota"
+        else:
+            submit_label = "Atualizar dados do freteiro" if is_freighter else "Salvar e concluir rota"
         submitted = st.button(
             submit_label,
             type="primary",
@@ -11411,7 +11434,14 @@ def _render_route_completion(plate_map: dict[str, str]) -> None:
             else:
                 clear_cached_reads()
                 updated_count = int(result.get("updated", 1))
-                if is_freighter and updated_count > 1:
+                if editing_completed:
+                    message = (
+                        f"Alterações salvas em {updated_count} rota(s) desta placa. Tempo de viagem: "
+                        f"{fmt_num(result.get('tempo_viagem_horas'), 2)} hora(s); horas trabalhadas: "
+                        f"{fmt_num(result.get('horas_operacao'), 2)} hora(s), em "
+                        f"{fmt_num(result.get('dias_operacao'))} dia(s)."
+                    )
+                elif is_freighter and updated_count > 1:
                     message = (
                         f"{updated_count} rotas desta placa foram concluídas com o mesmo horário, sem KM por ser "
                         "freteiro. Duração, dias e rankings foram atualizados."
