@@ -59,7 +59,7 @@ DB_TABLES = {
 }
 DB_METADATA_TABLE = "dashboard_metadata"
 BACKEND_BUILD_VERSION = "aluguel-multiplicar-meses-v1"
-ROUTES_BUILD_VERSION = "rotas-pdf-v13"
+ROUTES_BUILD_VERSION = "rotas-pdf-v14"
 PEDAGIO_CHART_VERSION = "all-types-v1"
 BACKUP_METADATA_KEY = "backup.last_downloaded_at"
 _DB_ENGINE = None
@@ -6070,43 +6070,18 @@ def data_frota(params: dict | None = None) -> dict:
     )
 
     df_manu_general = df_manu.copy()
-    df_peso_general = df_peso.copy()
-    legacy_route_weight = _ranking_eligible_route_weight_rows(
-        df_peso_general,
-        df_rodagem_rota,
-    )
     imported_route_keys = {
         str(value).strip().casefold()
         for value in _ranking_route_labels(imported_weight).dropna().tolist()
         if str(value).strip()
     }
-    if imported_route_keys and not legacy_route_weight.empty:
-        legacy_route_weight = legacy_route_weight.loc[
-            ~_ranking_route_labels(legacy_route_weight).str.casefold().isin(imported_route_keys)
-        ].copy()
-    if imported_route_keys and not df_rodagem_rota.empty:
-        legacy_route_km = df_rodagem_rota.loc[
-            ~_ranking_route_labels(df_rodagem_rota).str.casefold().isin(imported_route_keys)
-        ].copy()
-    else:
-        legacy_route_km = df_rodagem_rota.copy()
-    df_peso_route_eligible = pd.concat(
-        [legacy_route_weight, imported_weight],
-        ignore_index=True,
-        sort=False,
-    )
-    route_km_available = pd.concat(
-        [legacy_route_km, imported_route_km],
-        ignore_index=True,
-        sort=False,
-    )
-    activity_weight = pd.concat([df_peso_general, imported_weight], ignore_index=True, sort=False)
-    df_peso_transport_general = pd.concat(
-        [df_peso_transport_general, _ranking_filter_categories(imported_weight, ["Transporte"])],
-        ignore_index=True,
-        sort=False,
-    )
-    general_days_by_plate = _ranking_active_days_by_plate(activity_weight)
+    # O filtro de rotas usa exclusivamente a nova base importada por PDF.
+    # Peso e Rodagem por rota continuam disponíveis nos painéis antigos, mas
+    # não participam das opções nem dos cálculos de uma rota selecionada.
+    df_peso_route_eligible = imported_weight.copy()
+    route_km_available = imported_route_km.copy()
+    df_peso_transport_route_general = _ranking_filter_categories(imported_weight, ["Transporte"])
+    general_days_by_plate = _ranking_active_days_by_plate(imported_weight)
     general_maintenance_by_plate = _ranking_sum_by_plate(df_manu_general, "Custo")
     maintenance_daily_by_plate = {
         plate: general_maintenance_by_plate.get(plate, 0.0) / active_days
@@ -6143,22 +6118,13 @@ def data_frota(params: dict | None = None) -> dict:
         df_comb,
         imported_route_context,
     )
-    legacy_fuel_costs, legacy_fuel_warnings = _ranking_route_fuel_costs(
-        legacy_route_km,
-        df_comb,
-        df_km,
-    )
-    route_fuel_costs_all = pd.concat(
-        [legacy_fuel_costs, imported_fuel_costs],
-        ignore_index=True,
-        sort=False,
-    )
+    route_fuel_costs_all = imported_fuel_costs
     route_cost_gain_analysis = _ranking_route_cost_gain_analysis(
         _ranking_filter_plates(df_peso_route_eligible, placas),
         _ranking_filter_plates(route_fuel_costs_all, placas),
         _ranking_filter_plates(df_manu_general, placas),
         _ranking_filter_plates(df_ped, placas),
-        df_peso_transport_general,
+        df_peso_transport_route_general,
         df_salarios_period,
         df_hoteis_period,
         daily_rates,
@@ -6220,11 +6186,6 @@ def data_frota(params: dict | None = None) -> dict:
                         route_fuel_warnings.append(
                             f"{split_count} abastecimento(s) tiveram custo e litros divididos entre rotas empatadas."
                         )
-            route_fuel_warnings.extend(
-                warning
-                for warning in legacy_fuel_warnings
-                if any(str(route).casefold() in warning.casefold() for route in rotas)
-            )
             needs_mileage = (
                 "Categoria" in df_peso.columns
                 and not _normalize_categoria(df_peso["Categoria"]).eq("freteiro").all()
@@ -6291,9 +6252,14 @@ def data_frota(params: dict | None = None) -> dict:
     df_diarias = _ranking_freighter_daily_costs(df_peso, daily_rates)
     gasto_diarias_map = _ranking_sum_by_plate(df_diarias, "Custo")
     dias_trabalhados_map = _ranking_count_by_plate(df_diarias)
+    salary_activity_base = (
+        df_peso_transport_route_general
+        if rotas
+        else df_peso_transport_general
+    )
     df_salario_costs = _ranking_monthly_shared_costs(
         df_peso_transport_selected,
-        df_peso_transport_general,
+        salary_activity_base,
         df_salarios_period,
     )
     salario_transporte_map = _ranking_sum_by_plate(df_salario_costs, "Custo")
