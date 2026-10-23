@@ -58,7 +58,7 @@ DB_TABLES = {
 }
 DB_METADATA_TABLE = "dashboard_metadata"
 BACKEND_BUILD_VERSION = "aluguel-multiplicar-meses-v1"
-ROUTES_BUILD_VERSION = "rotas-pdf-v9"
+ROUTES_BUILD_VERSION = "rotas-pdf-v10"
 PEDAGIO_CHART_VERSION = "all-types-v1"
 BACKUP_METADATA_KEY = "backup.last_downloaded_at"
 _DB_ENGINE = None
@@ -2375,6 +2375,7 @@ def update_route_operation(
         "km_total": None if km_value is None else float(km_value),
         "km_per_route": None if km_per_route is None else float(km_per_route),
         "horas_operacao": operation_hours,
+        "tempo_viagem_horas": max((retorno_dt - saida_dt).total_seconds() / 3600.0, 0.0),
         "dias_operacao": operation_days,
     }
 
@@ -3945,7 +3946,13 @@ def load_rotas() -> pd.DataFrame:
         df["Peso Carga"] = df["Rota ID"].astype("string").map(order_weight).fillna(0.0)
         elapsed_hours = (df["Retorno"] - df["Saida"]).dt.total_seconds() / 3600
         operation_hours = pd.to_numeric(df["Horas Operacao"], errors="coerce")
-        df["Duracao Horas"] = operation_hours.where(operation_hours.ge(0), elapsed_hours.where(elapsed_hours >= 0))
+        df["Tempo Viagem Horas"] = elapsed_hours.where(elapsed_hours >= 0)
+        df["Horas Trabalhadas"] = operation_hours.where(
+            operation_hours.ge(0),
+            elapsed_hours.where(elapsed_hours >= 0),
+        )
+        # Mantido para compatibilidade: duração representa o tempo corrido da viagem.
+        df["Duracao Horas"] = df["Tempo Viagem Horas"]
         calendar_days = (df["Retorno"].dt.normalize() - df["Saida"].dt.normalize()).dt.days + 1
         df["Dias Rota"] = calendar_days.where(calendar_days > 0).astype("Int64")
         is_freighter = _normalize_categoria(df["Categoria"]).eq("freteiro")
@@ -4662,14 +4669,26 @@ def data_rotas(params: dict | None = None) -> dict:
     ranking_source["Peso Carga"] = pd.to_numeric(ranking_source.get("Peso Carga"), errors="coerce").fillna(0)
     ranking_source["KM Rodados"] = pd.to_numeric(ranking_source.get("KM Rodados"), errors="coerce").fillna(0)
     ranking_source["Duracao Horas"] = pd.to_numeric(ranking_source.get("Duracao Horas"), errors="coerce").fillna(0)
+    ranking_source["Tempo Viagem Horas"] = pd.to_numeric(
+        ranking_source.get("Tempo Viagem Horas"), errors="coerce"
+    ).fillna(0)
+    ranking_source["Horas Trabalhadas"] = pd.to_numeric(
+        ranking_source.get("Horas Trabalhadas"), errors="coerce"
+    ).fillna(0)
     ranking_source["Dias Rota"] = pd.to_numeric(ranking_source.get("Dias Rota"), errors="coerce").fillna(0)
 
     def ranking(column: str) -> pd.DataFrame:
         if ranking_source.empty or column not in ranking_source.columns:
-            return _empty([column, "Rotas", "Concluidas", "Entregas", "Peso kg", "KM", "Horas", "Dias"])
+            return _empty([
+                column, "Rotas", "Concluidas", "Entregas", "Peso kg", "KM",
+                "Tempo viagem", "Horas trabalhadas", "Dias",
+            ])
         source = ranking_source[ranking_source[column].astype("string").fillna("").str.strip().ne("")].copy()
         if source.empty:
-            return _empty([column, "Rotas", "Concluidas", "Entregas", "Peso kg", "KM", "Horas", "Dias"])
+            return _empty([
+                column, "Rotas", "Concluidas", "Entregas", "Peso kg", "KM",
+                "Tempo viagem", "Horas trabalhadas", "Dias",
+            ])
         source["_Concluida"] = source["Status"].astype("string").fillna("").apply(
             lambda value: _normalize_ascii(value).casefold() == "concluida"
         ).astype(int)
@@ -4680,7 +4699,8 @@ def data_rotas(params: dict | None = None) -> dict:
             **{
                 "Peso kg": ("Peso Carga", "sum"),
                 "KM": ("KM Rodados", "sum"),
-                "Horas": ("Duracao Horas", "sum"),
+                "Tempo viagem": ("Tempo Viagem Horas", "sum"),
+                "Horas trabalhadas": ("Horas Trabalhadas", "sum"),
                 "Dias": ("Dias Rota", "sum"),
             },
         )
@@ -4706,7 +4726,14 @@ def data_rotas(params: dict | None = None) -> dict:
         "entregas_total": int(filtered_deliveries["Entrega ID"].nunique()) if not filtered_deliveries.empty else 0,
         "peso_total": float(pd.to_numeric(routes.get("Peso Carga"), errors="coerce").sum()) if not routes.empty else 0.0,
         "km_total": float(pd.to_numeric(routes.get("KM Rodados"), errors="coerce").sum()) if not routes.empty else 0.0,
-        "horas_total": float(pd.to_numeric(routes.get("Duracao Horas"), errors="coerce").sum()) if not routes.empty else 0.0,
+        "horas_total": (
+            float(pd.to_numeric(routes.get("Tempo Viagem Horas"), errors="coerce").sum())
+            if not routes.empty else 0.0
+        ),
+        "horas_trabalhadas_total": (
+            float(pd.to_numeric(routes.get("Horas Trabalhadas"), errors="coerce").sum())
+            if not routes.empty else 0.0
+        ),
         "rotas_detalhes": _route_records(routes.sort_values(["Data", "Rota"], ascending=[False, True])),
         "entregas_detalhes": _route_records(delivery_details),
         "ranking_motoristas": _route_records(ranking("Motorista")),

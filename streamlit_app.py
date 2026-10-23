@@ -53,7 +53,7 @@ _backend_aluguel_period_ready = {"Inicio", "Fim"}.issubset(
 )
 _backend_aluguel_monthly_ready = getattr(backend, "BACKEND_BUILD_VERSION", "") == "aluguel-multiplicar-meses-v1"
 _backend_pedagio_chart_ready = getattr(backend, "PEDAGIO_CHART_VERSION", "") == "all-types-v1"
-_backend_routes_ready = getattr(backend, "ROUTES_BUILD_VERSION", "") == "rotas-pdf-v9"
+_backend_routes_ready = getattr(backend, "ROUTES_BUILD_VERSION", "") == "rotas-pdf-v10"
 if not _backend_features_ready or not _backend_aluguel_period_ready or not _backend_aluguel_monthly_ready or not _backend_pedagio_chart_ready or not _backend_routes_ready:
     backend = importlib.reload(backend)
 
@@ -64,7 +64,7 @@ MUTED = "#6B7280"
 CARD_BORDER = "#c2d2f3"
 LOGO_PATH = Path(__file__).parent / "static" / "logo-jr.png"
 CURRENT_YEAR = date.today().year
-APP_VERSION = "route-manifests-pdf-v9"
+APP_VERSION = "route-manifests-pdf-v10"
 RANK_ROUTES_ENABLED = False
 ROUTE_CACHE_TTL_SECONDS = max(int(os.environ.get("JR_ROUTE_CACHE_TTL_SECONDS", "180") or 180), 30)
 DATA_EDITOR_PAGE_SIZE = 100
@@ -11323,9 +11323,13 @@ def _render_route_completion(plate_map: dict[str, str]) -> None:
                         "parada": stop_dt.isoformat(),
                     }
                 )
+            first_route_start = pd.to_datetime(journey_payload[0]["saida"])
+            final_route_stop = pd.to_datetime(journey_payload[-1]["parada"])
+            total_trip_hours = max((final_route_stop - first_route_start).total_seconds() / 3600.0, 0.0)
             st.info(
-                f"Resumo da jornada: {route_day_count} dia(s) e "
-                f"{fmt_num(total_operation_hours, 2)} hora(s) em operação."
+                f"Resumo: {route_day_count} dia(s) · Tempo de viagem: {fmt_num(total_trip_hours, 2)} hora(s), "
+                "incluindo as noites · Horas trabalhadas: "
+                f"{fmt_num(total_operation_hours, 2)} hora(s), sem os intervalos noturnos."
             )
 
         route_dates = pd.to_datetime(routes["Data"], errors="coerce")
@@ -11410,13 +11414,15 @@ def _render_route_completion(plate_map: dict[str, str]) -> None:
                         f"{updated_count} rotas desta placa foram concluídas com as mesmas jornadas. "
                         f"Os {fmt_num(result.get('km_total'), 1)} km totais foram divididos igualmente: "
                         f"{fmt_num(result.get('km_per_route'), 1)} km em cada rota. "
-                        f"Tempo calculado: {fmt_num(result.get('horas_operacao'), 2)} hora(s) em "
+                        f"Tempo de viagem: {fmt_num(result.get('tempo_viagem_horas'), 2)} hora(s); "
+                        f"horas trabalhadas: {fmt_num(result.get('horas_operacao'), 2)} hora(s), em "
                         f"{fmt_num(result.get('dias_operacao'))} dia(s)."
                     )
                 else:
                     message = (
-                        f"Rota concluída com {fmt_num(result.get('horas_operacao'), 2)} hora(s) em operação por "
-                        f"{fmt_num(result.get('dias_operacao'))} dia(s). KM e rankings foram atualizados."
+                        f"Rota concluída em {fmt_num(result.get('dias_operacao'))} dia(s). Tempo de viagem: "
+                        f"{fmt_num(result.get('tempo_viagem_horas'), 2)} hora(s); horas trabalhadas: "
+                        f"{fmt_num(result.get('horas_operacao'), 2)} hora(s). KM e rankings foram atualizados."
                     )
                 st.session_state["route_completion_message"] = message
                 st.rerun()
@@ -13293,7 +13299,8 @@ def render_rotas() -> None:
             ("Entregas", fmt_num(data.get("entregas_total"), decimals=0), JR_BLUE),
             ("Peso dos pedidos", fmt_peso(data.get("peso_total")), "#7C3AED"),
             ("KM realizados", fmt_num(data.get("km_total"), decimals=1), "#D97706"),
-            ("Horas em rota", fmt_num(data.get("horas_total"), decimals=1), "#0F766E"),
+            ("Tempo de viagem", fmt_num(data.get("horas_total"), decimals=1), "#0F766E"),
+            ("Horas trabalhadas", fmt_num(data.get("horas_trabalhadas_total"), decimals=1), "#2563EB"),
         ]
     )
 
@@ -13321,7 +13328,8 @@ def render_rotas() -> None:
     else:
         route_visible = [
             "Status", "Data", "Previsao", "Rota", "Carga", "PLACA", "Motorista", "Veiculo",
-            "Peso Carga", "Peso Manifesto", "Entregas", "Saida", "Retorno", "Duracao Horas", "Dias Rota", "KM Rodados", "Arquivo",
+            "Peso Carga", "Peso Manifesto", "Entregas", "Saida", "Retorno", "Tempo Viagem Horas",
+            "Horas Trabalhadas", "Dias Rota", "KM Rodados", "Arquivo",
         ]
         route_visible = [column for column in route_visible if column in routes_df.columns]
         st.dataframe(routes_df[route_visible], width="stretch", hide_index=True)
