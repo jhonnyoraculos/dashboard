@@ -58,7 +58,7 @@ DB_TABLES = {
 }
 DB_METADATA_TABLE = "dashboard_metadata"
 BACKEND_BUILD_VERSION = "aluguel-multiplicar-meses-v1"
-ROUTES_BUILD_VERSION = "rotas-pdf-v8"
+ROUTES_BUILD_VERSION = "rotas-pdf-v9"
 PEDAGIO_CHART_VERSION = "all-types-v1"
 BACKUP_METADATA_KEY = "backup.last_downloaded_at"
 _DB_ENGINE = None
@@ -165,6 +165,8 @@ _ROTAS_COLUMNS = [
     "Previsao",
     "Saida",
     "Retorno",
+    "Jornadas",
+    "Horas Operacao",
     "Codigo Rota",
     "Rota",
     "Carga",
@@ -280,6 +282,7 @@ _COLUMN_SQL_TYPES = {
     "Pagina": "DOUBLE PRECISION",
     "Corte": "BOOLEAN",
     "Horas": "DOUBLE PRECISION",
+    "Horas Operacao": "DOUBLE PRECISION",
     "Litros": "DOUBLE PRECISION",
     "Custo": "DOUBLE PRECISION",
     "Combustivel": "TEXT",
@@ -2009,6 +2012,13 @@ def _complete_pending_freighter_routes(conn, route_table: str, placas_table: str
             UPDATE {route_table} AS r
             SET "Saida" = pending.auto_saida,
                 "Retorno" = COALESCE(r."Retorno", pending.auto_saida + INTERVAL '10 hours'),
+                "Jornadas" = NULL,
+                "Horas Operacao" = GREATEST(
+                    EXTRACT(EPOCH FROM (
+                        COALESCE(r."Retorno", pending.auto_saida + INTERVAL '10 hours') - pending.auto_saida
+                    )) / 3600.0,
+                    0
+                ),
                 "KM Rodados" = NULL,
                 "Categoria" = 'Freteiro',
                 "Status" = 'Concluída',
@@ -2064,7 +2074,10 @@ def import_route_manifests(routes: list[dict], deliveries: list[dict]) -> dict:
     extracted_columns = [
         column
         for column in route_columns
-        if column not in {"Rota ID", "Saida", "Retorno", "KM Rodados", "Status", "Observacao"}
+        if column not in {
+            "Rota ID", "Saida", "Retorno", "Jornadas", "Horas Operacao",
+            "KM Rodados", "Status", "Observacao",
+        }
     ]
     update_parts = [
         f"{_quote_identifier(column)} = EXCLUDED.{_quote_identifier(column)}"
@@ -2074,6 +2087,8 @@ def import_route_manifests(routes: list[dict], deliveries: list[dict]) -> dict:
         [
             f'"Saida" = COALESCE({route_table}."Saida", EXCLUDED."Saida")',
             f'"Retorno" = COALESCE({route_table}."Retorno", EXCLUDED."Retorno")',
+            f'"Jornadas" = COALESCE({route_table}."Jornadas", EXCLUDED."Jornadas")',
+            f'"Horas Operacao" = COALESCE({route_table}."Horas Operacao", EXCLUDED."Horas Operacao")',
             f'"KM Rodados" = COALESCE({route_table}."KM Rodados", EXCLUDED."KM Rodados")',
             f'"Observacao" = COALESCE(NULLIF({route_table}."Observacao", \'\'), EXCLUDED."Observacao")',
             (
@@ -2153,6 +2168,47 @@ def import_route_manifests(routes: list[dict], deliveries: list[dict]) -> dict:
     }
 
 
+def _prepare_route_journeys(
+    journeys: list[dict] | None,
+    fallback_start: pd.Timestamp,
+    fallback_end: pd.Timestamp,
+) -> tuple[str | None, float, pd.Timestamp, pd.Timestamp, int]:
+    if not journeys:
+        hours = max((fallback_end - fallback_start).total_seconds() / 3600.0, 0.0)
+        days = max((fallback_end.date() - fallback_start.date()).days + 1, 1)
+        return None, hours, fallback_start, fallback_end, days
+
+    normalized: list[dict] = []
+    previous_stop: pd.Timestamp | None = None
+    total_hours = 0.0
+    for index, journey in enumerate(journeys, start=1):
+        start = pd.to_datetime(journey.get("saida"), errors="coerce")
+        stop = pd.to_datetime(journey.get("parada"), errors="coerce")
+        if pd.isna(start) or pd.isna(stop):
+            raise ValueError(f"Informe a saida e a parada do dia {index}.")
+        if start.date() != stop.date():
+            raise ValueError(f"A saida e a parada do dia {index} devem estar na mesma data.")
+        if stop <= start:
+            raise ValueError(f"No dia {index}, a parada deve ser posterior a saida.")
+        if previous_stop is not None and start <= previous_stop:
+            raise ValueError(f"A saida do dia {index} deve ser posterior a parada do dia anterior.")
+        hours = (stop - start).total_seconds() / 3600.0
+        total_hours += hours
+        normalized.append(
+            {
+                "data": start.date().isoformat(),
+                "saida": start.isoformat(),
+                "parada": stop.isoformat(),
+                "horas": round(hours, 4),
+            }
+        )
+        previous_stop = stop
+
+    first_start = pd.to_datetime(normalized[0]["saida"])
+    last_stop = pd.to_datetime(normalized[-1]["parada"])
+    return json.dumps(normalized, ensure_ascii=False), total_hours, first_start, last_stop, len(normalized)
+
+
 def update_route_operation(
     route_id: str,
     *,
@@ -2162,6 +2218,7 @@ def update_route_operation(
     placa: str,
     motorista: str,
     observacao: str = "",
+    jornadas: list[dict] | None = None,
 ) -> dict:
     route_id = str(route_id or "").strip()
     if not route_id:
@@ -2172,6 +2229,11 @@ def update_route_operation(
         raise ValueError("Informe a saida e o retorno da rota.")
     if retorno_dt <= saida_dt:
         raise ValueError("O retorno deve ser posterior a saida.")
+    journeys_json, operation_hours, saida_dt, retorno_dt, operation_days = _prepare_route_journeys(
+        jornadas,
+        saida_dt,
+        retorno_dt,
+    )
     km_value = pd.to_numeric(pd.Series([km_rodados]), errors="coerce").iloc[0]
     km_value = float(km_value) if pd.notna(km_value) and float(km_value) > 0 else None
     plate_value = _normalize_plate_value(placa)
@@ -2250,6 +2312,8 @@ def update_route_operation(
                 UPDATE {route_table}
                 SET "Saida" = :saida,
                     "Retorno" = :retorno,
+                    "Jornadas" = :jornadas,
+                    "Horas Operacao" = :horas_operacao,
                     "KM Rodados" = :km,
                     "PLACA" = :placa,
                     "Categoria" = :categoria,
@@ -2274,6 +2338,8 @@ def update_route_operation(
             {
                 "saida": saida_dt.to_pydatetime(),
                 "retorno": retorno_dt.to_pydatetime(),
+                "jornadas": journeys_json,
+                "horas_operacao": operation_hours,
                 "km": km_per_route,
                 "placa": plate_value,
                 "categoria": category,
@@ -2308,6 +2374,8 @@ def update_route_operation(
         "route_date": str(route_date),
         "km_total": None if km_value is None else float(km_value),
         "km_per_route": None if km_per_route is None else float(km_per_route),
+        "horas_operacao": operation_hours,
+        "dias_operacao": operation_days,
     }
 
 
@@ -2388,6 +2456,20 @@ def update_route_history_rows(rows: list[dict]) -> dict:
                     SET "PLACA" = :placa,
                         "Categoria" = :categoria,
                         "Motorista" = :motorista,
+                        "Jornadas" = CASE
+                            WHEN "Saida" IS DISTINCT FROM :saida OR "Retorno" IS DISTINCT FROM :retorno
+                                THEN NULL
+                            ELSE "Jornadas"
+                        END,
+                        "Horas Operacao" = CASE
+                            WHEN "Saida" IS DISTINCT FROM :saida OR "Retorno" IS DISTINCT FROM :retorno
+                                THEN CASE
+                                    WHEN :saida IS NOT NULL AND :retorno IS NOT NULL
+                                        THEN GREATEST(EXTRACT(EPOCH FROM (:retorno - :saida)) / 3600.0, 0)
+                                    ELSE NULL
+                                END
+                            ELSE "Horas Operacao"
+                        END,
                         "Saida" = :saida,
                         "Retorno" = :retorno,
                         "KM Rodados" = :km,
@@ -3823,7 +3905,9 @@ def load_rotas() -> pd.DataFrame:
         df = _finalize_common(
             df,
             date_columns=["Data", "Emissao", "Previsao", "Saida", "Retorno", "Importado Em", "Atualizado Em"],
-            numeric_columns=["Peso Carga", "Peso Manifesto", "KM Rodados", "Paginas", "Entregas"],
+            numeric_columns=[
+                "Peso Carga", "Peso Manifesto", "KM Rodados", "Horas Operacao", "Paginas", "Entregas",
+            ],
             text_columns=[
                 "Rota ID",
                 "Hash PDF",
@@ -3859,11 +3943,11 @@ def load_rotas() -> pd.DataFrame:
         manifest_weight = pd.to_numeric(df["Peso Manifesto"], errors="coerce")
         df["Peso Manifesto"] = manifest_weight.where(manifest_weight.notna(), original_weight)
         df["Peso Carga"] = df["Rota ID"].astype("string").map(order_weight).fillna(0.0)
-        duration = (df["Retorno"] - df["Saida"]).dt.total_seconds() / 3600
-        df["Duracao Horas"] = duration.where(duration >= 0)
-        df["Dias Rota"] = (df["Duracao Horas"] / 24).apply(
-            lambda value: max(1, int(-(-float(value) // 1))) if pd.notna(value) and value > 0 else pd.NA
-        )
+        elapsed_hours = (df["Retorno"] - df["Saida"]).dt.total_seconds() / 3600
+        operation_hours = pd.to_numeric(df["Horas Operacao"], errors="coerce")
+        df["Duracao Horas"] = operation_hours.where(operation_hours.ge(0), elapsed_hours.where(elapsed_hours >= 0))
+        calendar_days = (df["Retorno"].dt.normalize() - df["Saida"].dt.normalize()).dt.days + 1
+        df["Dias Rota"] = calendar_days.where(calendar_days > 0).astype("Int64")
         is_freighter = _normalize_categoria(df["Categoria"]).eq("freteiro")
         completed = (
             df["Saida"].notna()

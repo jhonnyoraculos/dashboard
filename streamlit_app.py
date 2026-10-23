@@ -5,6 +5,7 @@ import calendar
 import hashlib
 import html
 import importlib
+import json
 import math
 import os
 import re
@@ -52,7 +53,7 @@ _backend_aluguel_period_ready = {"Inicio", "Fim"}.issubset(
 )
 _backend_aluguel_monthly_ready = getattr(backend, "BACKEND_BUILD_VERSION", "") == "aluguel-multiplicar-meses-v1"
 _backend_pedagio_chart_ready = getattr(backend, "PEDAGIO_CHART_VERSION", "") == "all-types-v1"
-_backend_routes_ready = getattr(backend, "ROUTES_BUILD_VERSION", "") == "rotas-pdf-v8"
+_backend_routes_ready = getattr(backend, "ROUTES_BUILD_VERSION", "") == "rotas-pdf-v9"
 if not _backend_features_ready or not _backend_aluguel_period_ready or not _backend_aluguel_monthly_ready or not _backend_pedagio_chart_ready or not _backend_routes_ready:
     backend = importlib.reload(backend)
 
@@ -63,7 +64,7 @@ MUTED = "#6B7280"
 CARD_BORDER = "#c2d2f3"
 LOGO_PATH = Path(__file__).parent / "static" / "logo-jr.png"
 CURRENT_YEAR = date.today().year
-APP_VERSION = "route-manifests-pdf-v8"
+APP_VERSION = "route-manifests-pdf-v9"
 RANK_ROUTES_ENABLED = False
 ROUTE_CACHE_TTL_SECONDS = max(int(os.environ.get("JR_ROUTE_CACHE_TTL_SECONDS", "180") or 180), 30)
 DATA_EDITOR_PAGE_SIZE = 100
@@ -11141,6 +11142,26 @@ def _route_row_datetime(row: pd.Series, column: str, fallback: datetime) -> date
     return value.to_pydatetime()
 
 
+def _route_journey_defaults(row: pd.Series) -> dict[date, tuple[datetime_time, datetime_time]]:
+    raw = row.get("Jornadas")
+    if raw is None or (isinstance(raw, float) and pd.isna(raw)):
+        return {}
+    try:
+        journeys = json.loads(raw) if isinstance(raw, str) else raw
+    except (TypeError, ValueError, json.JSONDecodeError):
+        return {}
+    defaults: dict[date, tuple[datetime_time, datetime_time]] = {}
+    for journey in journeys if isinstance(journeys, list) else []:
+        start = pd.to_datetime(journey.get("saida"), errors="coerce")
+        stop = pd.to_datetime(journey.get("parada"), errors="coerce")
+        if pd.notna(start) and pd.notna(stop):
+            defaults[start.date()] = (
+                start.time().replace(second=0, microsecond=0),
+                stop.time().replace(second=0, microsecond=0),
+            )
+    return defaults
+
+
 def _render_route_completion(plate_map: dict[str, str]) -> None:
     st.markdown("### Finalizar dados operacionais da rota")
     st.caption(
@@ -11210,24 +11231,102 @@ def _render_route_completion(plate_map: dict[str, str]) -> None:
     current_plate = clean_text(row.get("PLACA")).upper()
     plate_options = sorted(set([*plate_map.keys(), current_plate]) - {""})
 
-    with st.form(f"form_route_complete_{selected_id}"):
+    with st.container(border=True, key=f"route_complete_container_{selected_id}"):
         c1, c2, c3 = st.columns(3)
         with c1:
             plate = st.selectbox(
                 "Placa",
                 plate_options,
                 index=plate_options.index(current_plate) if current_plate in plate_options else 0,
+                key=f"route_plate_{selected_id}",
             )
-            driver = st.text_input("Motorista", value=clean_text(row.get("Motorista")))
+            driver = st.text_input(
+                "Motorista",
+                value=clean_text(row.get("Motorista")),
+                key=f"route_driver_{selected_id}",
+            )
             selected_category = plate_map.get(plate, clean_text(row.get("Categoria") or "Transporte"))
             is_freighter = clean_text(selected_category).strip().lower() == "freteiro"
             st.caption(f"Categoria da placa: {selected_category}")
         with c2:
-            departure_date = st.date_input("Data de saída", value=departure_default.date())
-            departure_time = st.time_input("Hora de saída", value=departure_default.time().replace(second=0, microsecond=0))
+            departure_date = st.date_input(
+                "Data de saída",
+                value=departure_default.date(),
+                key=f"route_departure_date_{selected_id}",
+            )
         with c3:
-            return_date = st.date_input("Data de retorno", value=return_default.date())
-            return_time = st.time_input("Hora de retorno", value=return_default.time().replace(second=0, microsecond=0))
+            return_date = st.date_input(
+                "Data de retorno",
+                value=return_default.date(),
+                key=f"route_return_date_{selected_id}",
+            )
+
+        journey_payload: list[dict] = []
+        schedule_valid = True
+        route_day_count = (return_date - departure_date).days + 1
+        if route_day_count <= 0:
+            st.error("A data de retorno não pode ser anterior à data de saída.")
+            schedule_valid = False
+        elif route_day_count > 31:
+            st.error("A rota pode ter no máximo 31 dias para o preenchimento das jornadas.")
+            schedule_valid = False
+        else:
+            stored_journeys = _route_journey_defaults(row)
+            st.markdown("**Saídas e paradas por dia**")
+            st.caption(
+                "Informe somente o período trabalhado em cada dia. O intervalo entre a parada de um dia e a "
+                "saída do dia seguinte não será contado como hora em operação."
+            )
+            total_operation_hours = 0.0
+            for day_index in range(route_day_count):
+                journey_date = departure_date + timedelta(days=day_index)
+                stored_times = stored_journeys.get(journey_date)
+                default_start = (
+                    stored_times[0]
+                    if stored_times
+                    else departure_default.time().replace(second=0, microsecond=0)
+                    if day_index == 0
+                    else datetime_time(7, 0)
+                )
+                default_stop = (
+                    stored_times[1]
+                    if stored_times
+                    else return_default.time().replace(second=0, microsecond=0)
+                    if day_index == route_day_count - 1
+                    else datetime_time(17, 0)
+                )
+                day_col, start_col, stop_col = st.columns([1.2, 1, 1])
+                day_col.markdown(f"**Dia {day_index + 1}**  \n{journey_date.strftime('%d/%m/%Y')}")
+                with start_col:
+                    day_start = st.time_input(
+                        f"Saída · dia {day_index + 1}",
+                        value=default_start,
+                        key=f"route_journey_start_{selected_id}_{journey_date.isoformat()}",
+                    )
+                with stop_col:
+                    day_stop = st.time_input(
+                        f"Parada · dia {day_index + 1}",
+                        value=default_stop,
+                        key=f"route_journey_stop_{selected_id}_{journey_date.isoformat()}",
+                    )
+                start_dt = datetime.combine(journey_date, day_start)
+                stop_dt = datetime.combine(journey_date, day_stop)
+                if stop_dt <= start_dt:
+                    st.error(f"No dia {day_index + 1}, a parada deve ser posterior à saída.")
+                    schedule_valid = False
+                else:
+                    total_operation_hours += (stop_dt - start_dt).total_seconds() / 3600.0
+                journey_payload.append(
+                    {
+                        "data": journey_date.isoformat(),
+                        "saida": start_dt.isoformat(),
+                        "parada": stop_dt.isoformat(),
+                    }
+                )
+            st.info(
+                f"Resumo da jornada: {route_day_count} dia(s) e "
+                f"{fmt_num(total_operation_hours, 2)} hora(s) em operação."
+            )
 
         route_dates = pd.to_datetime(routes["Data"], errors="coerce")
         if "Previsao" in routes.columns:
@@ -11241,8 +11340,8 @@ def _render_route_completion(plate_map: dict[str, str]) -> None:
         if duplicate_count > 1:
             st.info(
                 f"Esta placa aparece em {duplicate_count} rotas no dia {base_date.strftime('%d/%m/%Y')}. "
-                "O mesmo horário de saída e retorno será aplicado a todas. O KM informado abaixo deve ser o "
-                "total da placa no dia e será dividido igualmente entre essas rotas."
+                "As mesmas saídas e paradas serão aplicadas a todas. O KM informado abaixo deve ser o total da "
+                "placa no dia e será dividido igualmente entre essas rotas."
             )
         if is_freighter:
             km = None
@@ -11263,22 +11362,36 @@ def _render_route_completion(plate_map: dict[str, str]) -> None:
                 value=float(stored_km) if pd.notna(stored_km) else 0.0,
                 step=1.0,
                 format="%.1f",
+                key=f"route_km_{selected_id}",
             )
         raw_observation = row.get("Observacao")
         observation_default = "" if pd.isna(raw_observation) else clean_text(raw_observation)
-        observation = st.text_area("Observação operacional", value=observation_default)
+        observation = st.text_area(
+            "Observação operacional",
+            value=observation_default,
+            key=f"route_observation_{selected_id}",
+        )
         submit_label = "Atualizar dados do freteiro" if is_freighter else "Salvar e concluir rota"
-        submitted = st.form_submit_button(submit_label, type="primary", width="stretch")
+        submitted = st.button(
+            submit_label,
+            type="primary",
+            width="stretch",
+            disabled=not schedule_valid,
+            key=f"route_submit_{selected_id}",
+        )
         if submitted:
             try:
+                first_departure = pd.to_datetime(journey_payload[0]["saida"]).to_pydatetime()
+                final_stop = pd.to_datetime(journey_payload[-1]["parada"]).to_pydatetime()
                 result = backend.update_route_operation(
                     selected_id,
-                    saida=datetime.combine(departure_date, departure_time),
-                    retorno=datetime.combine(return_date, return_time),
+                    saida=first_departure,
+                    retorno=final_stop,
                     km_rodados=km,
                     placa=plate,
                     motorista=driver,
                     observacao=observation,
+                    jornadas=journey_payload,
                 )
             except Exception as exc:
                 st.error(str(exc))
@@ -11294,12 +11407,17 @@ def _render_route_completion(plate_map: dict[str, str]) -> None:
                     message = "Rota de freteiro concluída sem KM. Duração, dias e rankings foram atualizados."
                 elif updated_count > 1:
                     message = (
-                        f"{updated_count} rotas desta placa foram concluídas com o mesmo horário. "
+                        f"{updated_count} rotas desta placa foram concluídas com as mesmas jornadas. "
                         f"Os {fmt_num(result.get('km_total'), 1)} km totais foram divididos igualmente: "
-                        f"{fmt_num(result.get('km_per_route'), 1)} km em cada rota."
+                        f"{fmt_num(result.get('km_per_route'), 1)} km em cada rota. "
+                        f"Tempo calculado: {fmt_num(result.get('horas_operacao'), 2)} hora(s) em "
+                        f"{fmt_num(result.get('dias_operacao'))} dia(s)."
                     )
                 else:
-                    message = "Rota concluída. Duração, dias, KM e rankings foram atualizados."
+                    message = (
+                        f"Rota concluída com {fmt_num(result.get('horas_operacao'), 2)} hora(s) em operação por "
+                        f"{fmt_num(result.get('dias_operacao'))} dia(s). KM e rankings foram atualizados."
+                    )
                 st.session_state["route_completion_message"] = message
                 st.rerun()
 
@@ -11334,7 +11452,8 @@ def _render_route_history(plate_map: dict[str, str]) -> None:
     st.markdown("### Histórico das últimas alterações")
     st.caption(
         "As rotas mais recentemente importadas ou alteradas aparecem primeiro. Edite os campos operacionais "
-        "diretamente na planilha e clique em salvar. O status é recalculado automaticamente."
+        "diretamente na planilha e clique em salvar. O status é recalculado automaticamente. Para uma rota de "
+        "vários dias, use o formulário acima para informar separadamente a saída e a parada de cada dia."
     )
     try:
         routes = backend.load_rotas()
