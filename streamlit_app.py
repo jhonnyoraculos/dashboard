@@ -64,7 +64,7 @@ MUTED = "#6B7280"
 CARD_BORDER = "#c2d2f3"
 LOGO_PATH = Path(__file__).parent / "static" / "logo-jr.png"
 CURRENT_YEAR = date.today().year
-APP_VERSION = "route-manifests-pdf-v10"
+APP_VERSION = "route-manifests-pdf-v11"
 RANK_ROUTES_ENABLED = False
 ROUTE_CACHE_TTL_SECONDS = max(int(os.environ.get("JR_ROUTE_CACHE_TTL_SECONDS", "180") or 180), 30)
 DATA_EDITOR_PAGE_SIZE = 100
@@ -11204,7 +11204,14 @@ def _render_route_completion(plate_map: dict[str, str]) -> None:
     else:
         st.success("Todas as rotas importadas foram concluídas.")
 
-    routes = routes.sort_values(["Status", "Data", "Rota"], ascending=[False, False, True]).reset_index(drop=True)
+    all_routes = routes.copy()
+    pending_mask = routes["Status"].astype("string").fillna("").str.strip().str.casefold().eq("pendente")
+    routes = routes.loc[pending_mask].copy()
+    if routes.empty:
+        st.info("Não há rotas pendentes para preencher. As rotas concluídas permanecem no histórico abaixo.")
+        return
+
+    routes = routes.sort_values(["Data", "Rota"], ascending=[False, True]).reset_index(drop=True)
     label_map: dict[str, str] = {}
     for _, row in routes.iterrows():
         route_id = clean_text(row.get("Rota ID"))
@@ -11214,6 +11221,8 @@ def _render_route_completion(plate_map: dict[str, str]) -> None:
             f"{clean_text(row.get('Status'))} · {date_label} · {clean_text(row.get('Rota'))} · "
             f"{clean_text(row.get('PLACA'))} · carga {clean_text(row.get('Carga'))}"
         )
+    if st.session_state.get("cad_route_complete_id") not in label_map:
+        st.session_state.pop("cad_route_complete_id", None)
     selected_id = st.selectbox(
         "Rota para preencher",
         list(label_map),
@@ -11332,14 +11341,14 @@ def _render_route_completion(plate_map: dict[str, str]) -> None:
                 f"{fmt_num(total_operation_hours, 2)} hora(s), sem os intervalos noturnos."
             )
 
-        route_dates = pd.to_datetime(routes["Data"], errors="coerce")
-        if "Previsao" in routes.columns:
-            route_dates = route_dates.fillna(pd.to_datetime(routes["Previsao"], errors="coerce"))
+        route_dates = pd.to_datetime(all_routes["Data"], errors="coerce")
+        if "Previsao" in all_routes.columns:
+            route_dates = route_dates.fillna(pd.to_datetime(all_routes["Previsao"], errors="coerce"))
         same_plate_day = (
-            routes["PLACA"].astype("string").fillna("").str.strip().str.upper().eq(plate.strip().upper())
+            all_routes["PLACA"].astype("string").fillna("").str.strip().str.upper().eq(plate.strip().upper())
             & route_dates.dt.date.eq(base_date.date())
         )
-        matching_ids = set(routes.loc[same_plate_day, "Rota ID"].astype("string"))
+        matching_ids = set(all_routes.loc[same_plate_day, "Rota ID"].astype("string"))
         duplicate_count = len(matching_ids | {selected_id})
         if duplicate_count > 1:
             st.info(
@@ -11354,7 +11363,7 @@ def _render_route_completion(plate_map: dict[str, str]) -> None:
                 "corrigir os horários, o motorista ou a observação."
             )
         else:
-            grouped_km = pd.to_numeric(routes.loc[same_plate_day, "KM Rodados"], errors="coerce")
+            grouped_km = pd.to_numeric(all_routes.loc[same_plate_day, "KM Rodados"], errors="coerce")
             stored_km = grouped_km.sum(min_count=1)
             if selected_id not in matching_ids:
                 selected_km = pd.to_numeric(row.get("KM Rodados"), errors="coerce")
