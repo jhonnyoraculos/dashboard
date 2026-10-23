@@ -53,7 +53,7 @@ _backend_aluguel_period_ready = {"Inicio", "Fim"}.issubset(
 )
 _backend_aluguel_monthly_ready = getattr(backend, "BACKEND_BUILD_VERSION", "") == "aluguel-multiplicar-meses-v1"
 _backend_pedagio_chart_ready = getattr(backend, "PEDAGIO_CHART_VERSION", "") == "all-types-v1"
-_backend_routes_ready = getattr(backend, "ROUTES_BUILD_VERSION", "") == "rotas-pdf-v10"
+_backend_routes_ready = getattr(backend, "ROUTES_BUILD_VERSION", "") == "rotas-pdf-v11"
 if not _backend_features_ready or not _backend_aluguel_period_ready or not _backend_aluguel_monthly_ready or not _backend_pedagio_chart_ready or not _backend_routes_ready:
     backend = importlib.reload(backend)
 
@@ -64,7 +64,7 @@ MUTED = "#6B7280"
 CARD_BORDER = "#c2d2f3"
 LOGO_PATH = Path(__file__).parent / "static" / "logo-jr.png"
 CURRENT_YEAR = date.today().year
-APP_VERSION = "route-manifests-pdf-v13"
+APP_VERSION = "route-manifests-pdf-v14"
 RANK_ROUTES_ENABLED = False
 ROUTE_CACHE_TTL_SECONDS = max(int(os.environ.get("JR_ROUTE_CACHE_TTL_SECONDS", "180") or 180), 30)
 DATA_EDITOR_PAGE_SIZE = 100
@@ -11186,11 +11186,17 @@ def _render_route_completion(plate_map: dict[str, str]) -> None:
         "concluídas automaticamente, sem KM, usando 07:00–17:00 quando o PDF não informa horários. "
         "Esses campos alimentam o cálculo de duração, dias e os rankings de motorista, placa e rota."
     )
-    try:
-        auto_result = backend.auto_complete_freighter_routes()
-    except Exception as exc:
-        st.error(f"Não foi possível concluir automaticamente as rotas de freteiros: {exc}")
-        auto_result = {"updated": 0}
+    auto_complete_key = "route_freighters_auto_completed_v1"
+    auto_result = {"updated": 0}
+    if not st.session_state.get(auto_complete_key, False):
+        try:
+            auto_result = backend.auto_complete_freighter_routes()
+        except Exception as exc:
+            st.error(f"Não foi possível concluir automaticamente as rotas de freteiros: {exc}")
+        finally:
+            # A importação já conclui novos freteiros. Esta varredura existe
+            # apenas para registros antigos e não precisa rodar a cada rerun.
+            st.session_state[auto_complete_key] = True
     auto_completed = int(auto_result.get("updated", 0))
     if auto_completed:
         clear_cached_reads()
@@ -11452,7 +11458,6 @@ def _render_route_completion(plate_map: dict[str, str]) -> None:
             except Exception as exc:
                 st.error(str(exc))
             else:
-                clear_cached_reads()
                 updated_count = int(result.get("updated", 1))
                 if not editing_completed:
                     completed_ids = set(result.get("route_ids") or [selected_id])

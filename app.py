@@ -58,12 +58,14 @@ DB_TABLES = {
 }
 DB_METADATA_TABLE = "dashboard_metadata"
 BACKEND_BUILD_VERSION = "aluguel-multiplicar-meses-v1"
-ROUTES_BUILD_VERSION = "rotas-pdf-v10"
+ROUTES_BUILD_VERSION = "rotas-pdf-v11"
 PEDAGIO_CHART_VERSION = "all-types-v1"
 BACKUP_METADATA_KEY = "backup.last_downloaded_at"
 _DB_ENGINE = None
 _METADATA_CACHE_SECONDS = float(os.environ.get("JR_METADATA_CACHE_SECONDS", "30") or 30)
 _METADATA_CACHE = {"loaded": False, "loaded_at": 0.0, "values": {}, "lock": threading.Lock()}
+_DATASET_SCHEMA_READY: set[str] = set()
+_DATASET_SCHEMA_LOCK = threading.Lock()
 
 _PEDAGIO_CACHE = {"mtime": None, "df": None, "lock": threading.Lock()}
 _ALUGUEL_VEICULOS_CACHE = {"mtime": None, "df": None, "lock": threading.Lock()}
@@ -454,14 +456,25 @@ def _empty(columns: list[str]) -> pd.DataFrame:
     return pd.DataFrame(columns=columns)
 
 
+def _ensure_dataset_table_for_read(engine, dataset: str) -> None:
+    """Valida o schema uma vez por processo, nao a cada recarga do cache."""
+    if dataset in _DATASET_SCHEMA_READY:
+        return
+    with _DATASET_SCHEMA_LOCK:
+        if dataset in _DATASET_SCHEMA_READY:
+            return
+        with engine.begin() as conn:
+            _ensure_dataset_table(conn, dataset)
+        _DATASET_SCHEMA_READY.add(dataset)
+
+
 def _read_database_table(dataset: str, columns: list[str], *, date_columns: list[str] | None = None) -> pd.DataFrame:
     table = DB_TABLES[dataset]
     try:
         from sqlalchemy import text
 
         engine = _db_engine()
-        with engine.begin() as conn:
-            _ensure_dataset_table(conn, dataset)
+        _ensure_dataset_table_for_read(engine, dataset)
         df = pd.read_sql_query(text(f'SELECT * FROM "{table}"'), engine)
     except Exception as exc:
         raise RuntimeError(f'Não foi possível ler a tabela "{table}" no Neon.') from exc
@@ -2250,8 +2263,9 @@ def update_route_operation(
     version = selected_updated_at.isoformat()
     route_table = _quote_identifier(DB_TABLES["rotas"])
     with _db_engine().begin() as conn:
-        _ensure_dataset_table(conn, "rotas")
-        _ensure_dataset_table(conn, "placas")
+        # A tela ja carregou estes datasets e, portanto, garantiu o schema.
+        # Repetir dezenas de ALTER TABLE IF NOT EXISTS a cada clique deixava a
+        # gravacao perceptivelmente lenta no Neon.
         placas_table = _quote_identifier(DB_TABLES["placas"])
         category = conn.execute(
             text(
@@ -2361,12 +2375,11 @@ def update_route_operation(
             ),
             {"placa": plate_value, "categoria": category},
         )
-        for dataset in ("rotas", "placas"):
-            _write_metadata(conn, f"{dataset}.version", version)
-        _write_metadata(conn, "import.version", version)
+        # Somente as rotas mudaram nesta operacao. A placa/categoria gravada
+        # acima e idempotente e ja fazia parte das opcoes carregadas pela tela.
+        _write_metadata(conn, "rotas.version", version)
 
     _clear_dataset_cache("rotas")
-    _clear_dataset_cache("placas")
     return {
         "version": version,
         "updated": route_count,
