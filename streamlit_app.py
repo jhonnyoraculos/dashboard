@@ -65,7 +65,7 @@ MUTED = "#6B7280"
 CARD_BORDER = "#c2d2f3"
 LOGO_PATH = Path(__file__).parent / "static" / "logo-jr.png"
 CURRENT_YEAR = date.today().year
-APP_VERSION = "routes-visual-v2"
+APP_VERSION = "routes-delivery-days-v3"
 RANK_ROUTES_ENABLED = True
 ROUTE_CACHE_TTL_SECONDS = max(int(os.environ.get("JR_ROUTE_CACHE_TTL_SECONDS", "180") or 180), 30)
 DATA_EDITOR_PAGE_SIZE = 100
@@ -14102,6 +14102,23 @@ def render_rotas() -> None:
         float(data.get("tempo_medio_rota") or 0.0) * 1.2,
         1.0,
     )
+    delivery_days_values = (
+        pd.to_numeric(time_reference.get("Dias Rota"), errors="coerce").dropna()
+        if not time_reference.empty and "Dias Rota" in time_reference.columns
+        else pd.Series(dtype="float64")
+    )
+    delivery_days_positive = delivery_days_values[delivery_days_values > 0]
+    delivery_days_target = (
+        float(delivery_days_positive.median())
+        if not delivery_days_positive.empty
+        else max(float(data.get("dias_medios_rota") or 0.0), 1.0)
+    )
+    delivery_days_maximum = max(
+        float(delivery_days_positive.quantile(0.95)) if not delivery_days_positive.empty else 0.0,
+        delivery_days_target * 2.0,
+        float(data.get("dias_medios_rota") or 0.0) * 1.4,
+        2.0,
+    )
     route_rank_reference = pd.DataFrame(data.get("ranking_rotas") or [])
     productivity_values = (
         pd.to_numeric(route_rank_reference.get("Entregas por hora"), errors="coerce").dropna()
@@ -14122,7 +14139,7 @@ def render_rotas() -> None:
     cost_ratio = float((data.get("custos") or {}).get("percentual_custo") or 0.0)
 
     st.markdown("### Painel visual de desempenho")
-    gauge_columns = st.columns(4)
+    gauge_columns = st.columns(5)
     gauge_specs = [
         (
             data.get("qualidade_media"),
@@ -14150,6 +14167,15 @@ def render_rotas() -> None:
             " h",
             True,
             "routes_gauge_duration",
+        ),
+        (
+            data.get("dias_medios_rota"),
+            "Dias para entregar",
+            delivery_days_maximum,
+            delivery_days_target,
+            " dias",
+            True,
+            "routes_gauge_delivery_days",
         ),
         (
             cost_ratio,
@@ -14309,6 +14335,29 @@ def render_rotas() -> None:
         if time_df.empty:
             st.info("Nenhuma rota com tempo calculado foi encontrada.")
         else:
+            days_numeric = pd.to_numeric(time_df.get("Dias Rota"), errors="coerce").fillna(0).clip(lower=0)
+            day_labels = ["1 dia", "2 dias", "3 dias", "4 dias ou mais"]
+            day_counts = [
+                int(days_numeric.eq(1).sum()),
+                int(days_numeric.eq(2).sum()),
+                int(days_numeric.eq(3).sum()),
+                int(days_numeric.ge(4).sum()),
+            ]
+            with st.container(border=True):
+                st.markdown("**Quantos dias as rotas demoram para entregar**")
+                st.caption("Contagem entre o dia da saída e o dia do retorno, considerando somente rotas concluídas.")
+                st.plotly_chart(
+                    metric_bar_chart(
+                        day_labels,
+                        day_counts,
+                        unit="rotas",
+                        decimals=0,
+                        color="#2563EB",
+                    ),
+                    width="stretch",
+                    config={"displayModeBar": False, "responsive": True},
+                    key="routes_delivery_days_distribution",
+                )
             time_df["Intervalos e noites"] = (
                 pd.to_numeric(time_df.get("Tempo Viagem Horas"), errors="coerce").fillna(0)
                 - pd.to_numeric(time_df.get("Horas Trabalhadas"), errors="coerce").fillna(0)
