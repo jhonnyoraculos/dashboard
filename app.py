@@ -59,7 +59,7 @@ DB_TABLES = {
 }
 DB_METADATA_TABLE = "dashboard_metadata"
 BACKEND_BUILD_VERSION = "aluguel-multiplicar-meses-v1"
-ROUTES_BUILD_VERSION = "rotas-pdf-v15"
+ROUTES_BUILD_VERSION = "rotas-pdf-v16"
 PEDAGIO_CHART_VERSION = "all-types-v1"
 BACKUP_METADATA_KEY = "backup.last_downloaded_at"
 _DB_ENGINE = None
@@ -4620,20 +4620,439 @@ def _route_filter_values(df: pd.DataFrame, column: str, raw) -> pd.DataFrame:
     return df.loc[normalized.isin(normalized_targets)].copy()
 
 
+def _completed_route_rows(routes: pd.DataFrame) -> pd.DataFrame:
+    if routes.empty or "Status" not in routes.columns:
+        return routes.iloc[0:0].copy()
+    status = routes["Status"].astype("string").fillna("").map(_normalize_ascii).str.casefold()
+    return routes.loc[status.eq("concluida")].copy()
+
+
+def _route_metric_source(routes: pd.DataFrame, deliveries: pd.DataFrame) -> pd.DataFrame:
+    source = routes.copy()
+    if source.empty:
+        return source
+
+    numeric_columns = [
+        "Entregas",
+        "Peso Carga",
+        "KM Rodados",
+        "Tempo Viagem Horas",
+        "Horas Trabalhadas",
+        "Dias Rota",
+    ]
+    for column in numeric_columns:
+        if column not in source.columns:
+            source[column] = 0.0
+        source[column] = pd.to_numeric(source[column], errors="coerce").fillna(0.0).clip(lower=0)
+
+    if not deliveries.empty and "Rota ID" in deliveries.columns:
+        delivery_source = deliveries.copy()
+        delivery_source["Peso Pedido"] = pd.to_numeric(
+            delivery_source.get("Peso Pedido"), errors="coerce"
+        ).fillna(0.0).clip(lower=0)
+        delivery_source["Valor Nota"] = pd.to_numeric(
+            delivery_source.get("Valor Nota"), errors="coerce"
+        ).fillna(0.0).clip(lower=0)
+        delivery_stats = delivery_source.groupby("Rota ID", as_index=False).agg(
+            **{
+                "_Entregas Reais": ("Entrega ID", "nunique"),
+                "_Peso Real": ("Peso Pedido", "sum"),
+                "Valor Entregas": ("Valor Nota", "sum"),
+            }
+        )
+        source = source.merge(delivery_stats, on="Rota ID", how="left")
+        source["Entregas"] = source["_Entregas Reais"].fillna(source["Entregas"])
+        source["Peso Carga"] = source["_Peso Real"].fillna(source["Peso Carga"])
+        source["Valor Entregas"] = source["Valor Entregas"].fillna(0.0)
+    else:
+        source["Valor Entregas"] = 0.0
+
+    source["_Entrega Hora"] = source["Entregas"].div(source["Horas Trabalhadas"].replace(0, pd.NA)).fillna(0.0)
+    source["_Ton Hora"] = (source["Peso Carga"] / 1000.0).div(
+        source["Horas Trabalhadas"].replace(0, pd.NA)
+    ).fillna(0.0)
+    source["_KM Dia"] = source["KM Rodados"].div(source["Dias Rota"].replace(0, pd.NA)).fillna(0.0)
+    source["_Entrega KM"] = source["Entregas"].div(source["KM Rodados"].replace(0, pd.NA)).fillna(0.0)
+    source["_Kg KM"] = source["Peso Carga"].div(source["KM Rodados"].replace(0, pd.NA)).fillna(0.0)
+    source["_Horas Entrega"] = source["Horas Trabalhadas"].div(source["Entregas"].replace(0, pd.NA)).fillna(0.0)
+    own_fleet = ~source.get("Categoria", pd.Series("", index=source.index)).map(_normalize_category_value).eq("Freteiro")
+    quality_parts = pd.DataFrame(
+        {
+            "dates": source.get("Saida", pd.Series(pd.NaT, index=source.index)).notna()
+            & source.get("Retorno", pd.Series(pd.NaT, index=source.index)).notna(),
+            "travel": source["Tempo Viagem Horas"].gt(0),
+            "work": source["Horas Trabalhadas"].gt(0),
+            "distance": source["KM Rodados"].gt(0) | ~own_fleet,
+            "driver": source.get("Motorista", pd.Series("", index=source.index))
+            .astype("string")
+            .fillna("")
+            .str.strip()
+            .ne(""),
+        }
+    )
+    source["_Qualidade"] = quality_parts.mean(axis=1) * 100.0
+    return source
+
+
+def _route_performance_ranking(source: pd.DataFrame, column: str, *, route_mode: bool = False) -> pd.DataFrame:
+    output_columns = [
+        column,
+        "Posicao",
+        "Pontuacao",
+        "Rotas",
+        "Entregas",
+        "Peso kg",
+        "KM",
+        "Tempo viagem",
+        "Horas trabalhadas",
+        "Dias",
+        "Duracao media h",
+        "Entregas por hora",
+        "Toneladas por hora",
+        "Entregas por KM",
+        "Kg por KM",
+        "Horas por entrega",
+        "KM por dia",
+        "Peso medio por rota kg",
+        "Qualidade dos dados %",
+        "Rotas diferentes",
+    ]
+    if source.empty or column not in source.columns:
+        return pd.DataFrame(columns=output_columns)
+    work = source[source[column].astype("string").fillna("").str.strip().ne("")].copy()
+    if work.empty:
+        return pd.DataFrame(columns=output_columns)
+
+    grouped = work.groupby(column, as_index=False).agg(
+        Rotas=("Rota ID", "nunique"),
+        Entregas=("Entregas", "sum"),
+        **{
+            "Peso kg": ("Peso Carga", "sum"),
+            "KM": ("KM Rodados", "sum"),
+            "Tempo viagem": ("Tempo Viagem Horas", "sum"),
+            "Horas trabalhadas": ("Horas Trabalhadas", "sum"),
+            "Dias": ("Dias Rota", "sum"),
+            "Qualidade soma": ("_Qualidade", "sum"),
+            "Rotas diferentes": ("Rota", "nunique"),
+        },
+    )
+    grouped["Duracao media h"] = grouped["Tempo viagem"].div(grouped["Rotas"].replace(0, pd.NA)).fillna(0.0)
+    grouped["Entregas por hora"] = grouped["Entregas"].div(
+        grouped["Horas trabalhadas"].replace(0, pd.NA)
+    ).fillna(0.0)
+    grouped["Toneladas por hora"] = (grouped["Peso kg"] / 1000.0).div(
+        grouped["Horas trabalhadas"].replace(0, pd.NA)
+    ).fillna(0.0)
+    grouped["Entregas por KM"] = grouped["Entregas"].div(grouped["KM"].replace(0, pd.NA)).fillna(0.0)
+    grouped["Kg por KM"] = grouped["Peso kg"].div(grouped["KM"].replace(0, pd.NA)).fillna(0.0)
+    grouped["Horas por entrega"] = grouped["Horas trabalhadas"].div(
+        grouped["Entregas"].replace(0, pd.NA)
+    ).fillna(0.0)
+    grouped["KM por dia"] = grouped["KM"].div(grouped["Dias"].replace(0, pd.NA)).fillna(0.0)
+    grouped["Peso medio por rota kg"] = grouped["Peso kg"].div(grouped["Rotas"].replace(0, pd.NA)).fillna(0.0)
+    grouped["Qualidade dos dados %"] = grouped["Qualidade soma"].div(grouped["Rotas"].replace(0, pd.NA)).fillna(0.0)
+
+    deliveries_rank = grouped["Entregas por hora"].rank(method="average", pct=True).fillna(0.0) * 100.0
+    weight_rank = grouped["Toneladas por hora"].rank(method="average", pct=True).fillna(0.0) * 100.0
+    if route_mode:
+        grouped["Pontuacao"] = (
+            deliveries_rank * 0.4
+            + weight_rank * 0.4
+            + grouped["Qualidade dos dados %"] * 0.2
+        )
+    else:
+        max_routes = max(float(grouped["Rotas"].max()), 1.0)
+        max_diversity = max(float(grouped["Rotas diferentes"].max()), 1.0)
+        volume_score = (grouped["Rotas"] / max_routes).pow(0.5) * 100.0
+        diversity_score = (grouped["Rotas diferentes"] / max_diversity).pow(0.5) * 100.0
+        grouped["Pontuacao"] = (
+            deliveries_rank * 0.3
+            + weight_rank * 0.3
+            + volume_score * 0.2
+            + diversity_score * 0.1
+            + grouped["Qualidade dos dados %"] * 0.1
+        )
+    grouped["Pontuacao"] = grouped["Pontuacao"].clip(lower=0, upper=100).round(1)
+    grouped = grouped.sort_values(
+        ["Pontuacao", "Rotas", "Entregas"], ascending=[False, False, False]
+    ).reset_index(drop=True)
+    grouped["Posicao"] = grouped.index + 1
+    numeric_rounding = {
+        "Peso kg": 3,
+        "KM": 2,
+        "Tempo viagem": 2,
+        "Horas trabalhadas": 2,
+        "Dias": 0,
+        "Duracao media h": 2,
+        "Entregas por hora": 3,
+        "Toneladas por hora": 3,
+        "Entregas por KM": 4,
+        "Kg por KM": 3,
+        "Horas por entrega": 3,
+        "KM por dia": 2,
+        "Peso medio por rota kg": 2,
+        "Qualidade dos dados %": 1,
+    }
+    for name, decimals in numeric_rounding.items():
+        grouped[name] = pd.to_numeric(grouped[name], errors="coerce").fillna(0.0).round(decimals)
+    return grouped[[column, *[name for name in output_columns if name != column]]]
+
+
+def _route_calendar_days(routes: pd.DataFrame) -> pd.DataFrame:
+    columns = ["Rota ID", "Data", "Mes", "Rota", "PLACA", "Motorista", "Categoria"]
+    rows: list[dict] = []
+    for _, route in routes.iterrows():
+        start = pd.to_datetime(route.get("Saida"), errors="coerce")
+        end = pd.to_datetime(route.get("Retorno"), errors="coerce")
+        if pd.isna(start):
+            start = pd.to_datetime(route.get("Data"), errors="coerce")
+        if pd.isna(end):
+            end = start
+        if pd.isna(start) or pd.isna(end):
+            continue
+        for day in pd.date_range(start.normalize(), end.normalize(), freq="D"):
+            rows.append(
+                {
+                    "Rota ID": route.get("Rota ID"),
+                    "Data": day.normalize(),
+                    "Mes": day.to_period("M").strftime("%Y-%m"),
+                    "Rota": route.get("Rota"),
+                    "PLACA": route.get("PLACA"),
+                    "Motorista": route.get("Motorista"),
+                    "Categoria": route.get("Categoria"),
+                }
+            )
+    return pd.DataFrame(rows, columns=columns)
+
+
+def _route_cost_breakdown(
+    all_completed_routes: pd.DataFrame,
+    selected_routes: pd.DataFrame,
+    deliveries: pd.DataFrame,
+) -> dict:
+    empty = {
+        "rotas": [],
+        "mensal": [],
+        "total_custo": 0.0,
+        "total_ganho": 0.0,
+        "percentual_custo": None,
+        "resultado": 0.0,
+        "avisos": [],
+    }
+    if selected_routes.empty:
+        return empty
+
+    all_days = _route_calendar_days(all_completed_routes)
+    selected_ids = set(selected_routes["Rota ID"].astype("string").tolist())
+    selected_days = all_days[all_days["Rota ID"].astype("string").isin(selected_ids)].copy()
+    if selected_days.empty:
+        return empty
+
+    route_meta = selected_routes.set_index("Rota ID")
+    cost_parts: dict[str, defaultdict[str, float]] = {
+        str(route_id): defaultdict(float) for route_id in selected_ids
+    }
+
+    def add_cost(route_id: object, name: str, value: object) -> None:
+        key = str(route_id)
+        number = pd.to_numeric(pd.Series([value]), errors="coerce").iloc[0]
+        if key in cost_parts and pd.notna(number):
+            cost_parts[key][name] += max(float(number), 0.0)
+
+    active_months = set(all_days["Mes"].astype("string").tolist())
+
+    def period_rows(frame: pd.DataFrame) -> pd.DataFrame:
+        if frame.empty or "Mes" not in frame.columns:
+            return frame
+        months = frame["Mes"].astype("string").fillna("").str.strip()
+        return frame.loc[months.isin(active_months)].copy()
+
+    try:
+        fuel = period_rows(_ranking_filter_valid_plates(_apply_plate_categories(load_combustivel())))
+        _, _, route_context = _ranking_imported_route_frames()
+        allocated_fuel, fuel_warnings = _ranking_allocate_fuel_to_imported_routes(fuel, route_context)
+        for _, row in allocated_fuel.iterrows():
+            add_cost(row.get("Rota ID"), "Combustivel", row.get("Custo"))
+    except Exception:
+        fuel_warnings = ["Combustivel indisponivel para o calculo das rotas."]
+
+    def allocate_plate_day(frame: pd.DataFrame, part_name: str) -> None:
+        if frame.empty or not {"Data", "PLACA", "Custo"}.issubset(frame.columns):
+            return
+        work = frame[["Data", "PLACA", "Custo"]].copy().reset_index(drop=True)
+        work["Data"] = pd.to_datetime(work["Data"], errors="coerce").dt.normalize()
+        work["PLACA"] = work["PLACA"].astype("string").fillna("").str.strip()
+        work["Custo"] = pd.to_numeric(work["Custo"], errors="coerce").fillna(0.0).clip(lower=0)
+        work["_Cost ID"] = work.index
+        matches = work.merge(
+            all_days[["Rota ID", "Data", "PLACA"]],
+            on=["Data", "PLACA"],
+            how="inner",
+        )
+        if matches.empty:
+            return
+        matches["_Divisor"] = matches.groupby("_Cost ID")["Rota ID"].transform("nunique").clip(lower=1)
+        matches["_Allocated"] = matches["Custo"] / matches["_Divisor"]
+        for _, row in matches.iterrows():
+            add_cost(row.get("Rota ID"), part_name, row.get("_Allocated"))
+
+    try:
+        allocate_plate_day(period_rows(_ranking_filter_valid_plates(_apply_plate_categories(load_manutencao()))), "Manutencao")
+    except Exception:
+        pass
+    try:
+        allocate_plate_day(period_rows(_ranking_filter_valid_plates(_apply_plate_categories(load_pedagio()))), "Pedagio")
+    except Exception:
+        pass
+
+    daily_rates = _ranking_freighter_daily_rates()
+    for _, row in selected_days.iterrows():
+        if _normalize_category_value(row.get("Categoria")) == "Freteiro":
+            add_cost(row.get("Rota ID"), "Freteiro", daily_rates.get(str(row.get("PLACA") or "").strip(), 0.0))
+
+    try:
+        salaries = period_rows(load_salarios_transporte())
+        salary_by_month = (
+            salaries.assign(Valor=pd.to_numeric(salaries["Valor"], errors="coerce").fillna(0.0))
+            .groupby("Mes")["Valor"]
+            .sum()
+            .to_dict()
+            if not salaries.empty and {"Mes", "Valor"}.issubset(salaries.columns)
+            else {}
+        )
+        transport_days = all_days[
+            all_days["Categoria"].map(_normalize_category_value).eq("Transporte")
+        ].drop_duplicates(["Rota ID", "Data"])
+        month_day_counts = transport_days.groupby("Mes").size().to_dict()
+        for _, row in selected_days.iterrows():
+            if _normalize_category_value(row.get("Categoria")) != "Transporte":
+                continue
+            month = str(row.get("Mes") or "")
+            divisor = int(month_day_counts.get(month, 0) or 0)
+            if divisor:
+                add_cost(row.get("Rota ID"), "Salarios", float(salary_by_month.get(month, 0.0)) / divisor)
+    except Exception:
+        pass
+
+    try:
+        hotels = period_rows(load_hoteis())
+        if not hotels.empty and {"Data", "Valor"}.issubset(hotels.columns):
+            hotel_rows = hotels.copy().reset_index(drop=True)
+            hotel_rows["Data"] = pd.to_datetime(hotel_rows["Data"], errors="coerce").dt.normalize()
+            hotel_rows["Valor"] = pd.to_numeric(hotel_rows["Valor"], errors="coerce").fillna(0.0).clip(lower=0)
+            hotel_rows["_Hotel ID"] = hotel_rows.index
+            hotel_rows["_Motorista"] = hotel_rows.get("Motorista", "").astype("string").fillna("").map(
+                lambda value: _normalize_ascii(value).casefold().strip()
+            )
+            hotel_rows["_Ajudante"] = hotel_rows.get("Ajudante", "").astype("string").fillna("").map(
+                lambda value: _normalize_ascii(value).casefold().strip()
+            )
+            day_names = all_days.copy()
+            day_names["_Motorista Rota"] = day_names["Motorista"].astype("string").fillna("").map(
+                lambda value: _normalize_ascii(value).casefold().strip()
+            )
+            matches = hotel_rows.merge(day_names, on="Data", how="inner")
+            matches = matches.loc[
+                matches["_Motorista Rota"].ne("")
+                & (
+                    matches["_Motorista Rota"].eq(matches["_Motorista"])
+                    | matches["_Motorista Rota"].eq(matches["_Ajudante"])
+                )
+            ].copy()
+            if not matches.empty:
+                matches["_Divisor"] = matches.groupby("_Hotel ID")["Rota ID"].transform("nunique").clip(lower=1)
+                matches["_Allocated"] = matches["Valor"] / matches["_Divisor"]
+                for _, row in matches.iterrows():
+                    add_cost(row.get("Rota ID"), "Hoteis", row.get("_Allocated"))
+    except Exception:
+        pass
+
+    gain_by_route: dict[str, float] = {}
+    if not deliveries.empty and {"Rota ID", "Valor Nota"}.issubset(deliveries.columns):
+        gains = deliveries.copy()
+        gains["Valor Nota"] = pd.to_numeric(gains["Valor Nota"], errors="coerce").fillna(0.0).clip(lower=0)
+        gain_by_route = {
+            str(route_id): float(value or 0.0)
+            for route_id, value in gains.groupby("Rota ID")["Valor Nota"].sum().items()
+        }
+
+    rows: list[dict] = []
+    for route_id in selected_ids:
+        route = route_meta.loc[route_id] if route_id in route_meta.index else pd.Series(dtype=object)
+        parts = cost_parts.get(str(route_id), defaultdict(float))
+        cost = sum(parts.values())
+        gain = float(gain_by_route.get(str(route_id), 0.0) or 0.0)
+        ratio = (cost / gain * 100.0) if gain > 0 else None
+        rows.append(
+            {
+                "Rota ID": str(route_id),
+                "Mes": str(route.get("Mes") or ""),
+                "Data": route.get("Data"),
+                "Rota": route.get("Rota"),
+                "PLACA": route.get("PLACA"),
+                "Motorista": route.get("Motorista"),
+                "Combustivel": round(parts["Combustivel"], 2),
+                "Manutencao": round(parts["Manutencao"], 2),
+                "Pedagio": round(parts["Pedagio"], 2),
+                "Hoteis": round(parts["Hoteis"], 2),
+                "Salarios": round(parts["Salarios"], 2),
+                "Freteiro": round(parts["Freteiro"], 2),
+                "Custo total": round(cost, 2),
+                "Ganho entregas": round(gain, 2),
+                "Resultado": round(gain - cost, 2),
+                "Custo sobre ganho %": round(ratio, 2) if ratio is not None else None,
+            }
+        )
+    cost_df = pd.DataFrame(rows)
+    if cost_df.empty:
+        return empty
+    monthly = cost_df.groupby("Mes", as_index=False).agg(
+        **{
+            "Custo total": ("Custo total", "sum"),
+            "Ganho entregas": ("Ganho entregas", "sum"),
+            "Resultado": ("Resultado", "sum"),
+            "Rotas": ("Rota ID", "nunique"),
+        }
+    )
+    monthly["Custo sobre ganho %"] = monthly["Custo total"].div(
+        monthly["Ganho entregas"].replace(0, pd.NA)
+    ).mul(100.0)
+    total_cost = float(cost_df["Custo total"].sum())
+    total_gain = float(cost_df["Ganho entregas"].sum())
+    total_ratio = (total_cost / total_gain * 100.0) if total_gain > 0 else None
+    return {
+        "rotas": _route_records(
+            cost_df.sort_values(["Custo sobre ganho %", "Custo total"], ascending=[False, False], na_position="first")
+        ),
+        "mensal": _route_records(monthly.sort_values("Mes")),
+        "total_custo": round(total_cost, 2),
+        "total_ganho": round(total_gain, 2),
+        "percentual_custo": round(total_ratio, 2) if total_ratio is not None else None,
+        "resultado": round(total_gain - total_cost, 2),
+        "avisos": fuel_warnings,
+    }
+
+
 def data_rotas(params: dict | None = None) -> dict:
     params = params or {}
-    routes = load_rotas()
+    all_loaded_routes = load_rotas()
     deliveries = load_rota_entregas()
-    all_routes = routes.copy()
+    all_routes = _completed_route_rows(all_loaded_routes)
+    routes = all_routes.copy()
+    completed_ids = set(all_routes.get("Rota ID", pd.Series(dtype="string")).astype("string").tolist())
+    if not deliveries.empty and "Rota ID" in deliveries.columns:
+        deliveries = deliveries[deliveries["Rota ID"].astype("string").isin(completed_ids)].copy()
 
     options = {
         "anos": _unique_years(all_routes),
         "meses": _unique_sorted(all_routes, "Mes"),
-        "status": _unique_sorted(all_routes, "Status"),
         "placas": _unique_sorted(all_routes, "PLACA"),
         "motoristas": _unique_sorted(all_routes, "Motorista"),
         "rotas": _unique_sorted(all_routes, "Rota"),
+        "categorias": _unique_sorted(all_routes, "Categoria"),
     }
+    if _truthy_param(params.get("somente_opcoes")):
+        return options
 
     ano = _parse_int(_param(params, "ano"))
     meses = _parse_mes_list(params.get("mes"))
@@ -4641,10 +5060,10 @@ def data_rotas(params: dict | None = None) -> dict:
         routes = _filter_by_period(routes, ano=ano)
     if meses:
         routes = routes[routes["Mes"].isin(meses)].copy()
-    routes = _route_filter_values(routes, "Status", params.get("status"))
     routes = _route_filter_values(routes, "PLACA", params.get("placa"))
     routes = _route_filter_values(routes, "Motorista", params.get("motorista"))
     routes = _route_filter_values(routes, "Rota", params.get("rota"))
+    routes = _route_filter_values(routes, "Categoria", params.get("categoria"))
 
     search = str(_param(params, "busca") or "").strip()
     if search:
@@ -4673,52 +5092,10 @@ def data_rotas(params: dict | None = None) -> dict:
         suffixes=("", " Rota"),
     )
 
-    completed = (
-        routes["Status"].astype("string").fillna("").apply(lambda value: _normalize_ascii(value).casefold()).eq("concluida")
-        if not routes.empty
-        else pd.Series(dtype=bool)
-    )
-    ranking_source = routes.copy()
-    ranking_source["Entregas"] = pd.to_numeric(ranking_source.get("Entregas"), errors="coerce").fillna(0)
-    ranking_source["Peso Carga"] = pd.to_numeric(ranking_source.get("Peso Carga"), errors="coerce").fillna(0)
-    ranking_source["KM Rodados"] = pd.to_numeric(ranking_source.get("KM Rodados"), errors="coerce").fillna(0)
-    ranking_source["Duracao Horas"] = pd.to_numeric(ranking_source.get("Duracao Horas"), errors="coerce").fillna(0)
-    ranking_source["Tempo Viagem Horas"] = pd.to_numeric(
-        ranking_source.get("Tempo Viagem Horas"), errors="coerce"
-    ).fillna(0)
-    ranking_source["Horas Trabalhadas"] = pd.to_numeric(
-        ranking_source.get("Horas Trabalhadas"), errors="coerce"
-    ).fillna(0)
-    ranking_source["Dias Rota"] = pd.to_numeric(ranking_source.get("Dias Rota"), errors="coerce").fillna(0)
-
-    def ranking(column: str) -> pd.DataFrame:
-        if ranking_source.empty or column not in ranking_source.columns:
-            return _empty([
-                column, "Rotas", "Concluidas", "Entregas", "Peso kg", "KM",
-                "Tempo viagem", "Horas trabalhadas", "Dias",
-            ])
-        source = ranking_source[ranking_source[column].astype("string").fillna("").str.strip().ne("")].copy()
-        if source.empty:
-            return _empty([
-                column, "Rotas", "Concluidas", "Entregas", "Peso kg", "KM",
-                "Tempo viagem", "Horas trabalhadas", "Dias",
-            ])
-        source["_Concluida"] = source["Status"].astype("string").fillna("").apply(
-            lambda value: _normalize_ascii(value).casefold() == "concluida"
-        ).astype(int)
-        grouped = source.groupby(column, as_index=False).agg(
-            Rotas=("Rota ID", "nunique"),
-            Concluidas=("_Concluida", "sum"),
-            Entregas=("Entregas", "sum"),
-            **{
-                "Peso kg": ("Peso Carga", "sum"),
-                "KM": ("KM Rodados", "sum"),
-                "Tempo viagem": ("Tempo Viagem Horas", "sum"),
-                "Horas trabalhadas": ("Horas Trabalhadas", "sum"),
-                "Dias": ("Dias Rota", "sum"),
-            },
-        )
-        return grouped.sort_values(["Concluidas", "Rotas", "KM"], ascending=[False, False, False]).reset_index(drop=True)
+    metric_source = _route_metric_source(routes, filtered_deliveries)
+    ranking_motoristas = _route_performance_ranking(metric_source, "Motorista")
+    ranking_placas = _route_performance_ranking(metric_source, "PLACA")
+    ranking_rotas = _route_performance_ranking(metric_source, "Rota", route_mode=True)
 
     if filtered_deliveries.empty:
         city_ranking = _empty(["Cidade", "Rotas", "Entregas", "Peso kg", "Valor Notas"])
@@ -4732,27 +5109,176 @@ def data_rotas(params: dict | None = None) -> dict:
             **{"Peso kg": ("Peso Pedido", "sum"), "Valor Notas": ("Valor Nota", "sum")},
         ).sort_values(["Entregas", "Peso kg"], ascending=[False, False])
 
+    if metric_source.empty:
+        monthly = pd.DataFrame(
+            columns=[
+                "Mes", "Rotas", "Entregas", "Peso kg", "KM", "Tempo viagem",
+                "Horas trabalhadas", "Duracao media h", "Entregas por hora", "Toneladas por hora",
+            ]
+        )
+    else:
+        monthly = metric_source.groupby("Mes", as_index=False).agg(
+            Rotas=("Rota ID", "nunique"),
+            Entregas=("Entregas", "sum"),
+            **{
+                "Peso kg": ("Peso Carga", "sum"),
+                "KM": ("KM Rodados", "sum"),
+                "Tempo viagem": ("Tempo Viagem Horas", "sum"),
+                "Horas trabalhadas": ("Horas Trabalhadas", "sum"),
+            },
+        )
+        monthly["Duracao media h"] = monthly["Tempo viagem"].div(monthly["Rotas"].replace(0, pd.NA)).fillna(0.0)
+        monthly["Entregas por hora"] = monthly["Entregas"].div(
+            monthly["Horas trabalhadas"].replace(0, pd.NA)
+        ).fillna(0.0)
+        monthly["Toneladas por hora"] = (monthly["Peso kg"] / 1000.0).div(
+            monthly["Horas trabalhadas"].replace(0, pd.NA)
+        ).fillna(0.0)
+        monthly = monthly.sort_values("Mes")
+
+    costs = _route_cost_breakdown(all_routes, routes, filtered_deliveries)
+    cost_by_route_id = {
+        str(row.get("Rota ID")): row for row in costs.get("rotas", []) if str(row.get("Rota ID") or "").strip()
+    }
+    alerts: list[dict] = []
+
+    def add_alert(row: pd.Series | dict, level: str, alert_type: str, detail: str) -> None:
+        alerts.append(
+            {
+                "Nivel": level,
+                "Tipo": alert_type,
+                "Data": row.get("Data"),
+                "Rota": row.get("Rota"),
+                "PLACA": row.get("PLACA"),
+                "Motorista": row.get("Motorista"),
+                "Detalhe": detail,
+                "Rota ID": row.get("Rota ID"),
+            }
+        )
+
+    duration_limit = 0.0
+    if not metric_source.empty:
+        positive_duration = metric_source.loc[metric_source["Tempo Viagem Horas"].gt(0), "Tempo Viagem Horas"]
+        if len(positive_duration) >= 4:
+            duration_limit = max(float(positive_duration.quantile(0.9)), 24.0)
+        for _, row in metric_source.iterrows():
+            travel_hours = float(row.get("Tempo Viagem Horas") or 0.0)
+            work_hours = float(row.get("Horas Trabalhadas") or 0.0)
+            days = max(float(row.get("Dias Rota") or 0.0), 1.0)
+            km = float(row.get("KM Rodados") or 0.0)
+            if work_hours / days > 12.0:
+                add_alert(
+                    row,
+                    "Alto",
+                    "Jornada extensa",
+                    f"Media de {work_hours / days:.1f} hora(s) trabalhada(s) por dia.",
+                )
+            if duration_limit and travel_hours > duration_limit:
+                add_alert(
+                    row,
+                    "Atencao",
+                    "Duracao acima do padrao",
+                    f"Viagem com {travel_hours:.1f} h; limite estatistico do periodo: {duration_limit:.1f} h.",
+                )
+            if travel_hours > 0 and work_hours > travel_hours + 0.25:
+                add_alert(
+                    row,
+                    "Alto",
+                    "Horario inconsistente",
+                    "As horas trabalhadas ficaram maiores que o tempo corrido da viagem.",
+                )
+            if work_hours > 0 and km / work_hours > 100.0:
+                add_alert(
+                    row,
+                    "Atencao",
+                    "KM por hora elevado",
+                    f"Relacao de {km / work_hours:.1f} km por hora trabalhada; confira KM e horarios.",
+                )
+            if float(row.get("_Qualidade") or 0.0) < 99.9:
+                add_alert(
+                    row,
+                    "Informativo",
+                    "Dado incompleto",
+                    f"Qualidade operacional de {float(row.get('_Qualidade') or 0.0):.0f}%.",
+                )
+
+    for route_id, cost_row in cost_by_route_id.items():
+        ratio = cost_row.get("Custo sobre ganho %")
+        gain = float(cost_row.get("Ganho entregas") or 0.0)
+        cost = float(cost_row.get("Custo total") or 0.0)
+        if gain <= 0 and cost > 0:
+            add_alert(cost_row, "Alto", "Custo sem ganho", "A rota possui custo calculado, mas nao possui valor de notas.")
+        elif ratio is not None and float(ratio) >= 100:
+            add_alert(cost_row, "Alto", "Custo acima do ganho", f"O custo representa {float(ratio):.1f}% do ganho.")
+        elif ratio is not None and float(ratio) >= 80:
+            add_alert(cost_row, "Atencao", "Custo elevado", f"O custo representa {float(ratio):.1f}% do ganho.")
+
+    level_order = {"Alto": 0, "Atencao": 1, "Informativo": 2}
+    alerts.sort(key=lambda row: (level_order.get(str(row.get("Nivel")), 9), str(row.get("Data") or "")), reverse=False)
+
+    time_columns = [
+        "Rota ID", "Data", "Rota", "Carga", "PLACA", "Motorista", "Categoria", "Saida", "Retorno",
+        "Tempo Viagem Horas", "Horas Trabalhadas", "Dias Rota", "KM Rodados", "Entregas", "Peso Carga",
+        "_Entrega Hora", "_Ton Hora", "_Qualidade", "Jornadas",
+    ]
+    time_columns = [column for column in time_columns if column in metric_source.columns]
+    time_details = metric_source[time_columns].copy() if time_columns else pd.DataFrame()
+    if not time_details.empty:
+        time_details = time_details.rename(
+            columns={
+                "_Entrega Hora": "Entregas por hora",
+                "_Ton Hora": "Toneladas por hora",
+                "_Qualidade": "Qualidade dos dados %",
+            }
+        ).sort_values(["Data", "Rota"], ascending=[False, True])
+
+    def best_record(ranking_df: pd.DataFrame, label: str) -> dict:
+        if ranking_df.empty:
+            return {}
+        candidates = ranking_df
+        if label == "Motorista" and int(ranking_df["Rotas"].max()) >= 3:
+            candidates = ranking_df[ranking_df["Rotas"] >= 3]
+        row = candidates.iloc[0].to_dict()
+        return {key: _route_record_value(value) for key, value in row.items()}
+
+    total_routes = int(metric_source["Rota ID"].nunique()) if not metric_source.empty else 0
+    total_deliveries = int(filtered_deliveries["Entrega ID"].nunique()) if not filtered_deliveries.empty else 0
+    total_weight = float(metric_source["Peso Carga"].sum()) if not metric_source.empty else 0.0
+    total_km = float(metric_source["KM Rodados"].sum()) if not metric_source.empty else 0.0
+    travel_total = float(metric_source["Tempo Viagem Horas"].sum()) if not metric_source.empty else 0.0
+    work_total = float(metric_source["Horas Trabalhadas"].sum()) if not metric_source.empty else 0.0
+    days_total = float(metric_source["Dias Rota"].sum()) if not metric_source.empty else 0.0
+
     return {
         **options,
-        "total_rotas": int(routes["Rota ID"].nunique()) if not routes.empty else 0,
-        "rotas_concluidas": int(completed.sum()) if not routes.empty else 0,
-        "rotas_pendentes": int((~completed).sum()) if not routes.empty else 0,
-        "entregas_total": int(filtered_deliveries["Entrega ID"].nunique()) if not filtered_deliveries.empty else 0,
-        "peso_total": float(pd.to_numeric(routes.get("Peso Carga"), errors="coerce").sum()) if not routes.empty else 0.0,
-        "km_total": float(pd.to_numeric(routes.get("KM Rodados"), errors="coerce").sum()) if not routes.empty else 0.0,
-        "horas_total": (
-            float(pd.to_numeric(routes.get("Tempo Viagem Horas"), errors="coerce").sum())
-            if not routes.empty else 0.0
-        ),
-        "horas_trabalhadas_total": (
-            float(pd.to_numeric(routes.get("Horas Trabalhadas"), errors="coerce").sum())
-            if not routes.empty else 0.0
-        ),
+        "total_rotas": total_routes,
+        "rotas_concluidas": total_routes,
+        "entregas_total": total_deliveries,
+        "peso_total": total_weight,
+        "km_total": total_km,
+        "horas_total": travel_total,
+        "horas_trabalhadas_total": work_total,
+        "tempo_medio_rota": travel_total / total_routes if total_routes else 0.0,
+        "horas_medias_rota": work_total / total_routes if total_routes else 0.0,
+        "dias_medios_rota": days_total / total_routes if total_routes else 0.0,
+        "entregas_por_rota": total_deliveries / total_routes if total_routes else 0.0,
+        "peso_medio_rota": total_weight / total_routes if total_routes else 0.0,
+        "km_medio_rota": total_km / total_routes if total_routes else 0.0,
+        "entregas_por_hora": total_deliveries / work_total if work_total else 0.0,
+        "toneladas_por_hora": (total_weight / 1000.0) / work_total if work_total else 0.0,
+        "qualidade_media": float(metric_source["_Qualidade"].mean()) if not metric_source.empty else 0.0,
+        "melhor_motorista": best_record(ranking_motoristas, "Motorista"),
+        "melhor_rota": best_record(ranking_rotas, "Rota"),
+        "melhor_placa": best_record(ranking_placas, "PLACA"),
+        "evolucao_mensal": _route_records(monthly),
+        "tempos_rotas": _route_records(time_details),
+        "custos": costs,
+        "alertas": alerts,
         "rotas_detalhes": _route_records(routes.sort_values(["Data", "Rota"], ascending=[False, True])),
         "entregas_detalhes": _route_records(delivery_details),
-        "ranking_motoristas": _route_records(ranking("Motorista")),
-        "ranking_placas": _route_records(ranking("PLACA")),
-        "ranking_rotas": _route_records(ranking("Rota")),
+        "ranking_motoristas": _route_records(ranking_motoristas),
+        "ranking_placas": _route_records(ranking_placas),
+        "ranking_rotas": _route_records(ranking_rotas),
         "ranking_cidades": _route_records(city_ranking),
     }
 
