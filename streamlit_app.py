@@ -65,7 +65,7 @@ MUTED = "#6B7280"
 CARD_BORDER = "#c2d2f3"
 LOGO_PATH = Path(__file__).parent / "static" / "logo-jr.png"
 CURRENT_YEAR = date.today().year
-APP_VERSION = "routes-performance-v1"
+APP_VERSION = "routes-visual-v2"
 RANK_ROUTES_ENABLED = True
 ROUTE_CACHE_TTL_SECONDS = max(int(os.environ.get("JR_ROUTE_CACHE_TTL_SECONDS", "180") or 180), 30)
 DATA_EDITOR_PAGE_SIZE = 100
@@ -13766,6 +13766,133 @@ def _route_journeys_table(route: dict) -> pd.DataFrame:
     return pd.DataFrame(rows)
 
 
+def _route_gauge(
+    value: object,
+    title: str,
+    *,
+    maximum: float,
+    target: float,
+    suffix: str = "",
+    inverse: bool = False,
+) -> go.Figure:
+    numeric_value = max(float(value or 0.0), 0.0)
+    maximum = max(float(maximum or 0.0), numeric_value * 1.08, 1.0)
+    target = min(max(float(target or 0.0), 0.0), maximum)
+    if inverse:
+        green_end = min(target, maximum)
+        yellow_end = min(max(target * 1.25, green_end), maximum)
+        orange_end = min(max(target * 1.55, yellow_end), maximum)
+        steps = [
+            {"range": [0, green_end], "color": "#4ADE80"},
+            {"range": [green_end, yellow_end], "color": "#FDE047"},
+            {"range": [yellow_end, orange_end], "color": "#FDBA74"},
+            {"range": [orange_end, maximum], "color": "#F87171"},
+        ]
+        bar_color = "#1C2D6B"
+    else:
+        green_start = min(target, maximum)
+        steps = [
+            {"range": [0, green_start * 0.5], "color": "#F87171"},
+            {"range": [green_start * 0.5, green_start * 0.75], "color": "#FDBA74"},
+            {"range": [green_start * 0.75, green_start], "color": "#FDE047"},
+            {"range": [green_start, maximum], "color": "#4ADE80"},
+        ]
+        bar_color = "#1C2D6B"
+
+    fig = go.Figure(
+        go.Indicator(
+            mode="gauge+number",
+            value=min(numeric_value, maximum),
+            number={"suffix": suffix, "font": {"size": 28, "color": JR_BLUE}, "valueformat": ".1f"},
+            title={"text": f"<b>{h(title)}</b>", "font": {"size": 15, "color": JR_BLUE}},
+            gauge={
+                "axis": {"range": [0, maximum], "tickwidth": 1, "tickcolor": "#94A3B8", "tickfont": {"size": 10}},
+                "bar": {"color": bar_color, "thickness": 0.12},
+                "bgcolor": "white",
+                "borderwidth": 0,
+                "steps": steps,
+                "threshold": {
+                    "line": {"color": "#111827", "width": 5},
+                    "thickness": 0.85,
+                    "value": target,
+                },
+            },
+        )
+    )
+    fig.add_annotation(
+        x=0.5,
+        y=0.02,
+        xref="paper",
+        yref="paper",
+        text=f"Referência: {fmt_num(target, 1)}{suffix}",
+        showarrow=False,
+        font={"size": 11, "color": MUTED},
+    )
+    fig.update_layout(
+        height=265,
+        margin={"l": 18, "r": 18, "t": 55, "b": 24},
+        paper_bgcolor="rgba(0,0,0,0)",
+        plot_bgcolor="rgba(0,0,0,0)",
+        font={"family": "Inter, sans-serif"},
+    )
+    return fig
+
+
+def _route_city_treemap(rows: list[dict]) -> go.Figure:
+    frame = pd.DataFrame(rows or [])
+    if frame.empty:
+        return go.Figure()
+    frame = frame.head(18).copy()
+    values = pd.to_numeric(frame.get("Entregas"), errors="coerce").fillna(0.0)
+    weights = pd.to_numeric(frame.get("Peso kg"), errors="coerce").fillna(0.0)
+    fig = go.Figure(
+        go.Treemap(
+            labels=frame.get("Cidade", pd.Series(dtype="string")).astype("string").fillna("Sem cidade"),
+            parents=[""] * len(frame),
+            values=values,
+            customdata=weights,
+            marker={
+                "colors": values,
+                "colorscale": [[0, "#DBEAFE"], [0.45, "#60A5FA"], [1, "#1C2D6B"]],
+            },
+            texttemplate="<b>%{label}</b><br>%{value:.0f} entregas<br>%{customdata:,.0f} kg",
+            hovertemplate="<b>%{label}</b><br>%{value:.0f} entregas<br>%{customdata:,.0f} kg<extra></extra>",
+        )
+    )
+    return apply_theme(fig, height=390, margin={"l": 8, "r": 8, "t": 18, "b": 8})
+
+
+def _route_alert_donut(rows: list[dict]) -> go.Figure:
+    frame = pd.DataFrame(rows or [])
+    no_alerts = frame.empty or "Nivel" not in frame.columns
+    if no_alerts:
+        labels, values = ["Sem alertas"], [1]
+        colors = ["#4ADE80"]
+    else:
+        counts = frame["Nivel"].astype("string").value_counts()
+        ordered = [level for level in ["Alto", "Atencao", "Informativo"] if level in counts]
+        labels = ["Alto", "Atenção", "Informativo"][: len(ordered)]
+        labels = [{"Alto": "Alto", "Atencao": "Atenção", "Informativo": "Informativo"}[level] for level in ordered]
+        values = [int(counts[level]) for level in ordered]
+        colors = [{"Alto": "#EF4444", "Atencao": "#F59E0B", "Informativo": "#3B82F6"}[level] for level in ordered]
+    fig = go.Figure(
+        go.Pie(
+            labels=labels,
+            values=values,
+            hole=0.62,
+            marker={"colors": colors},
+            textinfo="label" if no_alerts else "label+value",
+            hovertemplate=(
+                "<b>Sem alertas operacionais</b><extra></extra>"
+                if no_alerts
+                else "<b>%{label}</b><br>%{value} alerta(s)<extra></extra>"
+            ),
+        )
+    )
+    fig.update_layout(showlegend=False)
+    return apply_theme(fig, height=390, margin={"l": 20, "r": 20, "t": 25, "b": 25})
+
+
 def _render_rotas_legacy() -> None:
     topbar("JR Dashboard - Rotas")
     st.markdown("## Rotas, entregas e desempenho operacional")
@@ -13961,6 +14088,96 @@ def render_rotas() -> None:
         ]
     )
 
+    time_reference = pd.DataFrame(data.get("tempos_rotas") or [])
+    duration_values = (
+        pd.to_numeric(time_reference.get("Tempo Viagem Horas"), errors="coerce").dropna()
+        if not time_reference.empty and "Tempo Viagem Horas" in time_reference.columns
+        else pd.Series(dtype="float64")
+    )
+    duration_positive = duration_values[duration_values > 0]
+    duration_target = float(duration_positive.median()) if not duration_positive.empty else max(float(data.get("tempo_medio_rota") or 0.0), 1.0)
+    duration_maximum = max(
+        float(duration_positive.quantile(0.95)) if not duration_positive.empty else 0.0,
+        duration_target * 1.8,
+        float(data.get("tempo_medio_rota") or 0.0) * 1.2,
+        1.0,
+    )
+    route_rank_reference = pd.DataFrame(data.get("ranking_rotas") or [])
+    productivity_values = (
+        pd.to_numeric(route_rank_reference.get("Entregas por hora"), errors="coerce").dropna()
+        if not route_rank_reference.empty and "Entregas por hora" in route_rank_reference.columns
+        else pd.Series(dtype="float64")
+    )
+    productivity_positive = productivity_values[productivity_values > 0]
+    productivity_target = (
+        float(productivity_positive.median())
+        if not productivity_positive.empty
+        else max(float(data.get("entregas_por_hora") or 0.0), 0.5)
+    )
+    productivity_maximum = max(
+        float(productivity_positive.max()) * 1.15 if not productivity_positive.empty else 0.0,
+        productivity_target * 1.6,
+        1.0,
+    )
+    cost_ratio = float((data.get("custos") or {}).get("percentual_custo") or 0.0)
+
+    st.markdown("### Painel visual de desempenho")
+    gauge_columns = st.columns(4)
+    gauge_specs = [
+        (
+            data.get("qualidade_media"),
+            "Qualidade dos dados",
+            100.0,
+            95.0,
+            "%",
+            False,
+            "routes_gauge_quality",
+        ),
+        (
+            data.get("entregas_por_hora"),
+            "Produtividade",
+            productivity_maximum,
+            productivity_target,
+            " ent/h",
+            False,
+            "routes_gauge_productivity",
+        ),
+        (
+            data.get("tempo_medio_rota"),
+            "Duração média",
+            duration_maximum,
+            duration_target,
+            " h",
+            True,
+            "routes_gauge_duration",
+        ),
+        (
+            cost_ratio,
+            "Custo sobre ganho",
+            max(120.0, cost_ratio * 1.1),
+            60.0,
+            "%",
+            True,
+            "routes_gauge_cost",
+        ),
+    ]
+    for column, (value, title, maximum, target, suffix, inverse, key) in zip(gauge_columns, gauge_specs):
+        with column:
+            with st.container(border=True):
+                st.plotly_chart(
+                    _route_gauge(
+                        value,
+                        title,
+                        maximum=maximum,
+                        target=target,
+                        suffix=suffix,
+                        inverse=inverse,
+                    ),
+                    width="stretch",
+                    config={"displayModeBar": False, "responsive": True},
+                    key=key,
+                )
+
     best_driver = data.get("melhor_motorista") or {}
     best_route = data.get("melhor_rota") or {}
     best_plate = data.get("melhor_placa") or {}
@@ -13990,7 +14207,7 @@ def render_rotas() -> None:
         )
 
     overview_tab, time_tab, cost_tab, ranking_tab, detail_tab = st.tabs(
-        ["Visão geral", "Tempo e produtividade", "Custos e rentabilidade", "Rankings", "Detalhamento da rota"]
+        ["📊 Visão geral", "⏱️ Tempo e produtividade", "💰 Custos e rentabilidade", "🏆 Rankings", "🧾 Detalhamento"]
     )
 
     with overview_tab:
@@ -14045,6 +14262,28 @@ def render_rotas() -> None:
                     width="stretch",
                     config=PLOTLY_CONFIG,
                     key="routes_monthly_duration",
+                )
+
+        visual_left, visual_right = st.columns([1.55, 1])
+        with visual_left:
+            with st.container(border=True):
+                st.markdown("**Cidades com maior volume de entregas**")
+                st.caption("O tamanho representa entregas; a cor destaca a concentração operacional.")
+                st.plotly_chart(
+                    _route_city_treemap(data.get("ranking_cidades") or []),
+                    width="stretch",
+                    config={"displayModeBar": False, "responsive": True},
+                    key="routes_city_treemap",
+                )
+        with visual_right:
+            with st.container(border=True):
+                st.markdown("**Saúde operacional**")
+                st.caption("Distribuição dos alertas encontrados nas rotas concluídas.")
+                st.plotly_chart(
+                    _route_alert_donut(data.get("alertas") or []),
+                    width="stretch",
+                    config={"displayModeBar": False, "responsive": True},
+                    key="routes_alert_donut",
                 )
 
         alerts_df = pd.DataFrame(data.get("alertas") or [])
