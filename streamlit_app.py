@@ -65,7 +65,7 @@ MUTED = "#6B7280"
 CARD_BORDER = "#c2d2f3"
 LOGO_PATH = Path(__file__).parent / "static" / "logo-jr.png"
 CURRENT_YEAR = date.today().year
-APP_VERSION = "routes-global-route-navigation-v17"
+APP_VERSION = "routes-unprofitable-trips-v18"
 RANK_ROUTES_ENABLED = True
 ROUTE_CACHE_TTL_SECONDS = max(int(os.environ.get("JR_ROUTE_CACHE_TTL_SECONDS", "180") or 180), 30)
 DATA_EDITOR_PAGE_SIZE = 100
@@ -15314,6 +15314,69 @@ def _route_financial_frame(data: dict) -> pd.DataFrame:
     return costs
 
 
+def _route_unprofitable_trips(financial: pd.DataFrame) -> pd.DataFrame:
+    """Lista as viagens cujo custo atribuído superou a receita atribuída."""
+    columns = [
+        "Data", "Rota", "PLACA", "Motorista", "Custo total", "Receita atribuída",
+        "Faltou para se pagar", "Custo/receita %",
+    ]
+    if financial.empty:
+        return pd.DataFrame(columns=columns)
+
+    work = financial.copy()
+    for column in ["Custo total", "Ganho entregas", "Resultado"]:
+        source = work[column] if column in work.columns else pd.Series(0.0, index=work.index)
+        work[column] = pd.to_numeric(source, errors="coerce").fillna(0.0)
+    losses = work.loc[work["Resultado"].lt(-0.005)].copy()
+    if losses.empty:
+        return pd.DataFrame(columns=columns)
+
+    losses["Receita atribuída"] = losses["Ganho entregas"]
+    losses["Faltou para se pagar"] = (-losses["Resultado"]).clip(lower=0)
+    losses["Custo/receita %"] = losses["Custo total"].div(
+        losses["Receita atribuída"].replace(0, pd.NA)
+    ).mul(100)
+    for column in ["Data", "Rota", "PLACA", "Motorista"]:
+        if column not in losses.columns:
+            losses[column] = ""
+    losses["Data"] = pd.to_datetime(losses["Data"], errors="coerce").dt.date
+    return losses.sort_values(
+        ["Faltou para se pagar", "Custo total"], ascending=[False, False]
+    )[columns].reset_index(drop=True)
+
+
+def _render_unprofitable_trips(financial: pd.DataFrame, *, compact: bool = False) -> None:
+    losses = _route_unprofitable_trips(financial)
+    if losses.empty:
+        st.success("Todas as viagens com base financeira disponível se pagaram no período selecionado.")
+        return
+
+    total_gap = float(losses["Faltou para se pagar"].sum())
+    _route_section_title(
+        "Viagens que não se pagaram",
+        f"{len(losses)} viagem(ns), ordenada(s) do maior prejuízo para o menor. "
+        f"Faltaram {fmt_brl(total_gap)} no total para cobrir os custos atribuídos.",
+    )
+    visible = losses.head(8) if compact else losses
+    st.dataframe(
+        visible,
+        width="stretch",
+        hide_index=True,
+        height=min(38 + len(visible) * 35, 360),
+        column_config={
+            "Data": _date_col(),
+            "Custo total": _money_col("Custo"),
+            "Receita atribuída": _money_col("Receita"),
+            "Faltou para se pagar": _money_col("Faltou para se pagar"),
+            "Custo/receita %": st.column_config.NumberColumn("Custo/receita", format="%.1f%%"),
+        },
+    )
+    if compact and len(losses) > len(visible):
+        st.caption(
+            f"Exibindo as {len(visible)} maiores perdas. Clique no cartão de rentabilidade para ver as {len(losses)} viagens."
+        )
+
+
 @st.cache_data(show_spinner=False, max_entries=12)
 def _route_management_workbook(data_json: str) -> bytes:
     payload = json.loads(data_json)
@@ -16105,6 +16168,7 @@ def render_rotas() -> None:
                 on_click=_select_route_workspace_section,
                 args=("Qualidade dos dados",),
             )
+        _render_unprofitable_trips(financial, compact=True)
 
     elif section == "Análise de rotas":
         _route_section_title("Central inteligente de rotas", "Custos, eficiência e comparação usando somente viagens concluídas")
@@ -16138,6 +16202,7 @@ def render_rotas() -> None:
             )
         else:
             st.warning(f"{scope_prefix} ainda não possui base financeira suficiente para concluir se se pagou.")
+        _render_unprofitable_trips(financial)
         if route_summary.empty:
             st.info("Não há custos associáveis às rotas selecionadas.")
         else:

@@ -159,6 +159,14 @@ class RoutesDashboardTests(unittest.TestCase):
         self.assertEqual(loss["situacao"], "Não se pagou")
         self.assertAlmostEqual(float(loss["resultado"]), -300.0)
 
+    def test_unprofitable_trips_are_listed_from_biggest_loss(self):
+        losses = dashboard._route_unprofitable_trips(
+            dashboard._route_financial_frame(sample_payload())
+        )
+        self.assertEqual(losses["Rota"].tolist(), ["ROTA CARA"])
+        self.assertAlmostEqual(float(losses.iloc[0]["Faltou para se pagar"]), 1_000.0)
+        self.assertAlmostEqual(float(losses.iloc[0]["Custo/receita %"]), 116.666666, places=4)
+
     def test_fuel_cost_uses_plate_history_per_km(self):
         fuel = pd.DataFrame(
             [
