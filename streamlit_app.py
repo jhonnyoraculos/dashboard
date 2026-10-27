@@ -65,7 +65,7 @@ MUTED = "#6B7280"
 CARD_BORDER = "#c2d2f3"
 LOGO_PATH = Path(__file__).parent / "static" / "logo-jr.png"
 CURRENT_YEAR = date.today().year
-APP_VERSION = "routes-persistent-navigation-v15"
+APP_VERSION = "routes-small-gauge-values-v16"
 RANK_ROUTES_ENABLED = True
 ROUTE_CACHE_TTL_SECONDS = max(int(os.environ.get("JR_ROUTE_CACHE_TTL_SECONDS", "180") or 180), 30)
 DATA_EDITOR_PAGE_SIZE = 100
@@ -13790,9 +13790,12 @@ def _route_gauge(
     numeric_value = max(float(value or 0.0), 0.0)
     maximum = max(float(maximum or 0.0), numeric_value * 1.08, 1.0)
     target = min(max(float(target or 0.0), 0.0), maximum)
-    compact_value = numeric_value >= 100 or len(suffix.strip()) > 5
-    value_format = ".0f" if compact_value else ".1f"
-    number_font_size = 23 if compact_value else 28
+    compact_value = numeric_value >= 100
+    if 0 < numeric_value < 1:
+        value_format = ".2f"
+    else:
+        value_format = ".0f" if compact_value else ".1f"
+    number_font_size = 23 if compact_value or len(suffix.strip()) > 5 else 28
     if inverse:
         green_end = min(target, maximum)
         yellow_end = min(max(target * 1.25, green_end), maximum)
@@ -13850,7 +13853,7 @@ def _route_gauge(
         y=0.02,
         xref="paper",
         yref="paper",
-        text=f"Referência: {fmt_num(target, 1)}{suffix}",
+        text=f"Referência: {fmt_num(target, 2 if 0 < target < 1 else 1)}{suffix}",
         showarrow=False,
         font={"size": 11, "color": MUTED},
     )

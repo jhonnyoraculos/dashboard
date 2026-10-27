@@ -80,6 +80,12 @@ class RoutesDashboardTests(unittest.TestCase):
         self.assertEqual(city_gauge.data[0]["number"]["valueformat"], ".0f")
         self.assertEqual(city_gauge.data[0]["number"]["suffix"], " ent.")
 
+        density_gauge = dashboard._route_gauge(
+            0.0684, "Entregas por KM", maximum=1, target=0.09, suffix=" ent/km"
+        )
+        self.assertEqual(density_gauge.data[0]["number"]["valueformat"], ".2f")
+        self.assertIn("0,09 ent/km", density_gauge.layout.annotations[0]["text"])
+
     def test_driver_ranking_adds_linear_score_indicators(self):
         frame = dashboard._route_driver_ranking_frame(
             [
