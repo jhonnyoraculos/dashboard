@@ -65,7 +65,7 @@ MUTED = "#6B7280"
 CARD_BORDER = "#c2d2f3"
 LOGO_PATH = Path(__file__).parent / "static" / "logo-jr.png"
 CURRENT_YEAR = date.today().year
-APP_VERSION = "routes-financial-analysis-v4"
+APP_VERSION = "routes-platform-redesign-v5"
 RANK_ROUTES_ENABLED = True
 ROUTE_CACHE_TTL_SECONDS = max(int(os.environ.get("JR_ROUTE_CACHE_TTL_SECONDS", "180") or 180), 30)
 DATA_EDITOR_PAGE_SIZE = 100
@@ -14017,7 +14017,7 @@ def _render_rotas_legacy() -> None:
     footer("Manifestos de rota armazenados separadamente dos lançamentos de Peso. © JR")
 
 
-def render_rotas() -> None:
+def _render_rotas_v4() -> None:
     topbar("JR Dashboard - Rotas")
     st.markdown("## Rotas, entregas e desempenho operacional")
     st.caption(
@@ -14806,6 +14806,776 @@ def render_rotas() -> None:
             st.text(selected_route.get("Texto Extraido") or "Sem texto armazenado.")
 
     footer("Dashboard calculado somente com rotas concluídas importadas dos manifestos em PDF. © JR")
+
+
+def _inject_routes_platform_css(dark_mode: bool) -> None:
+    palette = {
+        "bg": "#0B1220" if dark_mode else "#F7F9FC",
+        "surface": "#111C2E" if dark_mode else "#FFFFFF",
+        "surface_soft": "#172338" if dark_mode else "#F8FAFC",
+        "text": "#E5EDF8" if dark_mode else "#172554",
+        "muted": "#93A4BC" if dark_mode else "#64748B",
+        "border": "rgba(148,163,184,.22)" if dark_mode else "#E2E8F0",
+        "shadow": "0 12px 36px rgba(0,0,0,.22)" if dark_mode else "0 10px 32px rgba(15,23,42,.07)",
+    }
+    st.markdown(
+        f"""
+        <style>
+        :root {{
+          --routes-bg: {palette['bg']};
+          --routes-surface: {palette['surface']};
+          --routes-surface-soft: {palette['surface_soft']};
+          --routes-text: {palette['text']};
+          --routes-muted: {palette['muted']};
+          --routes-border: {palette['border']};
+          --routes-shadow: {palette['shadow']};
+        }}
+        .stApp {{ background: var(--routes-bg) !important; color: var(--routes-text) !important; }}
+        .stApp::before, .stApp::after {{ display: none !important; }}
+        .block-container {{ max-width: 1680px; padding: 18px 34px 54px; }}
+        [data-testid="stSidebar"] {{
+          background: linear-gradient(180deg, rgba(23,37,84,.99), rgba(15,30,69,.99)) !important;
+          border-right: 1px solid rgba(255,255,255,.10);
+          box-shadow: 14px 0 40px rgba(15,23,42,.12);
+        }}
+        [data-testid="stSidebar"] * {{ color: #EAF0FF; }}
+        [data-testid="stSidebar"] [data-testid="stRadio"] label {{
+          min-height: 42px; padding: 9px 12px; border-radius: 10px; transition: .15s ease;
+        }}
+        [data-testid="stSidebar"] [data-testid="stRadio"] label:hover {{ background: rgba(255,255,255,.09); }}
+        [data-testid="stSidebar"] [data-testid="stRadio"] label:has(input:checked) {{
+          background: rgba(37,99,235,.34); box-shadow: inset 3px 0 #60A5FA;
+        }}
+        [data-testid="stSidebar"] [data-baseweb="select"] > div {{
+          background: rgba(255,255,255,.09) !important; border-color: rgba(255,255,255,.16) !important;
+        }}
+        .routes-brand {{ display:flex; align-items:center; gap:12px; padding:8px 2px 18px; }}
+        .routes-brand img {{ width:42px; height:42px; border-radius:11px; box-shadow:0 8px 22px rgba(0,0,0,.22); }}
+        .routes-brand strong {{ display:block; color:#fff; font-size:15px; }}
+        .routes-brand span {{ color:#AFC1E8; font-size:11px; letter-spacing:.08em; text-transform:uppercase; }}
+        .routes-page-head {{
+          display:flex; justify-content:space-between; align-items:flex-start; gap:20px; margin:4px 0 18px;
+          padding:18px 22px; border:1px solid var(--routes-border); border-radius:16px;
+          background:color-mix(in srgb, var(--routes-surface) 92%, transparent); box-shadow:var(--routes-shadow);
+          backdrop-filter: blur(16px);
+        }}
+        .routes-page-head h1 {{ margin:0 0 5px; color:var(--routes-text); font-size:clamp(24px,2.6vw,36px); letter-spacing:-.035em; }}
+        .routes-page-head p {{ margin:0; color:var(--routes-muted); font-size:13px; }}
+        .routes-period-pill {{ flex:none; padding:8px 12px; border:1px solid var(--routes-border); border-radius:999px; background:var(--routes-surface-soft); color:var(--routes-text); font-size:12px; font-weight:700; }}
+        .routes-kpi-grid {{ display:grid; grid-template-columns:repeat(6,minmax(0,1fr)); gap:12px; margin:14px 0 24px; }}
+        .routes-kpi-card {{
+          min-height:154px; padding:18px; border:1px solid var(--routes-border); border-radius:14px;
+          background:var(--routes-surface); box-shadow:var(--routes-shadow); position:relative; overflow:hidden;
+        }}
+        .routes-kpi-card::before {{ content:""; position:absolute; inset:0 auto auto 0; width:100%; height:3px; background:var(--accent); }}
+        .routes-kpi-top {{ display:flex; align-items:center; justify-content:space-between; gap:8px; }}
+        .routes-kpi-icon {{ width:32px; height:32px; display:grid; place-items:center; border-radius:9px; background:color-mix(in srgb,var(--accent) 12%,transparent); color:var(--accent); font-size:16px; }}
+        .routes-kpi-label {{ margin-top:12px; color:var(--routes-muted); font-size:11px; font-weight:800; letter-spacing:.045em; text-transform:uppercase; }}
+        .routes-kpi-value {{ margin-top:6px; color:var(--routes-text); font-size:clamp(20px,1.7vw,29px); font-weight:800; letter-spacing:-.035em; line-height:1.05; }}
+        .routes-kpi-delta {{ margin-top:10px; font-size:11px; font-weight:700; color:var(--routes-muted); }}
+        .routes-kpi-delta.up {{ color:#0F766E; }} .routes-kpi-delta.down {{ color:#DC2626; }}
+        .routes-kpi-spark {{ position:absolute; right:12px; bottom:10px; width:68px; height:24px; opacity:.72; }}
+        .routes-section-title {{ margin:30px 0 12px; }}
+        .routes-section-title h2 {{ margin:0; color:var(--routes-text); font-size:21px; letter-spacing:-.02em; }}
+        .routes-section-title p {{ margin:5px 0 0; color:var(--routes-muted); font-size:12px; }}
+        .routes-insights {{ display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:12px; margin:12px 0; }}
+        .routes-insight {{ padding:16px 18px; border:1px solid var(--routes-border); border-radius:13px; background:var(--routes-surface); box-shadow:var(--routes-shadow); }}
+        .routes-insight strong {{ display:block; color:var(--routes-text); font-size:13px; margin-bottom:6px; }}
+        .routes-insight span {{ color:var(--routes-muted); font-size:12px; line-height:1.5; }}
+        .routes-insight.critical {{ border-left:4px solid #DC2626; }}
+        .routes-insight.attention {{ border-left:4px solid #D97706; }}
+        .routes-insight.positive {{ border-left:4px solid #0F766E; }}
+        .stApp div[data-testid="stVerticalBlockBorderWrapper"] {{
+          background:var(--routes-surface) !important; border:1px solid var(--routes-border) !important;
+          box-shadow:var(--routes-shadow) !important; backdrop-filter:none !important;
+        }}
+        .stApp [data-testid="stDataFrame"] {{ border:1px solid var(--routes-border); border-radius:13px; overflow:hidden; box-shadow:var(--routes-shadow); }}
+        .stApp [data-testid="stExpander"] {{ background:var(--routes-surface) !important; border-color:var(--routes-border) !important; }}
+        .stApp h1,.stApp h2,.stApp h3,.stApp h4,.stApp p,.stApp label {{ color:var(--routes-text); }}
+        .stApp [data-baseweb="tab-list"] {{ gap:5px; background:var(--routes-surface-soft); padding:5px; border-radius:12px; }}
+        .stApp [data-baseweb="tab"] {{ border-radius:9px; padding:8px 14px; }}
+        .stApp [aria-selected="true"] {{ background:var(--routes-surface); box-shadow:0 2px 8px rgba(15,23,42,.09); }}
+        .stApp div[data-baseweb="select"] > div,
+        .stApp div[data-baseweb="input"] > div,
+        .stApp [data-testid="stTextInput"] input,
+        .stApp [data-testid="stDateInput"] input {{
+          background:var(--routes-surface) !important; color:var(--routes-text) !important;
+          -webkit-text-fill-color:var(--routes-text) !important; border-color:var(--routes-border) !important;
+        }}
+        @media (max-width:1200px) {{ .routes-kpi-grid {{ grid-template-columns:repeat(3,1fr); }} }}
+        @media (max-width:760px) {{
+          .block-container {{ padding:12px 14px 34px; }}
+          .routes-page-head {{ flex-direction:column; padding:16px; }}
+          .routes-kpi-grid {{ grid-template-columns:repeat(2,minmax(0,1fr)); gap:9px; }}
+          .routes-kpi-card {{ min-height:138px; padding:14px; }}
+          .routes-insights {{ grid-template-columns:1fr; }}
+          [data-testid="stHorizontalBlock"] {{ flex-wrap:wrap !important; }}
+          [data-testid="column"] {{ min-width:260px !important; flex:1 1 100% !important; }}
+        }}
+        </style>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
+def _route_section_title(title: str, subtitle: str) -> None:
+    st.markdown(
+        f'<div class="routes-section-title"><h2>{h(title)}</h2><p>{h(subtitle)}</p></div>',
+        unsafe_allow_html=True,
+    )
+
+
+def _route_sparkline(values: list[object], color: str) -> str:
+    numbers = [float(value or 0.0) for value in values]
+    if len(numbers) < 2:
+        return ""
+    low, high = min(numbers), max(numbers)
+    spread = high - low or 1.0
+    points = []
+    for index, value in enumerate(numbers):
+        x = index * 64 / max(len(numbers) - 1, 1) + 2
+        y = 21 - ((value - low) / spread * 17)
+        points.append(f"{x:.1f},{y:.1f}")
+    return (
+        f'<svg class="routes-kpi-spark" viewBox="0 0 68 24" aria-hidden="true">'
+        f'<polyline points="{" ".join(points)}" fill="none" stroke="{h(color)}" stroke-width="2" '
+        'stroke-linecap="round" stroke-linejoin="round"/></svg>'
+    )
+
+
+def _route_delta(current: object, previous: object, *, inverse: bool = False) -> tuple[str, str]:
+    current_value = float(current or 0.0)
+    previous_value = float(previous or 0.0)
+    if previous_value == 0:
+        return "Sem base anterior", ""
+    percent = (current_value - previous_value) / abs(previous_value) * 100.0
+    positive = percent >= 0
+    favorable = not positive if inverse else positive
+    arrow = "↑" if positive else "↓"
+    return f"{arrow} {fmt_percent(abs(percent), 1)} vs. período anterior", "up" if favorable else "down"
+
+
+def _route_executive_kpis(data: dict, comparison: dict | None = None) -> None:
+    comparison = comparison or {}
+    costs = data.get("custos") or {}
+    previous_costs = comparison.get("custos") or {}
+    monthly = data.get("evolucao_mensal") or []
+    cost_monthly = costs.get("mensal") or []
+    specifications = [
+        ("Rotas concluídas", data.get("total_rotas"), comparison.get("total_rotas"), fmt_num(data.get("total_rotas"), 0), "◎", "#2563EB", [row.get("Rotas") for row in monthly], False, "Total de viagens com status concluído no período."),
+        ("Entregas realizadas", data.get("entregas_total"), comparison.get("entregas_total"), fmt_num(data.get("entregas_total"), 0), "□", "#172554", [row.get("Entregas") for row in monthly], False, "Quantidade de pedidos/entregas pertencentes às rotas concluídas."),
+        ("Quilômetros percorridos", data.get("km_total"), comparison.get("km_total"), f"{fmt_num(data.get('km_total'), 1)} km", "↗", "#D97706", [row.get("KM") for row in monthly], False, "Soma dos quilômetros informados nas rotas concluídas; freteiros sem KM não são inventados."),
+        ("Peso transportado", data.get("peso_total"), comparison.get("peso_total"), fmt_peso(data.get("peso_total")), "◇", "#7C3AED", [row.get("Peso kg") for row in monthly], False, "Soma dos pesos dos pedidos, nunca o peso de manifesto divergente."),
+        ("Custo operacional", costs.get("total_custo"), previous_costs.get("total_custo"), fmt_brl(costs.get("total_custo")), "R$", "#DC2626", [row.get("Custo total") for row in cost_monthly], True, "Custos atribuídos: combustível, manutenção, pedágio/extras, hotéis, salários e freteiros, conforme disponibilidade."),
+        ("Resultado operacional", costs.get("resultado"), previous_costs.get("resultado"), fmt_brl(costs.get("resultado")), "Σ", "#0F766E", [row.get("Resultado") for row in cost_monthly], False, "Receita atribuída menos os custos incluídos no painel. Não representa lucro líquido contábil."),
+    ]
+    cards = []
+    for label, current, previous, value, icon, color, trend, inverse, tooltip in specifications:
+        delta_text, delta_class = _route_delta(current, previous, inverse=inverse) if comparison else ("Período selecionado", "")
+        cards.append(
+            f'<article class="routes-kpi-card" style="--accent:{h(color)}" title="{h(tooltip)}">'
+            f'<div class="routes-kpi-top"><span class="routes-kpi-icon">{h(icon)}</span></div>'
+            f'<div class="routes-kpi-label">{h(label)}</div><div class="routes-kpi-value">{h(value)}</div>'
+            f'<div class="routes-kpi-delta {h(delta_class)}">{h(delta_text)}</div>{_route_sparkline(trend, color)}</article>'
+        )
+    st.markdown(f'<section class="routes-kpi-grid">{"".join(cards)}</section>', unsafe_allow_html=True)
+
+
+def _route_financial_frame(data: dict) -> pd.DataFrame:
+    costs = pd.DataFrame((data.get("custos") or {}).get("rotas") or [])
+    if costs.empty:
+        return costs
+    activity = pd.DataFrame(data.get("tempos_rotas") or [])
+    columns = [column for column in ["Rota ID", "Entregas", "KM Rodados", "Peso Carga", "Dias Rota"] if column in activity.columns]
+    if "Rota ID" in columns:
+        costs = costs.merge(activity[columns].drop_duplicates("Rota ID"), on="Rota ID", how="left")
+    numeric = [
+        "Combustivel", "Manutencao", "Pedagio", "Hoteis", "Salarios", "Freteiro", "Custo total",
+        "Ganho entregas", "Resultado", "Custo sobre ganho %", "Entregas", "KM Rodados", "Peso Carga", "Dias Rota",
+    ]
+    for column in numeric:
+        if column not in costs.columns:
+            costs[column] = 0.0
+        costs[column] = pd.to_numeric(costs[column], errors="coerce").fillna(0.0)
+    costs["Custo por entrega"] = costs["Custo total"].div(costs["Entregas"].replace(0, pd.NA))
+    costs["Custo por km"] = costs["Custo total"].div(costs["KM Rodados"].replace(0, pd.NA))
+    costs["Custo por tonelada"] = costs["Custo total"].div((costs["Peso Carga"] / 1000).replace(0, pd.NA))
+    costs["Entregas por km"] = costs["Entregas"].div(costs["KM Rodados"].replace(0, pd.NA))
+    costs["Intervalos e noites"] = 0.0
+    time_map = activity.set_index("Rota ID") if not activity.empty and "Rota ID" in activity.columns else pd.DataFrame()
+    if not time_map.empty:
+        travel = costs["Rota ID"].map(pd.to_numeric(time_map.get("Tempo Viagem Horas"), errors="coerce"))
+        worked = costs["Rota ID"].map(pd.to_numeric(time_map.get("Horas Trabalhadas"), errors="coerce"))
+        costs["Intervalos e noites"] = (travel.fillna(0) - worked.fillna(0)).clip(lower=0)
+    costs["Situação"] = "Saudável"
+    costs.loc[costs["Custo sobre ganho %"].ge(80), "Situação"] = "Atenção"
+    costs.loc[costs["Custo total"].gt(costs["Ganho entregas"]), "Situação"] = "Não vale a pena"
+    costs.loc[costs["Ganho entregas"].le(0) & costs["Custo total"].gt(0), "Situação"] = "Sem receita atribuída"
+    return costs
+
+
+@st.cache_data(show_spinner=False, max_entries=12)
+def _route_management_workbook(data_json: str) -> bytes:
+    payload = json.loads(data_json)
+    output = BytesIO()
+    costs = payload.get("custos") or {}
+    summary = pd.DataFrame(
+        [
+            {"Indicador": "Rotas concluídas", "Valor": payload.get("total_rotas")},
+            {"Indicador": "Entregas", "Valor": payload.get("entregas_total")},
+            {"Indicador": "Peso kg", "Valor": payload.get("peso_total")},
+            {"Indicador": "KM", "Valor": payload.get("km_total")},
+            {"Indicador": "Custo atribuído", "Valor": costs.get("total_custo")},
+            {"Indicador": "Receita atribuída", "Valor": costs.get("total_ganho")},
+            {"Indicador": "Resultado operacional", "Valor": costs.get("resultado")},
+        ]
+    )
+    sheets = [
+        ("RESUMO", summary),
+        ("ROTAS", pd.DataFrame(payload.get("rotas_detalhes") or [])),
+        ("ENTREGAS", pd.DataFrame(payload.get("entregas_detalhes") or [])),
+        ("CUSTOS", pd.DataFrame(costs.get("rotas") or [])),
+        ("MOTORISTAS", pd.DataFrame(payload.get("ranking_motoristas") or [])),
+        ("PLACAS", pd.DataFrame(payload.get("ranking_placas") or [])),
+        ("ALERTAS", pd.DataFrame(payload.get("alertas") or [])),
+    ]
+    with pd.ExcelWriter(output, engine="openpyxl") as writer:
+        for sheet, frame in sheets:
+            safe_frame = frame.drop(columns=["Texto Extraido", "Jornadas"], errors="ignore")
+            safe_frame.to_excel(writer, sheet_name=sheet, index=False)
+            worksheet = writer.sheets[sheet]
+            worksheet.freeze_panes = "A2"
+            worksheet.auto_filter.ref = worksheet.dimensions
+            for cell in worksheet[1]:
+                cell.fill = __import__("openpyxl").styles.PatternFill("solid", fgColor="172554")
+                cell.font = __import__("openpyxl").styles.Font(color="FFFFFF", bold=True)
+            for cells in worksheet.columns:
+                width = min(max((len(str(cell.value or "")) for cell in cells), default=10) + 2, 42)
+                worksheet.column_dimensions[cells[0].column_letter].width = max(width, 12)
+    return output.getvalue()
+
+
+@st.cache_data(show_spinner=False, max_entries=12)
+def _route_management_pdf(data_json: str, period_label: str) -> bytes:
+    payload = json.loads(data_json)
+    costs = payload.get("custos") or {}
+    navy, blue, green, red, orange = "#172554", "#2563EB", "#0F766E", "#DC2626", "#D97706"
+    ink, muted, border, background = "#172554", "#64748B", "#E2E8F0", "#F7F9FC"
+
+    def font(size: int, *, bold: bool = False):
+        candidates = [
+            Path("C:/Windows/Fonts/arialbd.ttf" if bold else "C:/Windows/Fonts/arial.ttf"),
+            Path("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf" if bold else "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf"),
+        ]
+        for candidate in candidates:
+            if candidate.exists():
+                return ImageFont.truetype(str(candidate), size)
+        return ImageFont.load_default()
+
+    def wrapped(draw: ImageDraw.ImageDraw, text: object, xy: tuple[int, int], width: int, *, size: int = 24, color: str = ink, bold: bool = False, spacing: int = 7) -> int:
+        words = clean_text(text).split()
+        lines: list[str] = []
+        current = ""
+        selected_font = font(size, bold=bold)
+        for word in words:
+            candidate = f"{current} {word}".strip()
+            if current and draw.textbbox((0, 0), candidate, font=selected_font)[2] > width:
+                lines.append(current)
+                current = word
+            else:
+                current = candidate
+        if current:
+            lines.append(current)
+        y = xy[1]
+        for line in lines:
+            draw.text((xy[0], y), line, font=selected_font, fill=color)
+            y += size + spacing
+        return y
+
+    def page(title: str, subtitle: str) -> tuple[Image.Image, ImageDraw.ImageDraw]:
+        image = Image.new("RGB", (1240, 1754), background)
+        draw = ImageDraw.Draw(image)
+        draw.rounded_rectangle((48, 38, 1192, 178), radius=28, fill=navy)
+        if LOGO_PATH.exists():
+            logo = Image.open(LOGO_PATH).convert("RGBA").resize((82, 82))
+            image.paste(logo, (78, 68), logo)
+        draw.text((184, 66), title, font=font(34, bold=True), fill="white")
+        draw.text((184, 113), subtitle, font=font(19), fill="#CBD5E1")
+        draw.text((934, 82), period_label, font=font(17, bold=True), fill="white")
+        return image, draw
+
+    first, draw = page("JR Dashboard • Rotas", "Relatório gerencial da operação concluída")
+    metrics = [
+        ("Rotas concluídas", fmt_num(payload.get("total_rotas"), 0), blue),
+        ("Entregas", fmt_num(payload.get("entregas_total"), 0), navy),
+        ("KM percorridos", f"{fmt_num(payload.get('km_total'), 1)} km", orange),
+        ("Peso transportado", fmt_peso(payload.get("peso_total")), "#7C3AED"),
+        ("Custo atribuído", fmt_brl(costs.get("total_custo")), red),
+        ("Resultado operacional", fmt_brl(costs.get("resultado")), green),
+    ]
+    for index, (label, value, color) in enumerate(metrics):
+        row, column = divmod(index, 3)
+        x, y = 54 + column * 382, 224 + row * 168
+        draw.rounded_rectangle((x, y, x + 356, y + 142), radius=22, fill="white", outline=border, width=2)
+        draw.rectangle((x, y, x + 356, y + 5), fill=color)
+        draw.text((x + 20, y + 24), label.upper(), font=font(16, bold=True), fill=muted)
+        draw.text((x + 20, y + 65), value, font=font(29, bold=True), fill=ink)
+
+    draw.text((56, 586), "Composição dos custos atribuídos", font=font(27, bold=True), fill=ink)
+    cost_rows = pd.DataFrame(costs.get("rotas") or [])
+    composition = [
+        ("Combustível", "Combustivel", blue), ("Manutenção", "Manutencao", "#7C3AED"),
+        ("Pedágio/extras", "Pedagio", orange), ("Hospedagem", "Hoteis", "#0EA5E9"),
+        ("Mão de obra", "Salarios", green), ("Freteiros", "Freteiro", red),
+    ]
+    amounts = [float(pd.to_numeric(cost_rows.get(column), errors="coerce").fillna(0).sum()) if column in cost_rows else 0 for _, column, _ in composition]
+    maximum_amount = max(amounts or [1]) or 1
+    for index, ((label, _column, color), amount) in enumerate(zip(composition, amounts)):
+        y = 646 + index * 72
+        draw.text((58, y), label, font=font(18, bold=True), fill=ink)
+        draw.rounded_rectangle((260, y + 2, 1000, y + 30), radius=14, fill="#E8EEF7")
+        draw.rounded_rectangle((260, y + 2, 260 + int(740 * amount / maximum_amount), y + 30), radius=14, fill=color)
+        draw.text((1020, y), fmt_brl(amount), font=font(17, bold=True), fill=ink)
+
+    draw.text((56, 1112), "Leitura executiva", font=font(27, bold=True), fill=ink)
+    loss_count = int((pd.to_numeric(cost_rows.get("Resultado"), errors="coerce").fillna(0) < 0).sum()) if not cost_rows.empty else 0
+    alerts = payload.get("alertas") or []
+    executive_lines = [
+        f"• {loss_count} viagem(ns) apresentaram resultado operacional negativo.",
+        f"• {len(alerts)} alerta(s) operacional(is) foram identificado(s) pelas regras transparentes do painel.",
+        "• O resultado operacional é receita atribuída menos os custos cadastrados; não representa lucro líquido contábil.",
+        "• Viagens pendentes não participam deste relatório.",
+    ]
+    y = 1160
+    for line in executive_lines:
+        y = wrapped(draw, line, (64, y), 1080, size=20, color=ink, spacing=8) + 14
+    draw.text((56, 1668), "Gerado pelo JR Dashboard • metodologia e filtros preservados", font=font(16), fill=muted)
+
+    second, draw2 = page("Rotas e alertas", "Principais pontos para tomada de decisão")
+    financial = pd.DataFrame(costs.get("rotas") or [])
+    draw2.text((56, 224), "Viagens com pior resultado operacional", font=font(27, bold=True), fill=ink)
+    if not financial.empty:
+        financial["Resultado"] = pd.to_numeric(financial.get("Resultado"), errors="coerce").fillna(0)
+        worst = financial.nsmallest(12, "Resultado")
+        y = 280
+        headers = [("Rota", 58), ("Placa", 570), ("Custo", 750), ("Resultado", 980)]
+        for label, x in headers:
+            draw2.text((x, y), label.upper(), font=font(15, bold=True), fill=muted)
+        y += 42
+        for _, row in worst.iterrows():
+            draw2.line((56, y - 8, 1184, y - 8), fill=border, width=1)
+            draw2.text((58, y), clean_text(row.get("Rota"))[:43], font=font(17, bold=True), fill=ink)
+            draw2.text((570, y), clean_text(row.get("PLACA"))[:10], font=font(17), fill=ink)
+            draw2.text((750, y), fmt_brl(row.get("Custo total")), font=font(17), fill=ink)
+            draw2.text((980, y), fmt_brl(row.get("Resultado")), font=font(17, bold=True), fill=red if row.get("Resultado", 0) < 0 else green)
+            y += 53
+    draw2.text((56, 970), "Alertas prioritários", font=font(27, bold=True), fill=ink)
+    y = 1024
+    for alert in alerts[:10]:
+        level = clean_text(alert.get("Nivel"))
+        alert_color = red if level == "Alto" else orange if level == "Atencao" else blue
+        draw2.rounded_rectangle((58, y, 1180, y + 58), radius=14, fill="white", outline=border)
+        draw2.rectangle((58, y, 64, y + 58), fill=alert_color)
+        draw2.text((80, y + 9), f"{clean_text(alert.get('Tipo'))} • {clean_text(alert.get('Rota'))}", font=font(17, bold=True), fill=ink)
+        draw2.text((80, y + 33), clean_text(alert.get("Detalhe"))[:112], font=font(14), fill=muted)
+        y += 68
+        if y > 1640:
+            break
+    draw2.text((56, 1668), "Consulte o painel para abrir os registros e detalhes completos", font=font(16), fill=muted)
+
+    output = BytesIO()
+    first.save(output, format="PDF", save_all=True, append_images=[second], resolution=150.0)
+    return output.getvalue()
+
+
+def _route_period_dates(mode: str, minimum: date, maximum: date, custom: tuple[date, date] | date | None) -> tuple[date, date]:
+    today = date.today()
+    if mode == "Hoje":
+        return today, today
+    if mode == "Últimos 7 dias":
+        return today - timedelta(days=6), today
+    if mode == "Últimos 30 dias":
+        return today - timedelta(days=29), today
+    if mode == "Mês atual":
+        return today.replace(day=1), today
+    if mode == "Mês anterior":
+        end = today.replace(day=1) - timedelta(days=1)
+        return end.replace(day=1), end
+    if mode == "Ano atual":
+        return date(today.year, 1, 1), today
+    if mode == "Intervalo personalizado" and custom:
+        if isinstance(custom, (tuple, list)) and len(custom) == 2:
+            return custom[0], custom[1]
+        if isinstance(custom, date):
+            return custom, custom
+    return minimum, maximum
+
+
+def _route_summary_table(financial: pd.DataFrame) -> pd.DataFrame:
+    if financial.empty:
+        return financial
+    summary = financial.groupby("Rota", dropna=False, as_index=False).agg(
+        Viagens=("Rota ID", "nunique"), Entregas=("Entregas", "sum"), KM=("KM Rodados", "sum"),
+        **{
+            "Peso kg": ("Peso Carga", "sum"), "Custo total": ("Custo total", "sum"),
+            "Receita atribuída": ("Ganho entregas", "sum"), "Resultado operacional": ("Resultado", "sum"),
+        },
+    )
+    summary["Custo por km"] = summary["Custo total"].div(summary["KM"].replace(0, pd.NA))
+    summary["Custo por entrega"] = summary["Custo total"].div(summary["Entregas"].replace(0, pd.NA))
+    summary["Custo por tonelada"] = summary["Custo total"].div((summary["Peso kg"] / 1000).replace(0, pd.NA))
+    summary["Entregas por km"] = summary["Entregas"].div(summary["KM"].replace(0, pd.NA))
+    summary["Custo/receita %"] = summary["Custo total"].div(summary["Receita atribuída"].replace(0, pd.NA)).mul(100)
+    summary["Situação"] = "Saudável"
+    summary.loc[summary["Custo/receita %"].ge(80), "Situação"] = "Atenção"
+    summary.loc[summary["Resultado operacional"].lt(0), "Situação"] = "Não vale a pena"
+    return summary.sort_values(["Resultado operacional", "Custo total"], ascending=[True, False])
+
+
+def _route_composition_chart(costs: dict) -> go.Figure:
+    frame = pd.DataFrame(costs.get("rotas") or [])
+    columns = ["Combustivel", "Manutencao", "Pedagio", "Hoteis", "Salarios", "Freteiro"]
+    labels = ["Combustível", "Manutenção", "Pedágio/extras", "Hospedagem", "Mão de obra", "Freteiros"]
+    values = [float(pd.to_numeric(frame.get(column), errors="coerce").fillna(0).sum()) if column in frame else 0 for column in columns]
+    fig = go.Figure(go.Bar(
+        x=values, y=labels, orientation="h",
+        marker={"color": ["#2563EB", "#7C3AED", "#D97706", "#0EA5E9", "#0F766E", "#DC2626"]},
+        text=[fmt_brl(value) for value in values], textposition="outside",
+        hovertemplate="<b>%{y}</b><br>R$ %{x:,.2f}<extra></extra>",
+    ))
+    fig.update_xaxes(tickprefix="R$ ", rangemode="tozero")
+    fig.update_yaxes(autorange="reversed")
+    return apply_theme(fig, height=350, margin={"l": 110, "r": 90, "t": 20, "b": 45})
+
+
+def render_rotas() -> None:
+    options = route_json("rotas", {"somente_opcoes": True})
+    raw_minimum = pd.to_datetime(options.get("data_min"), errors="coerce")
+    raw_maximum = pd.to_datetime(options.get("data_max"), errors="coerce")
+    minimum = raw_minimum.date() if pd.notna(raw_minimum) else date.today().replace(month=1, day=1)
+    maximum = raw_maximum.date() if pd.notna(raw_maximum) else date.today()
+
+    logo = logo_data_uri()
+    with st.sidebar:
+        st.markdown(
+            f'<div class="routes-brand"><img src="{logo}" alt="JR"><div><strong>JR Dashboard</strong><span>Inteligência logística</span></div></div>',
+            unsafe_allow_html=True,
+        )
+        section = st.radio(
+            "Navegação",
+            [
+                "Visão geral", "Análise de rotas", "Entregas e produtividade", "Motoristas",
+                "Frota e veículos", "Custos e rentabilidade", "Rankings", "Relatórios", "Qualidade dos dados",
+            ],
+            key="routes_workspace_section",
+        )
+        st.divider()
+        dark_mode = st.toggle("Modo escuro", key="routes_dark_mode")
+        compare_period = st.toggle("Comparar período anterior", value=False, key="routes_compare_period")
+        st.markdown("[← Voltar ao início](?page=home)")
+
+    _inject_routes_platform_css(dark_mode)
+
+    page_subtitles = {
+        "Visão geral": "Leitura executiva da operação concluída",
+        "Análise de rotas": "Eficiência, comparação e histórico de cada viagem",
+        "Entregas e produtividade": "Volume, duração e capacidade operacional",
+        "Motoristas": "Desempenho individual sem penalizar dados ausentes",
+        "Frota e veículos": "Utilização, custo e produtividade por placa",
+        "Custos e rentabilidade": "Custos atribuídos, receita e resultado operacional",
+        "Rankings": "Comparações transparentes entre os principais grupos",
+        "Relatórios": "Documentos gerenciais conforme os filtros aplicados",
+        "Qualidade dos dados": "Inconsistências, alertas e cobertura das informações",
+    }
+
+    header_mode = st.session_state.get("routes_period_mode_v5", "Todo o período")
+    header_custom = st.session_state.get("routes_custom_dates_v5", (minimum, maximum))
+    header_start, header_end = _route_period_dates(header_mode, minimum, maximum, header_custom)
+    header_period_label = f"{header_start.strftime('%d/%m/%Y')} — {header_end.strftime('%d/%m/%Y')}"
+    st.markdown(
+        f'<header class="routes-page-head"><div><h1>{h(section)}</h1><p>{h(page_subtitles[section])}</p></div>'
+        f'<span class="routes-period-pill">{h(header_period_label)}</span></header>',
+        unsafe_allow_html=True,
+    )
+
+    filter_top = st.container()
+    with filter_top:
+        period_col, custom_col, search_col = st.columns([1, 1.3, 2.2])
+        with period_col:
+            period_mode = st.selectbox(
+                "Período analisado",
+                ["Todo o período", "Hoje", "Últimos 7 dias", "Últimos 30 dias", "Mês atual", "Mês anterior", "Ano atual", "Intervalo personalizado"],
+                key="routes_period_mode_v5",
+            )
+        with custom_col:
+            custom_dates = st.date_input(
+                "Datas personalizadas",
+                value=(minimum, maximum), min_value=minimum, max_value=max(maximum, date.today()),
+                disabled=period_mode != "Intervalo personalizado", key="routes_custom_dates_v5",
+            )
+        with search_col:
+            search = st.text_input(
+                "Pesquisa global", placeholder="Cliente, pedido, carga, cidade, motorista, placa ou rota",
+                key="routes_search_v5",
+            )
+        start_date, end_date = _route_period_dates(period_mode, minimum, maximum, custom_dates)
+        with st.expander("Filtros avançados", expanded=False):
+            f1, f2, f3, f4 = st.columns(4)
+            with f1:
+                categories = st.multiselect("Categoria", options.get("categorias") or [], key="routes_categories_v5")
+            with f2:
+                plates = st.multiselect("Placa", options.get("placas") or [], key="routes_plates_v5")
+            with f3:
+                drivers = st.multiselect("Motorista", options.get("motoristas") or [], key="routes_drivers_v5")
+            with f4:
+                route_names = st.multiselect("Rota", options.get("rotas") or [], key="routes_names_v5")
+
+    params: dict[str, object] = {"data_inicio": start_date.isoformat(), "data_fim": end_date.isoformat()}
+    if categories: params["categoria"] = categories
+    if plates: params["placa"] = plates
+    if drivers: params["motorista"] = drivers
+    if route_names: params["rota"] = route_names
+    if search.strip(): params["busca"] = search.strip()
+    data = route_json("rotas", params)
+
+    comparison: dict = {}
+    if compare_period:
+        length = max((end_date - start_date).days, 0)
+        previous_end = start_date - timedelta(days=1)
+        previous_start = previous_end - timedelta(days=length)
+        previous_params = {**params, "data_inicio": previous_start.isoformat(), "data_fim": previous_end.isoformat()}
+        comparison = route_json("rotas", previous_params)
+
+    period_label = f"{start_date.strftime('%d/%m/%Y')} — {end_date.strftime('%d/%m/%Y')}"
+    if not int(data.get("total_rotas") or 0):
+        st.info("Não há rotas concluídas para este período e estes filtros. Viagens pendentes continuam fora do painel.")
+        footer("JR Dashboard • somente rotas concluídas")
+        return
+
+    financial = _route_financial_frame(data)
+    route_summary = _route_summary_table(financial)
+    time_frame = pd.DataFrame(data.get("tempos_rotas") or [])
+    route_records = data.get("rotas_detalhes") or []
+    delivery_frame = pd.DataFrame(data.get("entregas_detalhes") or [])
+    costs = data.get("custos") or {}
+
+    if section == "Visão geral":
+        _route_executive_kpis(data, comparison if compare_period else None)
+        monthly = pd.DataFrame(data.get("evolucao_mensal") or [])
+        left, right = st.columns([1.65, 1])
+        with left, st.container(border=True):
+            _route_section_title("Evolução da operação", "Rotas e entregas concluídas ao longo do período")
+            if len(monthly) > 1:
+                labels = [month_filter_label(value) for value in monthly["Mes"]]
+                fig = go.Figure()
+                fig.add_trace(go.Bar(name="Rotas", x=labels, y=monthly["Rotas"], marker_color="#2563EB"))
+                fig.add_trace(go.Scatter(name="Entregas", x=labels, y=monthly["Entregas"], yaxis="y2", line={"color": "#0F766E", "width": 3}, mode="lines+markers"))
+                fig.update_layout(yaxis2={"overlaying": "y", "side": "right", "showgrid": False}, legend={"orientation": "h"})
+                st.plotly_chart(apply_theme(fig, height=360), width="stretch", config=PLOTLY_CONFIG)
+            else:
+                metrics = ["Rotas", "Entregas", "Toneladas", "Dias médios"]
+                values = [data.get("total_rotas"), data.get("entregas_total"), float(data.get("peso_total") or 0) / 1000, data.get("dias_medios_rota")]
+                st.plotly_chart(metric_bar_chart(metrics, values, unit="", color="#2563EB"), width="stretch", config=PLOTLY_CONFIG)
+        with right, st.container(border=True):
+            _route_section_title("Composição dos custos", "Somente categorias efetivamente atribuídas")
+            st.plotly_chart(_route_composition_chart(costs), width="stretch", config=PLOTLY_CONFIG)
+
+        alerts = pd.DataFrame(data.get("alertas") or [])
+        loss_count = int(financial["Resultado"].lt(0).sum()) if not financial.empty else 0
+        best_driver = data.get("melhor_motorista") or {}
+        insight_html = (
+            f'<div class="routes-insights"><div class="routes-insight positive"><strong>Melhor desempenho</strong><span>{h(best_driver.get("Motorista") or "Sem base suficiente")} • {h(fmt_num(best_driver.get("Pontuacao"),1))} pontos.</span></div>'
+            f'<div class="routes-insight {"critical" if loss_count else "positive"}"><strong>Rentabilidade das viagens</strong><span>{h(loss_count)} viagem(ns) com resultado operacional negativo no período.</span></div>'
+            f'<div class="routes-insight {"attention" if len(alerts) else "positive"}"><strong>Qualidade e riscos</strong><span>{h(len(alerts))} alerta(s) transparente(s) para conferência.</span></div></div>'
+        )
+        st.markdown(insight_html, unsafe_allow_html=True)
+
+    elif section == "Análise de rotas":
+        _route_section_title("Central inteligente de rotas", "Custos, eficiência e comparação usando somente viagens concluídas")
+        if route_summary.empty:
+            st.info("Não há custos associáveis às rotas selecionadas.")
+        else:
+            show = route_summary.copy()
+            st.dataframe(
+                show,
+                width="stretch", hide_index=True,
+                column_config={
+                    "Custo total": _money_col("Custo total"), "Receita atribuída": _money_col("Receita atribuída"),
+                    "Resultado operacional": _money_col("Resultado operacional"), "Custo por km": _money_col("Custo/km"),
+                    "Custo por entrega": _money_col("Custo/entrega"), "Custo por tonelada": _money_col("Custo/ton"),
+                },
+            )
+            _route_section_title("Comparar duas rotas", "Indicadores consolidados lado a lado")
+            c1, c2 = st.columns(2)
+            names = route_summary["Rota"].astype(str).tolist()
+            with c1: route_a = st.selectbox("Rota A", names, key="compare_route_a")
+            with c2: route_b = st.selectbox("Rota B", names, index=min(1, len(names)-1), key="compare_route_b")
+            comparison_rows = route_summary[route_summary["Rota"].isin([route_a, route_b])]
+            comparison_metrics = ["Custo total", "Custo por km", "Custo por entrega", "Custo por tonelada", "Entregas por km"]
+            fig = go.Figure()
+            for route_name in [route_a, route_b]:
+                row = comparison_rows[comparison_rows["Rota"].eq(route_name)].iloc[0]
+                fig.add_bar(name=route_name, x=comparison_metrics, y=[float(row.get(metric) or 0) if pd.notna(row.get(metric)) else 0 for metric in comparison_metrics])
+            fig.update_layout(barmode="group", legend={"orientation":"h"})
+            st.plotly_chart(apply_theme(fig, height=390), width="stretch", config=PLOTLY_CONFIG)
+
+        _route_section_title("Ficha de cada viagem", "Selecione uma linha para abrir os detalhes operacionais e financeiros")
+        detail_frame = time_frame.copy()
+        detail_event = st.dataframe(
+            detail_frame,
+            width="stretch", hide_index=True, on_select="rerun", selection_mode="single-row",
+            key="routes_trip_selector_v5",
+            column_config={"Data": _date_col(), "Saida": _datetime_col("Saída"), "Retorno": _datetime_col("Retorno")},
+        )
+        selected_rows = list(getattr(getattr(detail_event, "selection", None), "rows", []) or [])
+        if selected_rows:
+            selected = detail_frame.iloc[selected_rows[0]].to_dict()
+            route_id = clean_text(selected.get("Rota ID"))
+            cost_row = financial.loc[financial["Rota ID"].astype(str).eq(route_id)].head(1)
+            selected_cost = cost_row.iloc[0].to_dict() if not cost_row.empty else {}
+            with st.container(border=True):
+                st.markdown(f"### {h(selected.get('Rota'))} · carga {h(selected.get('Carga'))}", unsafe_allow_html=True)
+                render_kpis([
+                    ("Motorista", selected.get("Motorista") or "—", JR_BLUE), ("Placa", selected.get("PLACA") or "—", JR_BLUE),
+                    ("Duração", f"{fmt_num(selected.get('Tempo Viagem Horas'),1)} h", "#0F766E"),
+                    ("Horas trabalhadas", f"{fmt_num(selected.get('Horas Trabalhadas'),1)} h", "#2563EB"),
+                    ("Intervalos/noites", f"{fmt_num(selected_cost.get('Intervalos e noites'),1)} h", "#D97706"),
+                    ("Resultado operacional", fmt_brl(selected_cost.get("Resultado")), "#0F766E"),
+                ])
+                deliveries = delivery_frame[delivery_frame.get("Rota ID", pd.Series(dtype=str)).astype(str).eq(route_id)] if not delivery_frame.empty else pd.DataFrame()
+                st.dataframe(deliveries, width="stretch", hide_index=True)
+
+    elif section == "Entregas e produtividade":
+        _route_section_title("Entregas e produtividade", "Duração, volume e capacidade por hora trabalhada")
+        render_kpis([
+            ("Entregas por hora", fmt_num(data.get("entregas_por_hora"),2), "#0F766E"),
+            ("Toneladas por hora", fmt_num(data.get("toneladas_por_hora"),2), "#7C3AED"),
+            ("Duração média", f"{fmt_num(data.get('tempo_medio_rota'),1)} h", "#2563EB"),
+            ("Dias médios", fmt_num(data.get("dias_medios_rota"),1), "#D97706"),
+        ])
+        if not time_frame.empty:
+            days = pd.to_numeric(time_frame.get("Dias Rota"), errors="coerce").fillna(0)
+            labels = ["1 dia", "2 dias", "3 dias", "4+ dias"]
+            values = [int(days.eq(1).sum()), int(days.eq(2).sum()), int(days.eq(3).sum()), int(days.ge(4).sum())]
+            left, right = st.columns(2)
+            with left, st.container(border=True):
+                st.markdown("**Distribuição dos dias para entregar**")
+                st.plotly_chart(metric_bar_chart(labels, values, unit="rotas", decimals=0, color="#2563EB"), width="stretch", config=PLOTLY_CONFIG)
+            with right, st.container(border=True):
+                st.markdown("**Produtividade das rotas**")
+                ranking = pd.DataFrame(data.get("ranking_rotas") or []).head(15)
+                st.plotly_chart(metric_bar_chart(ranking.get("Rota",[]).tolist(), ranking.get("Entregas por hora",[]).tolist(), unit="ent/h", horizontal=True, color="#0F766E"), width="stretch", config=PLOTLY_CONFIG)
+            dates = pd.to_datetime(time_frame.get("Data"), errors="coerce")
+            time_frame["Dia semana"] = dates.dt.dayofweek
+            weekdays = ["Seg", "Ter", "Qua", "Qui", "Sex", "Sáb", "Dom"]
+            heat = time_frame.groupby("Dia semana").agg(Viagens=("Rota ID","nunique"), Entregas=("Entregas","sum"), **{"Horas trabalhadas":("Horas Trabalhadas","sum")}).reindex(range(7), fill_value=0)
+            fig = go.Figure(go.Heatmap(z=[heat["Viagens"], heat["Entregas"], heat["Horas trabalhadas"]], x=weekdays, y=["Viagens","Entregas","Horas"], colorscale=[[0,"#EFF6FF"],[1,"#2563EB"]], texttemplate="%{z:.0f}", hovertemplate="<b>%{y} · %{x}</b><br>%{z:.1f}<extra></extra>"))
+            st.markdown("**Padrão operacional por dia da semana**")
+            st.plotly_chart(apply_theme(fig, height=300), width="stretch", config=PLOTLY_CONFIG)
+
+    elif section == "Motoristas":
+        _route_section_title("Perfis de motoristas", "A fórmula de pontuação atual é preservada e explicada")
+        ranking = pd.DataFrame(data.get("ranking_motoristas") or [])
+        if ranking.empty:
+            st.info("Não há motoristas no período.")
+        else:
+            selected_driver = st.selectbox("Motorista", ranking["Motorista"].astype(str).tolist(), key="driver_profile_v5")
+            driver = ranking[ranking["Motorista"].astype(str).eq(selected_driver)].iloc[0]
+            render_kpis([
+                ("Pontuação", f"{fmt_num(driver.get('Pontuacao'),1)} / 100", "#0F766E"),
+                ("Viagens", fmt_num(driver.get("Rotas"),0), "#2563EB"), ("Entregas", fmt_num(driver.get("Entregas"),0), JR_BLUE),
+                ("KM", f"{fmt_num(driver.get('KM'),1)} km", "#D97706"), ("Peso", fmt_peso(driver.get("Peso kg")), "#7C3AED"),
+                ("Horas trabalhadas", f"{fmt_num(driver.get('Horas trabalhadas'),1)} h", "#2563EB"),
+            ])
+            top = ranking.head(15).sort_values("Pontuacao")
+            st.plotly_chart(metric_bar_chart(top["Motorista"].tolist(), top["Pontuacao"].tolist(), unit="pontos", horizontal=True, color="#0F766E"), width="stretch", config=PLOTLY_CONFIG)
+            with st.expander("Como a pontuação é calculada"):
+                st.write("A fórmula atual foi mantida: entregas por hora (30%), toneladas por hora (30%), quantidade de rotas (20%), diversidade de rotas (10%) e qualidade dos dados (10%). Dados ausentes são mostrados na qualidade e não geram uma penalidade adicional inventada.")
+            st.dataframe(ranking, width="stretch", hide_index=True)
+
+    elif section == "Frota e veículos":
+        _route_section_title("Frota e veículos", "Custo e produtividade por placa, sem inventar KM para freteiros")
+        if financial.empty:
+            st.info("Não há custos atribuídos por placa.")
+        else:
+            fleet = financial.groupby("PLACA", as_index=False).agg(Viagens=("Rota ID","nunique"), Entregas=("Entregas","sum"), KM=("KM Rodados","sum"), **{"Custo total":("Custo total","sum"), "Peso kg":("Peso Carga","sum")})
+            fleet["Custo por km"] = fleet["Custo total"].div(fleet["KM"].replace(0,pd.NA))
+            fleet["Custo por entrega"] = fleet["Custo total"].div(fleet["Entregas"].replace(0,pd.NA))
+            fleet = fleet.sort_values("Custo por km", ascending=False, na_position="last")
+            left, right = st.columns(2)
+            with left:
+                valid = fleet.dropna(subset=["Custo por km"]).head(15).sort_values("Custo por km")
+                st.markdown("**Veículos mais caros por KM**")
+                st.plotly_chart(metric_bar_chart(valid["PLACA"].tolist(), valid["Custo por km"].tolist(), unit="R$/km", horizontal=True, color="#DC2626"), width="stretch", config=PLOTLY_CONFIG)
+            with right:
+                valid = fleet.dropna(subset=["Custo por entrega"]).head(15).sort_values("Custo por entrega")
+                st.markdown("**Veículos mais caros por entrega**")
+                st.plotly_chart(metric_bar_chart(valid["PLACA"].tolist(), valid["Custo por entrega"].tolist(), unit="R$/ent", horizontal=True, color="#D97706"), width="stretch", config=PLOTLY_CONFIG)
+            st.dataframe(fleet, width="stretch", hide_index=True, column_config={"Custo total":_money_col("Custo total"),"Custo por km":_money_col("Custo/km"),"Custo por entrega":_money_col("Custo/entrega")})
+
+    elif section == "Custos e rentabilidade":
+        _route_section_title("Inteligência financeira", "Resultado operacional estimado; não é lucro líquido contábil")
+        render_kpis([
+            ("Combustível", fmt_brl(financial["Combustivel"].sum() if not financial.empty else 0), "#2563EB"),
+            ("Pedágio/extras", fmt_brl(financial["Pedagio"].sum() if not financial.empty else 0), "#D97706"),
+            ("Manutenção", fmt_brl(financial["Manutencao"].sum() if not financial.empty else 0), "#7C3AED"),
+            ("Hospedagem", fmt_brl(financial["Hoteis"].sum() if not financial.empty else 0), "#0EA5E9"),
+            ("Mão de obra", fmt_brl(financial["Salarios"].sum() if not financial.empty else 0), "#0F766E"),
+            ("Freteiros", fmt_brl(financial["Freteiro"].sum() if not financial.empty else 0), "#DC2626"),
+            ("Custo atribuído", fmt_brl(costs.get("total_custo")), "#DC2626"),
+            ("Receita atribuída", fmt_brl(costs.get("total_ganho")), "#0F766E"),
+            ("Resultado operacional", fmt_brl(costs.get("resultado")), "#0F766E"),
+            ("Custo/receita", fmt_percent(costs.get("percentual_custo"),1), "#D97706"),
+        ])
+        left, right = st.columns(2)
+        with left, st.container(border=True): st.plotly_chart(_route_composition_chart(costs), width="stretch", config=PLOTLY_CONFIG)
+        with right, st.container(border=True):
+            fig = go.Figure()
+            if not route_summary.empty:
+                plot = route_summary.head(30)
+                fig.add_trace(go.Scatter(x=plot["Receita atribuída"], y=plot["Custo total"], mode="markers", marker={"size":12,"color":plot["Custo/receita %"],"colorscale":"RdYlGn_r","showscale":True}, customdata=plot[["Rota","Resultado operacional"]], hovertemplate="<b>%{customdata[0]}</b><br>Receita R$ %{x:,.2f}<br>Custo R$ %{y:,.2f}<br>Resultado R$ %{customdata[1]:,.2f}<extra></extra>"))
+                maximum_value = max(float(plot["Receita atribuída"].max() or 0), float(plot["Custo total"].max() or 0), 1)
+                fig.add_trace(go.Scatter(x=[0,maximum_value],y=[0,maximum_value],mode="lines",line={"color":"#111827","dash":"dash"},name="Equilíbrio"))
+            fig.update_xaxes(title="Receita atribuída",tickprefix="R$ "); fig.update_yaxes(title="Custo atribuído",tickprefix="R$ ")
+            st.plotly_chart(apply_theme(fig,height=350),width="stretch",config=PLOTLY_CONFIG)
+        st.info("Incluídos conforme disponibilidade: combustível, manutenção, pedágio/extras, hotéis, salários e freteiros. Tributos, depreciação e outros custos não cadastrados não são presumidos; por isso o resultado não deve ser chamado de lucro líquido.")
+        st.dataframe(financial, width="stretch", hide_index=True, column_config={"Data":_date_col(),"Custo total":_money_col("Custo total"),"Ganho entregas":_money_col("Receita atribuída"),"Resultado":_money_col("Resultado operacional"),"Custo por km":_money_col("Custo/km"),"Custo por entrega":_money_col("Custo/entrega")})
+
+    elif section == "Rankings":
+        _route_section_title("Rankings", "Ordenações transparentes com os filtros globais aplicados")
+        rank_driver, rank_plate, rank_route, rank_city = st.tabs(["Motoristas","Placas","Rotas","Cidades"])
+        with rank_driver: st.dataframe(pd.DataFrame(data.get("ranking_motoristas") or []),width="stretch",hide_index=True)
+        with rank_plate: st.dataframe(pd.DataFrame(data.get("ranking_placas") or []),width="stretch",hide_index=True)
+        with rank_route: st.dataframe(pd.DataFrame(data.get("ranking_rotas") or []),width="stretch",hide_index=True)
+        with rank_city: st.dataframe(pd.DataFrame(data.get("ranking_cidades") or []),width="stretch",hide_index=True)
+
+    elif section == "Relatórios":
+        _route_section_title("Relatórios gerenciais", "Exportações respeitam integralmente o período, a busca e os filtros aplicados")
+        report_payload = json.dumps(data, ensure_ascii=False, default=str, sort_keys=True)
+        excel_col, pdf_col = st.columns(2)
+        with excel_col:
+            st.download_button("Baixar relatório completo (Excel)", data=lambda:_route_management_workbook(report_payload), file_name=f"jr_rotas_{start_date:%Y%m%d}_{end_date:%Y%m%d}.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", width="stretch", on_click="ignore")
+        with pdf_col:
+            st.download_button("Baixar relatório executivo (PDF)", data=lambda:_route_management_pdf(report_payload, period_label), file_name=f"jr_rotas_{start_date:%Y%m%d}_{end_date:%Y%m%d}.pdf", mime="application/pdf", width="stretch", on_click="ignore")
+        st.caption("O Excel contém resumo executivo, rotas, entregas, custos, motoristas, placas e alertas em abas separadas. A metodologia financeira permanece explícita no painel.")
+        _route_executive_kpis(data, comparison if compare_period else None)
+        st.dataframe(pd.DataFrame(data.get("alertas") or []),width="stretch",hide_index=True,column_config={"Data":_date_col()})
+
+    elif section == "Qualidade dos dados":
+        _route_section_title("Qualidade dos dados e alertas", "Regras simples e transparentes; nenhum alerta de atraso é criado sem prazo planejado")
+        alerts = pd.DataFrame(data.get("alertas") or [])
+        render_kpis([
+            ("Qualidade média", fmt_percent(data.get("qualidade_media"),1), "#0F766E"),
+            ("Alertas", fmt_num(len(alerts),0), "#D97706"),
+            ("KM zerado", fmt_num(pd.to_numeric(time_frame.get("KM Rodados"),errors="coerce").fillna(0).eq(0).sum() if not time_frame.empty else 0,0), "#DC2626"),
+            ("Rotas analisadas", fmt_num(data.get("total_rotas"),0), "#2563EB"),
+        ])
+        if alerts.empty: st.success("Nenhuma inconsistência foi encontrada nas rotas concluídas deste recorte.")
+        else: st.dataframe(alerts,width="stretch",hide_index=True,column_config={"Data":_date_col()})
+        with st.expander("Regras dos alertas"):
+            st.write("São verificados jornada média acima de 12 horas/dia, duração acima do padrão estatístico, horas inconsistentes, relação de KM/h elevada, dados incompletos, custo sem receita e custo acima ou próximo da receita. Não há alerta de atraso sem um prazo planejado confiável.")
+
+    footer("JR Dashboard • Business Intelligence de rotas concluídas • valores operacionais estimados")
 
 
 def footer(text: str) -> None:

@@ -88,3 +88,42 @@ horas gera duas diarias, e assim por diante.
 O resumo separa o custo direto do caminhao por km, o custo da equipe e o hotel.
 O salario da equipe e calculado pelo tempo de viagem e descarga, quantidade de
 funcionarios e valor por hora. O hotel nao altera o custo por km da placa.
+
+## Plataforma de rotas
+
+O dashboard de Rotas considera exclusivamente viagens concluidas. Registros
+pendentes continuam armazenados para preenchimento, mas nao entram em KPIs,
+custos, rankings, graficos, alertas, pesquisas ou relatorios gerenciais.
+
+Os filtros globais aceitam periodos prontos e intervalo personalizado. Quando a
+comparacao e ativada, o sistema consulta o intervalo imediatamente anterior com
+a mesma quantidade de dias e preserva os filtros de placa, motorista, rota,
+categoria e pesquisa.
+
+O custo operacional atribuido preserva as regras existentes: combustivel e
+associado pela placa, periodo e proximidade; manutencao e pedagio/extras sao
+rateados entre rotas da mesma placa e dia; hospedagem usa motorista e data;
+salarios usam os dias operacionais; freteiros usam a diaria cadastrada. O
+resultado operacional e a receita atribuida menos esses custos disponiveis e
+nao deve ser interpretado como lucro liquido contabil. Tributos, depreciacao e
+qualquer custo nao cadastrado nao sao estimados artificialmente.
+
+Formulas analiticas adicionais:
+
+- custo por km = custo atribuido / KM informado;
+- custo por entrega = custo atribuido / quantidade de entregas;
+- custo por tonelada = custo atribuido / peso dos pedidos em toneladas;
+- entregas por km = quantidade de entregas / KM informado;
+- custo sobre receita = custo atribuido / receita atribuida;
+- resultado operacional = receita atribuida - custo atribuido.
+
+Divisoes sem base valida, como freteiro sem KM, permanecem sem valor em vez de
+serem substituidas por zero ou por uma distancia inventada.
+
+## Testes
+
+Execute os testes dos principais calculos e exportacoes com:
+
+```bash
+python -m unittest discover -s tests -v
+```

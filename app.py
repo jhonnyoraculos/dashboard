@@ -5050,6 +5050,8 @@ def data_rotas(params: dict | None = None) -> dict:
         "motoristas": _unique_sorted(all_routes, "Motorista"),
         "rotas": _unique_sorted(all_routes, "Rota"),
         "categorias": _unique_sorted(all_routes, "Categoria"),
+        "data_min": _route_record_value(all_routes["Data"].min()) if not all_routes.empty else None,
+        "data_max": _route_record_value(all_routes["Data"].max()) if not all_routes.empty else None,
     }
     if _truthy_param(params.get("somente_opcoes")):
         return options
@@ -5060,6 +5062,14 @@ def data_rotas(params: dict | None = None) -> dict:
         routes = _filter_by_period(routes, ano=ano)
     if meses:
         routes = routes[routes["Mes"].isin(meses)].copy()
+    data_inicio = pd.to_datetime(_param(params, "data_inicio"), errors="coerce")
+    data_fim = pd.to_datetime(_param(params, "data_fim"), errors="coerce")
+    route_dates = pd.to_datetime(routes.get("Data"), errors="coerce").dt.normalize()
+    if pd.notna(data_inicio):
+        routes = routes.loc[route_dates.ge(data_inicio.normalize())].copy()
+        route_dates = pd.to_datetime(routes.get("Data"), errors="coerce").dt.normalize()
+    if pd.notna(data_fim):
+        routes = routes.loc[route_dates.le(data_fim.normalize())].copy()
     routes = _route_filter_values(routes, "PLACA", params.get("placa"))
     routes = _route_filter_values(routes, "Motorista", params.get("motorista"))
     routes = _route_filter_values(routes, "Rota", params.get("rota"))
