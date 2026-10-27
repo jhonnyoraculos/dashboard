@@ -65,7 +65,7 @@ MUTED = "#6B7280"
 CARD_BORDER = "#c2d2f3"
 LOGO_PATH = Path(__file__).parent / "static" / "logo-jr.png"
 CURRENT_YEAR = date.today().year
-APP_VERSION = "routes-cost-labels-v7"
+APP_VERSION = "routes-wide-gauges-v8"
 RANK_ROUTES_ENABLED = True
 ROUTE_CACHE_TTL_SECONDS = max(int(os.environ.get("JR_ROUTE_CACHE_TTL_SECONDS", "180") or 180), 30)
 DATA_EDITOR_PAGE_SIZE = 100
@@ -15352,6 +15352,195 @@ def _render_route_gauge_panel(data: dict) -> None:
             )
 
 
+def _render_route_section_gauge_panel(
+    section: str,
+    data: dict,
+    financial: pd.DataFrame,
+    route_summary: pd.DataFrame,
+    time_frame: pd.DataFrame,
+) -> None:
+    def numeric(frame: pd.DataFrame, column: str) -> pd.Series:
+        if frame.empty or column not in frame.columns:
+            return pd.Series(dtype="float64")
+        return pd.to_numeric(frame[column], errors="coerce").dropna()
+
+    def positive(frame: pd.DataFrame, column: str) -> pd.Series:
+        values = numeric(frame, column)
+        return values[values > 0]
+
+    def median(values: pd.Series, fallback: float) -> float:
+        clean = pd.to_numeric(values, errors="coerce").dropna()
+        return float(clean.median()) if not clean.empty else float(fallback)
+
+    def average(values: pd.Series) -> float:
+        clean = pd.to_numeric(values, errors="coerce").dropna()
+        return float(clean.mean()) if not clean.empty else 0.0
+
+    def maximum(value: float, reference: float, values: pd.Series | None = None) -> float:
+        candidates = [float(value or 0.0) * 1.2, float(reference or 0.0) * 1.8, 1.0]
+        if values is not None:
+            clean = pd.to_numeric(values, errors="coerce").dropna()
+            if not clean.empty:
+                candidates.append(float(clean.quantile(0.95)) * 1.15)
+        return max(candidates)
+
+    def ratio(numerator: float, denominator: float, multiplier: float = 1.0) -> float:
+        return float(numerator or 0.0) / float(denominator or 1.0) * multiplier if denominator else 0.0
+
+    total_routes = max(int(data.get("total_rotas") or 0), 1)
+    total_deliveries = float(data.get("entregas_total") or 0.0)
+    total_weight = float(data.get("peso_total") or 0.0)
+    total_km = float(data.get("km_total") or 0.0)
+    total_work = float(data.get("horas_trabalhadas_total") or 0.0)
+    total_days = float(numeric(time_frame, "Dias Rota").sum())
+    costs = data.get("custos") or {}
+    total_cost = float(costs.get("total_custo") or 0.0)
+    total_revenue = float(costs.get("total_ganho") or 0.0)
+    alerts_count = len(data.get("alertas") or [])
+
+    specifications: list[tuple[object, str, float, float, str, bool, str]] = []
+    prefix = {
+        "Análise de rotas": "route_analysis",
+        "Entregas e produtividade": "delivery",
+        "Motoristas": "drivers",
+        "Frota e veículos": "fleet",
+        "Custos e rentabilidade": "finance",
+        "Rankings": "rankings",
+        "Relatórios": "reports",
+        "Qualidade dos dados": "quality",
+    }.get(section, "wide")
+
+    if section == "Análise de rotas":
+        km_rows = financial.loc[pd.to_numeric(financial.get("KM Rodados"), errors="coerce").fillna(0).gt(0)] if not financial.empty else financial
+        km_cost = ratio(float(km_rows.get("Custo total", pd.Series(dtype=float)).sum()), float(km_rows.get("KM Rodados", pd.Series(dtype=float)).sum()))
+        cost_delivery = ratio(total_cost, total_deliveries)
+        cost_ton = ratio(total_cost, total_weight / 1000.0)
+        deliveries_km = ratio(float(km_rows.get("Entregas", pd.Series(dtype=float)).sum()), float(km_rows.get("KM Rodados", pd.Series(dtype=float)).sum()))
+        cost_route = ratio(total_cost, total_routes)
+        references = {
+            "km": median(positive(route_summary, "Custo por km"), km_cost or 1.0),
+            "delivery": median(positive(route_summary, "Custo por entrega"), cost_delivery or 1.0),
+            "ton": median(positive(route_summary, "Custo por tonelada"), cost_ton or 1.0),
+            "density": median(positive(route_summary, "Entregas por km"), deliveries_km or 0.01),
+            "route": median(positive(financial, "Custo total"), cost_route or 1.0),
+        }
+        specifications = [
+            (km_cost, "Custo por KM", maximum(km_cost, references["km"], positive(route_summary, "Custo por km")), references["km"], " R$/km", True, "cost_km"),
+            (cost_delivery, "Custo por entrega", maximum(cost_delivery, references["delivery"], positive(route_summary, "Custo por entrega")), references["delivery"], " R$/ent", True, "cost_delivery"),
+            (cost_ton, "Custo por tonelada", maximum(cost_ton, references["ton"], positive(route_summary, "Custo por tonelada")), references["ton"], " R$/t", True, "cost_ton"),
+            (deliveries_km, "Entregas por KM", maximum(deliveries_km, references["density"], positive(route_summary, "Entregas por km")), references["density"], " ent/km", False, "delivery_km"),
+            (cost_route, "Custo médio por viagem", maximum(cost_route, references["route"], positive(financial, "Custo total")), references["route"], " R$", True, "cost_route"),
+        ]
+    elif section == "Entregas e produtividade":
+        route_rank = pd.DataFrame(data.get("ranking_rotas") or [])
+        delivery_ref = median(positive(route_rank, "Entregas por hora"), float(data.get("entregas_por_hora") or 0.5))
+        ton_ref = median(positive(route_rank, "Toneladas por hora"), float(data.get("toneladas_por_hora") or 0.1))
+        duration_ref = median(positive(time_frame, "Tempo Viagem Horas"), float(data.get("tempo_medio_rota") or 1.0))
+        days_ref = median(positive(time_frame, "Dias Rota"), float(data.get("dias_medios_rota") or 1.0))
+        hours_day = ratio(total_work, total_days)
+        specifications = [
+            (data.get("entregas_por_hora"), "Entregas por hora", maximum(float(data.get("entregas_por_hora") or 0), delivery_ref, positive(route_rank, "Entregas por hora")), delivery_ref, " ent/h", False, "delivery_hour"),
+            (data.get("toneladas_por_hora"), "Toneladas por hora", maximum(float(data.get("toneladas_por_hora") or 0), ton_ref, positive(route_rank, "Toneladas por hora")), ton_ref, " t/h", False, "ton_hour"),
+            (data.get("tempo_medio_rota"), "Duração média", maximum(float(data.get("tempo_medio_rota") or 0), duration_ref, positive(time_frame, "Tempo Viagem Horas")), duration_ref, " h", True, "duration"),
+            (data.get("dias_medios_rota"), "Dias para entregar", maximum(float(data.get("dias_medios_rota") or 0), days_ref, positive(time_frame, "Dias Rota")), days_ref, " dias", True, "days"),
+            (hours_day, "Horas trabalhadas por dia", max(14.0, hours_day * 1.2), 8.0, " h/dia", True, "hours_day"),
+        ]
+    elif section == "Motoristas":
+        ranking = pd.DataFrame(data.get("ranking_motoristas") or [])
+        score = numeric(ranking, "Pontuacao")
+        delivery_hour = positive(ranking, "Entregas por hora")
+        ton_hour = positive(ranking, "Toneladas por hora")
+        quality = numeric(ranking, "Qualidade dos dados %")
+        trips = positive(ranking, "Rotas")
+        specifications = [
+            (float(score.max()) if not score.empty else 0, "Melhor pontuação", 100.0, 80.0, " pts", False, "best_score"),
+            (average(score), "Pontuação média", 100.0, 70.0, " pts", False, "avg_score"),
+            (average(delivery_hour), "Produtividade média", maximum(average(delivery_hour), median(delivery_hour, 0.5), delivery_hour), median(delivery_hour, 0.5), " ent/h", False, "avg_delivery"),
+            (average(ton_hour), "Toneladas por hora", maximum(average(ton_hour), median(ton_hour, 0.1), ton_hour), median(ton_hour, 0.1), " t/h", False, "avg_ton"),
+            (average(trips), "Viagens por motorista", maximum(average(trips), median(trips, 1.0), trips), median(trips, 1.0), " viagens", False, "trips_driver"),
+        ]
+        if not quality.empty:
+            specifications[-1] = (average(quality), "Qualidade média", 100.0, 95.0, "%", False, "driver_quality")
+    elif section == "Frota e veículos":
+        if financial.empty:
+            fleet = pd.DataFrame()
+        else:
+            fleet = financial.groupby("PLACA", as_index=False).agg(
+                Viagens=("Rota ID", "nunique"), Entregas=("Entregas", "sum"), KM=("KM Rodados", "sum"),
+                **{"Custo total": ("Custo total", "sum"), "Peso kg": ("Peso Carga", "sum")},
+            )
+            fleet["Custo por km"] = fleet["Custo total"].div(fleet["KM"].replace(0, pd.NA))
+            fleet["Custo por entrega"] = fleet["Custo total"].div(fleet["Entregas"].replace(0, pd.NA))
+            fleet["Kg por km"] = fleet["Peso kg"].div(fleet["KM"].replace(0, pd.NA))
+        plates = max(len(fleet), 1)
+        cost_km_values = positive(fleet, "Custo por km")
+        cost_delivery_values = positive(fleet, "Custo por entrega")
+        trips_values = positive(fleet, "Viagens")
+        kg_km_values = positive(fleet, "Kg por km")
+        cost_km = ratio(float(fleet.get("Custo total", pd.Series(dtype=float)).sum()), float(fleet.get("KM", pd.Series(dtype=float)).sum()))
+        cost_delivery = ratio(float(fleet.get("Custo total", pd.Series(dtype=float)).sum()), float(fleet.get("Entregas", pd.Series(dtype=float)).sum()))
+        specifications = [
+            (cost_km, "Custo médio por KM", maximum(cost_km, median(cost_km_values, cost_km or 1), cost_km_values), median(cost_km_values, cost_km or 1), " R$/km", True, "fleet_cost_km"),
+            (cost_delivery, "Custo por entrega", maximum(cost_delivery, median(cost_delivery_values, cost_delivery or 1), cost_delivery_values), median(cost_delivery_values, cost_delivery or 1), " R$/ent", True, "fleet_cost_delivery"),
+            (ratio(float(fleet.get("KM", pd.Series(dtype=float)).sum()), plates), "KM por veículo", maximum(ratio(total_km, plates), median(positive(fleet, "KM"), 1), positive(fleet, "KM")), median(positive(fleet, "KM"), 1), " km", False, "fleet_km"),
+            (average(trips_values), "Viagens por veículo", maximum(average(trips_values), median(trips_values, 1), trips_values), median(trips_values, 1), " viagens", False, "fleet_trips"),
+            (average(kg_km_values), "Carga por KM", maximum(average(kg_km_values), median(kg_km_values, 1), kg_km_values), median(kg_km_values, 1), " kg/km", False, "fleet_density"),
+        ]
+    elif section == "Custos e rentabilidade":
+        cost_ratio = ratio(total_cost, total_revenue, 100.0)
+        negative_share = ratio(float(numeric(financial, "Resultado").lt(0).sum()), total_routes, 100.0)
+        fuel_share = ratio(float(numeric(financial, "Combustivel").sum()), total_cost, 100.0)
+        average_cost = ratio(total_cost, total_routes)
+        revenue_coverage = ratio(total_revenue, total_cost, 100.0)
+        trip_costs = positive(financial, "Custo total")
+        specifications = [
+            (cost_ratio, "Custo sobre receita", max(120.0, cost_ratio * 1.15), 60.0, "%", True, "cost_ratio"),
+            (negative_share, "Viagens negativas", max(100.0, negative_share * 1.15), 10.0, "%", True, "negative_share"),
+            (fuel_share, "Participação combustível", max(100.0, fuel_share * 1.15), 55.0, "%", True, "fuel_share"),
+            (average_cost, "Custo médio por viagem", maximum(average_cost, median(trip_costs, average_cost or 1), trip_costs), median(trip_costs, average_cost or 1), " R$", True, "average_cost"),
+            (revenue_coverage, "Receita sobre custo", max(180.0, revenue_coverage * 1.15), 120.0, "%", False, "revenue_coverage"),
+        ]
+    elif section == "Rankings":
+        drivers = pd.DataFrame(data.get("ranking_motoristas") or [])
+        plates = pd.DataFrame(data.get("ranking_placas") or [])
+        routes = pd.DataFrame(data.get("ranking_rotas") or [])
+        cities = pd.DataFrame(data.get("ranking_cidades") or [])
+        specifications = [
+            (float(numeric(drivers, "Pontuacao").max()) if not drivers.empty else 0, "Melhor motorista", 100.0, 80.0, " pts", False, "rank_driver"),
+            (float(numeric(plates, "Pontuacao").max()) if not plates.empty else 0, "Melhor veículo", 100.0, 80.0, " pts", False, "rank_plate"),
+            (float(numeric(routes, "Pontuacao").max()) if not routes.empty else 0, "Melhor rota", 100.0, 80.0, " pts", False, "rank_route"),
+            (float(data.get("qualidade_media") or 0), "Qualidade geral", 100.0, 95.0, "%", False, "rank_quality"),
+            (float(numeric(cities, "Entregas").max()) if not cities.empty else 0, "Maior cidade", maximum(float(numeric(cities, "Entregas").max()) if not cities.empty else 0, median(positive(cities, "Entregas"), 1), positive(cities, "Entregas")), median(positive(cities, "Entregas"), 1), " entregas", False, "rank_city"),
+        ]
+    else:
+        own_fleet = time_frame.loc[~time_frame.get("Categoria", pd.Series("", index=time_frame.index)).astype("string").str.casefold().eq("freteiro")] if not time_frame.empty else time_frame
+        km_coverage = ratio(float(numeric(own_fleet, "KM Rodados").gt(0).sum()), len(own_fleet), 100.0)
+        time_coverage = ratio(float(numeric(time_frame, "Tempo Viagem Horas").gt(0).sum()), len(time_frame), 100.0)
+        revenue_coverage = ratio(float(numeric(financial, "Ganho entregas").gt(0).sum()), len(financial), 100.0)
+        cost_coverage = ratio(float(numeric(financial, "Custo total").gt(0).sum()), len(financial), 100.0)
+        if section == "Relatórios":
+            fifth_value, fifth_title, fifth_target, fifth_inverse = cost_coverage, "Cobertura de custos", 90.0, False
+        else:
+            fifth_value, fifth_title, fifth_target, fifth_inverse = ratio(alerts_count, total_routes, 100.0), "Alertas por 100 rotas", 10.0, True
+        specifications = [
+            (float(data.get("qualidade_media") or 0), "Qualidade geral", 100.0, 95.0, "%", False, "coverage_quality"),
+            (km_coverage, "Cobertura de KM", 100.0, 95.0, "%", False, "coverage_km"),
+            (time_coverage, "Cobertura de tempo", 100.0, 95.0, "%", False, "coverage_time"),
+            (revenue_coverage, "Cobertura de receita", 100.0, 90.0, "%", False, "coverage_revenue"),
+            (fifth_value, fifth_title, max(100.0, fifth_value * 1.15), fifth_target, "%", fifth_inverse, "coverage_fifth"),
+        ]
+
+    columns = st.columns(len(specifications))
+    for column, (value, title, max_value, target, suffix, inverse, key) in zip(columns, specifications):
+        with column, st.container(border=True):
+            st.plotly_chart(
+                _route_gauge(value, title, maximum=max_value, target=target, suffix=suffix, inverse=inverse),
+                width="stretch",
+                config={"displayModeBar": False, "responsive": True},
+                key=f"routes_{prefix}_{key}_gauge_v8",
+            )
+
+
 def render_rotas() -> None:
     options = route_json("rotas", {"somente_opcoes": True})
     raw_minimum = pd.to_datetime(options.get("data_min"), errors="coerce")
@@ -15462,6 +15651,13 @@ def render_rotas() -> None:
     route_records = data.get("rotas_detalhes") or []
     delivery_frame = pd.DataFrame(data.get("entregas_detalhes") or [])
     costs = data.get("custos") or {}
+
+    if section != "Visão geral":
+        _route_section_title(
+            "Visão ampla do período",
+            "Indicadores específicos desta área comparados com referências calculadas a partir dos dados selecionados.",
+        )
+        _render_route_section_gauge_panel(section, data, financial, route_summary, time_frame)
 
     if section == "Visão geral":
         _route_executive_kpis(data, comparison if compare_period else None)
