@@ -65,7 +65,7 @@ MUTED = "#6B7280"
 CARD_BORDER = "#c2d2f3"
 LOGO_PATH = Path(__file__).parent / "static" / "logo-jr.png"
 CURRENT_YEAR = date.today().year
-APP_VERSION = "routes-wide-gauges-v8"
+APP_VERSION = "routes-driver-ranking-v9"
 RANK_ROUTES_ENABLED = True
 ROUTE_CACHE_TTL_SECONDS = max(int(os.environ.get("JR_ROUTE_CACHE_TTL_SECONDS", "180") or 180), 30)
 DATA_EDITOR_PAGE_SIZE = 100
@@ -15796,7 +15796,7 @@ def render_rotas() -> None:
                 ("KM", f"{fmt_num(driver.get('KM'),1)} km", "#D97706"), ("Peso", fmt_peso(driver.get("Peso kg")), "#7C3AED"),
                 ("Horas trabalhadas", f"{fmt_num(driver.get('Horas trabalhadas'),1)} h", "#2563EB"),
             ])
-            top = ranking.head(15).sort_values("Pontuacao")
+            top = ranking.nlargest(15, "Pontuacao")
             st.plotly_chart(metric_bar_chart(top["Motorista"].tolist(), top["Pontuacao"].tolist(), unit="pontos", horizontal=True, color="#0F766E"), width="stretch", config=PLOTLY_CONFIG)
             with st.expander("Como a pontuação é calculada"):
                 st.write("A fórmula atual foi mantida: entregas por hora (30%), toneladas por hora (30%), quantidade de rotas (20%), diversidade de rotas (10%) e qualidade dos dados (10%). Dados ausentes são mostrados na qualidade e não geram uma penalidade adicional inventada.")
