@@ -65,7 +65,7 @@ MUTED = "#6B7280"
 CARD_BORDER = "#c2d2f3"
 LOGO_PATH = Path(__file__).parent / "static" / "logo-jr.png"
 CURRENT_YEAR = date.today().year
-APP_VERSION = "routes-fuel-per-km-v10"
+APP_VERSION = "routes-gauge-identities-v11"
 RANK_ROUTES_ENABLED = True
 ROUTE_CACHE_TTL_SECONDS = max(int(os.environ.get("JR_ROUTE_CACHE_TTL_SECONDS", "180") or 180), 30)
 DATA_EDITOR_PAGE_SIZE = 100
@@ -13838,6 +13838,33 @@ def _route_gauge(
     return fig
 
 
+def _route_gauge_context_html(
+    rows: list[tuple[str, object]],
+    *,
+    value: object,
+    target: float,
+    inverse: bool,
+) -> str:
+    numeric_value = float(pd.to_numeric(pd.Series([value]), errors="coerce").fillna(0.0).iloc[0])
+    reference_met = numeric_value <= float(target or 0.0) if inverse else numeric_value >= float(target or 0.0)
+    status_class = "positive" if reference_met else "attention"
+    status_text = "Referência atingida" if reference_met else "Atenção à referência"
+    visible_rows = [
+        (clean_text(label), clean_text(row_value))
+        for label, row_value in rows
+        if clean_text(label) and clean_text(row_value)
+    ]
+    details = "".join(
+        f'<div class="routes-gauge-context-row"><span>{h(label)}</span><strong>{h(row_value)}</strong></div>'
+        for label, row_value in visible_rows
+    )
+    return (
+        '<div class="routes-gauge-context">'
+        f'{details}<div class="routes-gauge-status {status_class}">{h(status_text)}</div>'
+        "</div>"
+    )
+
+
 def _route_city_treemap(rows: list[dict]) -> go.Figure:
     frame = pd.DataFrame(rows or [])
     if frame.empty:
@@ -14903,6 +14930,16 @@ def _inject_routes_platform_css(dark_mode: bool) -> None:
         .routes-insight.critical {{ border-left:4px solid #DC2626; }}
         .routes-insight.attention {{ border-left:4px solid #D97706; }}
         .routes-insight.positive {{ border-left:4px solid #0F766E; }}
+        .routes-gauge-context {{
+          min-height:86px; margin:-8px 4px 6px; padding:10px 12px; border-top:1px solid var(--routes-border);
+        }}
+        .routes-gauge-context-row {{ display:flex; flex-direction:column; gap:2px; margin-bottom:8px; }}
+        .routes-gauge-context-row span {{ color:var(--routes-muted); font-size:10px; font-weight:800; letter-spacing:.04em; text-transform:uppercase; }}
+        .routes-gauge-context-row strong {{ color:var(--routes-text); font-size:12px; line-height:1.3; overflow-wrap:anywhere; }}
+        .routes-gauge-status {{ display:inline-flex; align-items:center; gap:5px; padding:4px 8px; border-radius:999px; font-size:10px; font-weight:800; }}
+        .routes-gauge-status::before {{ content:""; width:7px; height:7px; border-radius:50%; background:currentColor; }}
+        .routes-gauge-status.positive {{ color:#0F766E; background:rgba(15,118,110,.10); }}
+        .routes-gauge-status.attention {{ color:#B45309; background:rgba(217,119,6,.12); }}
         .stApp div[data-testid="stVerticalBlockBorderWrapper"] {{
           background:var(--routes-surface) !important; border:1px solid var(--routes-border) !important;
           box-shadow:var(--routes-shadow) !important; backdrop-filter:none !important;
@@ -15388,6 +15425,18 @@ def _render_route_section_gauge_panel(
     def ratio(numerator: float, denominator: float, multiplier: float = 1.0) -> float:
         return float(numerator or 0.0) / float(denominator or 1.0) * multiplier if denominator else 0.0
 
+    def extremes(frame: pd.DataFrame, metric: str, label: str) -> tuple[str, str]:
+        if frame.empty or metric not in frame.columns or label not in frame.columns:
+            return "", ""
+        values = pd.to_numeric(frame[metric], errors="coerce")
+        valid = values.notna() & frame[label].astype("string").fillna("").str.strip().ne("")
+        if not valid.any():
+            return "", ""
+        valid_values = values.loc[valid]
+        best = clean_text(frame.loc[valid_values.idxmax(), label])
+        worst = clean_text(frame.loc[valid_values.idxmin(), label])
+        return best, worst
+
     total_routes = max(int(data.get("total_rotas") or 0), 1)
     total_deliveries = float(data.get("entregas_total") or 0.0)
     total_weight = float(data.get("peso_total") or 0.0)
@@ -15400,6 +15449,7 @@ def _render_route_section_gauge_panel(
     alerts_count = len(data.get("alertas") or [])
 
     specifications: list[tuple[object, str, float, float, str, bool, str]] = []
+    gauge_context: dict[str, list[tuple[str, object]]] = {}
     prefix = {
         "Análise de rotas": "route_analysis",
         "Entregas e produtividade": "delivery",
@@ -15462,6 +15512,11 @@ def _render_route_section_gauge_panel(
         ]
         if not quality.empty:
             specifications[-1] = (average(quality), "Qualidade média", 100.0, 95.0, "%", False, "driver_quality")
+        best_driver, worst_driver = extremes(ranking, "Pontuacao", "Motorista")
+        gauge_context["best_score"] = [
+            ("Melhor motorista", best_driver),
+            ("Menor pontuação", worst_driver),
+        ]
     elif section == "Frota e veículos":
         if financial.empty:
             fleet = pd.DataFrame()
@@ -15506,6 +15561,24 @@ def _render_route_section_gauge_panel(
         plates = pd.DataFrame(data.get("ranking_placas") or [])
         routes = pd.DataFrame(data.get("ranking_rotas") or [])
         cities = pd.DataFrame(data.get("ranking_cidades") or [])
+        best_driver, worst_driver = extremes(drivers, "Pontuacao", "Motorista")
+        best_plate, worst_plate = extremes(plates, "Pontuacao", "PLACA")
+        best_route, worst_route = extremes(routes, "Pontuacao", "Rota")
+        biggest_city, smallest_city = extremes(cities, "Entregas", "Cidade")
+        quality_value = float(data.get("qualidade_media") or 0.0)
+        quality_label = (
+            "Excelente" if quality_value >= 95.0
+            else "Boa" if quality_value >= 85.0
+            else "Em atenção" if quality_value >= 70.0
+            else "Crítica"
+        )
+        gauge_context = {
+            "rank_driver": [("Melhor", best_driver), ("Menor pontuação", worst_driver)],
+            "rank_plate": [("Melhor", best_plate), ("Menor pontuação", worst_plate)],
+            "rank_route": [("Melhor", best_route), ("Menor pontuação", worst_route)],
+            "rank_quality": [("Classificação", quality_label)],
+            "rank_city": [("Maior volume", biggest_city), ("Menor volume", smallest_city)],
+        }
         specifications = [
             (float(numeric(drivers, "Pontuacao").max()) if not drivers.empty else 0, "Melhor motorista", 100.0, 80.0, " pts", False, "rank_driver"),
             (float(numeric(plates, "Pontuacao").max()) if not plates.empty else 0, "Melhor veículo", 100.0, 80.0, " pts", False, "rank_plate"),
@@ -15538,7 +15611,16 @@ def _render_route_section_gauge_panel(
                 _route_gauge(value, title, maximum=max_value, target=target, suffix=suffix, inverse=inverse),
                 width="stretch",
                 config={"displayModeBar": False, "responsive": True},
-                key=f"routes_{prefix}_{key}_gauge_v8",
+                key=f"routes_{prefix}_{key}_gauge_v9",
+            )
+            st.markdown(
+                _route_gauge_context_html(
+                    gauge_context.get(key, []),
+                    value=value,
+                    target=target,
+                    inverse=inverse,
+                ),
+                unsafe_allow_html=True,
             )
 
 

@@ -54,6 +54,17 @@ def sample_payload() -> dict:
 
 
 class RoutesDashboardTests(unittest.TestCase):
+    def test_gauge_context_identifies_result_and_reference_status(self):
+        context = dashboard._route_gauge_context_html(
+            [("Melhor", "MOTORISTA TESTE"), ("Menor pontuação", "OUTRO MOTORISTA")],
+            value=82.0,
+            target=80.0,
+            inverse=False,
+        )
+        self.assertIn("MOTORISTA TESTE", context)
+        self.assertIn("OUTRO MOTORISTA", context)
+        self.assertIn("Refer&#234;ncia atingida", context)
+
     def test_pending_routes_never_enter_completed_scope(self):
         routes = pd.DataFrame(
             [
