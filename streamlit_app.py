@@ -65,7 +65,7 @@ MUTED = "#6B7280"
 CARD_BORDER = "#c2d2f3"
 LOGO_PATH = Path(__file__).parent / "static" / "logo-jr.png"
 CURRENT_YEAR = date.today().year
-APP_VERSION = "routes-delivery-days-v3"
+APP_VERSION = "routes-financial-analysis-v4"
 RANK_ROUTES_ENABLED = True
 ROUTE_CACHE_TTL_SECONDS = max(int(os.environ.get("JR_ROUTE_CACHE_TTL_SECONDS", "180") or 180), 30)
 DATA_EDITOR_PAGE_SIZE = 100
@@ -14437,9 +14437,233 @@ def render_rotas() -> None:
         if cost_df.empty:
             st.info("Não há despesas associáveis às rotas selecionadas.")
         else:
+            numeric_cost_columns = [
+                "Combustivel", "Manutencao", "Pedagio", "Hoteis", "Salarios", "Freteiro",
+                "Custo total", "Ganho entregas", "Resultado", "Custo sobre ganho %",
+            ]
+            for column in numeric_cost_columns:
+                if column in cost_df.columns:
+                    cost_df[column] = pd.to_numeric(cost_df[column], errors="coerce")
+
+            route_activity = pd.DataFrame(data.get("tempos_rotas") or [])
+            activity_columns = [
+                column for column in ("Rota ID", "Entregas", "KM Rodados", "Dias Rota")
+                if column in route_activity.columns
+            ]
+            if "Rota ID" in activity_columns:
+                cost_df = cost_df.merge(
+                    route_activity[activity_columns].drop_duplicates("Rota ID"),
+                    on="Rota ID",
+                    how="left",
+                )
+            for column in ("Entregas", "KM Rodados", "Dias Rota"):
+                if column not in cost_df.columns:
+                    cost_df[column] = 0.0
+                cost_df[column] = pd.to_numeric(cost_df[column], errors="coerce").fillna(0.0)
+            cost_df["Custo por entrega"] = cost_df["Custo total"].div(
+                cost_df["Entregas"].replace(0, pd.NA)
+            )
+            cost_df["Prejuizo"] = (cost_df["Custo total"] - cost_df["Ganho entregas"]).clip(lower=0)
+            cost_df["Com prejuizo"] = cost_df["Custo total"].gt(cost_df["Ganho entregas"])
+
+            most_expensive = cost_df.sort_values("Custo total", ascending=False).iloc[0]
+            worst_result = cost_df.sort_values("Resultado", ascending=True).iloc[0]
+            cost_per_delivery_rows = cost_df.loc[cost_df["Custo por entrega"].notna()].sort_values(
+                "Custo por entrega", ascending=False
+            )
+            highest_cost_per_delivery = (
+                cost_per_delivery_rows.iloc[0] if not cost_per_delivery_rows.empty else None
+            )
+            unprofitable = cost_df.loc[cost_df["Com prejuizo"]].copy()
+
+            st.markdown("#### Diagnóstico de rentabilidade")
+            st.caption(
+                "Uma viagem é marcada como não vantajosa quando o custo estimado atribuído a ela fica maior "
+                "que o ganho das entregas. A análise usa somente rotas concluídas e respeita os filtros acima."
+            )
+            render_kpis(
+                [
+                    ("Viagem mais cara", clean_text(most_expensive.get("Rota")) or "—", JR_RED),
+                    ("Custo da mais cara", fmt_brl(most_expensive.get("Custo total")), JR_RED),
+                    ("Pior resultado", clean_text(worst_result.get("Rota")) or "—", "#991B1B"),
+                    ("Saldo da pior", fmt_brl(worst_result.get("Resultado")), "#991B1B"),
+                    ("Viagens com prejuízo", fmt_num(len(unprofitable), 0), "#DC2626"),
+                    ("Prejuízo somado", fmt_brl(unprofitable["Prejuizo"].sum()), "#DC2626"),
+                    (
+                        "Maior custo por entrega",
+                        clean_text(highest_cost_per_delivery.get("Rota")) if highest_cost_per_delivery is not None else "—",
+                        "#D97706",
+                    ),
+                    (
+                        "Valor por entrega",
+                        fmt_brl(highest_cost_per_delivery.get("Custo por entrega"))
+                        if highest_cost_per_delivery is not None else "—",
+                        "#D97706",
+                    ),
+                ]
+            )
+            if unprofitable.empty:
+                st.success("Nenhuma viagem concluída ficou com custo maior que o ganho no período selecionado.")
+            else:
+                st.error(
+                    f"{len(unprofitable)} viagem(ns) não estão compensando: juntas, ficaram "
+                    f"{fmt_brl(unprofitable['Prejuizo'].sum())} abaixo do ponto de equilíbrio."
+                )
+
+            route_summary = cost_df.copy()
+            route_summary["Rota"] = route_summary["Rota"].astype("string").fillna("Sem rota").replace("", "Sem rota")
+            route_summary = route_summary.groupby("Rota", as_index=False).agg(
+                Viagens=("Rota ID", "nunique"),
+                Entregas=("Entregas", "sum"),
+                **{
+                    "Custo total": ("Custo total", "sum"),
+                    "Ganho entregas": ("Ganho entregas", "sum"),
+                    "Resultado": ("Resultado", "sum"),
+                    "Viagens com prejuízo": ("Com prejuizo", "sum"),
+                },
+            )
+            route_summary["Custo médio por viagem"] = route_summary["Custo total"].div(
+                route_summary["Viagens"].replace(0, pd.NA)
+            )
+            route_summary["Custo por entrega"] = route_summary["Custo total"].div(
+                route_summary["Entregas"].replace(0, pd.NA)
+            )
+            route_summary["Custo sobre ganho %"] = route_summary["Custo total"].div(
+                route_summary["Ganho entregas"].replace(0, pd.NA)
+            ).mul(100.0)
+
+            def route_financial_status(row: pd.Series) -> str:
+                cost = float(row.get("Custo total") or 0.0)
+                gain = float(row.get("Ganho entregas") or 0.0)
+                ratio = row.get("Custo sobre ganho %")
+                if cost > 0 and gain <= 0:
+                    return "🔴 Sem ganho informado"
+                if float(row.get("Resultado") or 0.0) < 0:
+                    return "🔴 Não vale a pena"
+                if pd.notna(ratio) and float(ratio) >= 80.0:
+                    return "🟡 Atenção"
+                return "🟢 Saudável"
+
+            route_summary["Situação"] = route_summary.apply(route_financial_status, axis=1)
+            route_summary = route_summary.sort_values(
+                ["Resultado", "Custo total"], ascending=[True, False]
+            ).reset_index(drop=True)
+
+            chart_left, chart_right = st.columns(2)
+            with chart_left:
+                st.markdown("**Rotas mais caras**")
+                top_expensive_routes = route_summary.nlargest(12, "Custo total").sort_values("Custo total")
+                expensive_fig = go.Figure()
+                expensive_fig.add_bar(
+                    name="Custo",
+                    y=top_expensive_routes["Rota"],
+                    x=top_expensive_routes["Custo total"],
+                    orientation="h",
+                    marker_color=JR_RED,
+                    hovertemplate="<b>%{y}</b><br>Custo: R$ %{x:,.2f}<extra></extra>",
+                )
+                expensive_fig.add_bar(
+                    name="Ganho",
+                    y=top_expensive_routes["Rota"],
+                    x=top_expensive_routes["Ganho entregas"],
+                    orientation="h",
+                    marker_color="#15803D",
+                    hovertemplate="<b>%{y}</b><br>Ganho: R$ %{x:,.2f}<extra></extra>",
+                )
+                expensive_fig.update_layout(
+                    barmode="group",
+                    legend={"orientation": "h", "x": 0.5, "xanchor": "center", "y": -0.18},
+                )
+                expensive_fig.update_xaxes(tickprefix="R$ ", rangemode="tozero")
+                st.plotly_chart(
+                    apply_theme(expensive_fig, height=480, margin={"l": 155, "r": 25, "t": 20, "b": 75}),
+                    width="stretch",
+                    config=PLOTLY_CONFIG,
+                    key="routes_most_expensive_chart",
+                )
+            with chart_right:
+                st.markdown("**Custo × ganho por rota**")
+                st.caption("Acima da linha preta, o custo é maior que o ganho e a rota não está compensando.")
+                balance_fig = go.Figure()
+                status_colors = {
+                    "🔴 Sem ganho informado": "#991B1B",
+                    "🔴 Não vale a pena": "#DC2626",
+                    "🟡 Atenção": "#D97706",
+                    "🟢 Saudável": "#0F766E",
+                }
+                for status, color in status_colors.items():
+                    status_rows = route_summary.loc[route_summary["Situação"].eq(status)]
+                    if status_rows.empty:
+                        continue
+                    balance_fig.add_trace(
+                        go.Scatter(
+                            x=status_rows["Ganho entregas"],
+                            y=status_rows["Custo total"],
+                            mode="markers",
+                            name=status.replace("🔴 ", "").replace("🟡 ", "").replace("🟢 ", ""),
+                            marker={
+                                "color": color,
+                                "size": (12 + status_rows["Viagens"].clip(upper=10) * 1.5).tolist(),
+                                "line": {"color": "white", "width": 1.5},
+                                "opacity": 0.88,
+                            },
+                            customdata=status_rows[["Rota", "Resultado", "Viagens"]],
+                            hovertemplate=(
+                                "<b>%{customdata[0]}</b><br>Ganho: R$ %{x:,.2f}<br>Custo: R$ %{y:,.2f}"
+                                "<br>Resultado: R$ %{customdata[1]:,.2f}<br>Viagens: %{customdata[2]:.0f}<extra></extra>"
+                            ),
+                        )
+                    )
+                axis_max = max(
+                    float(route_summary["Custo total"].max() or 0.0),
+                    float(route_summary["Ganho entregas"].max() or 0.0),
+                    1.0,
+                ) * 1.08
+                balance_fig.add_trace(
+                    go.Scatter(
+                        x=[0, axis_max],
+                        y=[0, axis_max],
+                        mode="lines",
+                        name="Ponto de equilíbrio",
+                        line={"color": "#111827", "width": 2, "dash": "dash"},
+                        hoverinfo="skip",
+                    )
+                )
+                balance_fig.update_xaxes(title="Ganho das entregas", tickprefix="R$ ", range=[0, axis_max])
+                balance_fig.update_yaxes(title="Custo estimado", tickprefix="R$ ", range=[0, axis_max])
+                balance_fig.update_layout(
+                    legend={"orientation": "h", "x": 0.5, "xanchor": "center", "y": -0.25}
+                )
+                st.plotly_chart(
+                    apply_theme(balance_fig, height=480, margin={"l": 80, "r": 25, "t": 20, "b": 100}),
+                    width="stretch",
+                    config=PLOTLY_CONFIG,
+                    key="routes_cost_gain_balance_chart",
+                )
+
+            st.markdown("**Ranking financeiro por rota**")
+            st.caption(
+                "Agrupado pelo nome da rota. O ranking começa pelo pior resultado; assim, o que precisa de ação aparece primeiro."
+            )
+            st.dataframe(
+                route_summary,
+                width="stretch",
+                hide_index=True,
+                column_config={
+                    "Custo total": _money_col("Custo total"),
+                    "Ganho entregas": _money_col("Ganho das entregas"),
+                    "Resultado": _money_col("Resultado"),
+                    "Custo médio por viagem": _money_col("Custo médio/viagem"),
+                    "Custo por entrega": _money_col("Custo por entrega"),
+                    "Custo sobre ganho %": _number_col("Custo sobre ganho (%)", step=0.1, format="%.1f"),
+                },
+            )
+
+            st.markdown("**Todas as viagens e composição dos custos**")
             cost_columns = [
-                "Data", "Rota", "PLACA", "Motorista", "Combustivel", "Manutencao", "Pedagio", "Hoteis",
-                "Salarios", "Freteiro", "Custo total", "Ganho entregas", "Resultado", "Custo sobre ganho %",
+                "Data", "Rota", "PLACA", "Motorista", "Entregas", "KM Rodados", "Dias Rota", "Combustivel",
+                "Manutencao", "Pedagio", "Hoteis", "Salarios", "Freteiro", "Custo total", "Custo por entrega",
+                "Ganho entregas", "Resultado", "Custo sobre ganho %",
             ]
             column_config = {
                 "Data": _date_col(),
@@ -14450,6 +14674,7 @@ def render_rotas() -> None:
                 "Salarios": _money_col("Salários"),
                 "Freteiro": _money_col("Freteiro"),
                 "Custo total": _money_col("Custo total"),
+                "Custo por entrega": _money_col("Custo por entrega"),
                 "Ganho entregas": _money_col("Ganho das entregas"),
                 "Resultado": _money_col("Resultado"),
             }
