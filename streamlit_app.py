@@ -65,7 +65,7 @@ MUTED = "#6B7280"
 CARD_BORDER = "#c2d2f3"
 LOGO_PATH = Path(__file__).parent / "static" / "logo-jr.png"
 CURRENT_YEAR = date.today().year
-APP_VERSION = "routes-navigation-scroll-indicators-v13"
+APP_VERSION = "routes-sidebar-control-v14"
 RANK_ROUTES_ENABLED = True
 ROUTE_CACHE_TTL_SECONDS = max(int(os.environ.get("JR_ROUTE_CACHE_TTL_SECONDS", "180") or 180), 30)
 DATA_EDITOR_PAGE_SIZE = 100
@@ -14991,6 +14991,30 @@ def _inject_routes_platform_css(dark_mode: bool) -> None:
         .stApp {{ background: var(--routes-bg) !important; color: var(--routes-text) !important; }}
         .stApp::before, .stApp::after {{ display: none !important; }}
         .block-container {{ max-width: 1680px; padding: 18px 34px 54px; }}
+        header[data-testid="stHeader"] {{
+          visibility: visible !important;
+          height: 0 !important;
+          min-height: 0 !important;
+          overflow: visible !important;
+          background: transparent !important;
+        }}
+        header[data-testid="stHeader"] [data-testid="stToolbar"] {{ visibility:hidden !important; }}
+        [data-testid="stExpandSidebarButton"] {{
+          visibility:visible !important;
+          display:flex !important;
+          position:fixed !important;
+          top:14px !important;
+          left:14px !important;
+          z-index:1100 !important;
+          width:42px !important;
+          height:42px !important;
+          border-radius:11px !important;
+          background:#1C2D6B !important;
+          border:1px solid rgba(255,255,255,.24) !important;
+          box-shadow:0 8px 24px rgba(15,23,42,.24) !important;
+          pointer-events:auto !important;
+        }}
+        [data-testid="stExpandSidebarButton"] svg {{ color:#FFFFFF !important; fill:#FFFFFF !important; }}
         [data-testid="stSidebar"] {{
           background: linear-gradient(180deg, rgba(23,37,84,.99), rgba(15,30,69,.99)) !important;
           border-right: 1px solid rgba(255,255,255,.10);
@@ -14998,7 +15022,8 @@ def _inject_routes_platform_css(dark_mode: bool) -> None:
           height: 100vh !important;
           z-index: 1000;
         }}
-        [data-testid="stSidebarCollapsedControl"] {{ display:flex !important; z-index:1001; }}
+        [data-testid="stSidebarCollapsedControl"],
+        [data-testid="stSidebarCollapseButton"] {{ visibility:visible !important; display:flex !important; z-index:1001; }}
         [data-testid="stSidebar"] *,
         [data-testid="stSidebar"] label,
         [data-testid="stSidebar"] label p,
