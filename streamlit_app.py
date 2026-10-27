@@ -65,7 +65,7 @@ MUTED = "#6B7280"
 CARD_BORDER = "#c2d2f3"
 LOGO_PATH = Path(__file__).parent / "static" / "logo-jr.png"
 CURRENT_YEAR = date.today().year
-APP_VERSION = "routes-platform-gauges-v6"
+APP_VERSION = "routes-cost-labels-v7"
 RANK_ROUTES_ENABLED = True
 ROUTE_CACHE_TTL_SECONDS = max(int(os.environ.get("JR_ROUTE_CACHE_TTL_SECONDS", "180") or 180), 30)
 DATA_EDITOR_PAGE_SIZE = 100
@@ -15255,15 +15255,26 @@ def _route_composition_chart(costs: dict) -> go.Figure:
     columns = ["Combustivel", "Manutencao", "Pedagio", "Hoteis", "Salarios", "Freteiro"]
     labels = ["Combustível", "Manutenção", "Pedágio/extras", "Hospedagem", "Mão de obra", "Freteiros"]
     values = [float(pd.to_numeric(frame.get(column), errors="coerce").fillna(0).sum()) if column in frame else 0 for column in columns]
+    maximum = max(values or [0.0])
     fig = go.Figure(go.Bar(
         x=values, y=labels, orientation="h",
         marker={"color": ["#2563EB", "#7C3AED", "#D97706", "#0EA5E9", "#0F766E", "#DC2626"]},
-        text=[fmt_brl(value) for value in values], textposition="outside",
+        text=[fmt_brl(value) for value in values],
+        textposition="outside",
+        textfont={"size": 12, "color": "#172554"},
+        cliponaxis=False,
+        width=0.62,
         hovertemplate="<b>%{y}</b><br>R$ %{x:,.2f}<extra></extra>",
     ))
-    fig.update_xaxes(tickprefix="R$ ", rangemode="tozero")
-    fig.update_yaxes(autorange="reversed")
-    return apply_theme(fig, height=350, margin={"l": 110, "r": 90, "t": 20, "b": 45})
+    fig.update_xaxes(
+        tickprefix="R$ ",
+        rangemode="tozero",
+        range=[0, maximum * 1.42 if maximum > 0 else 1],
+        automargin=True,
+    )
+    fig.update_yaxes(autorange="reversed", automargin=True, tickfont={"size": 11, "color": "#64748B"})
+    fig.update_layout(uniformtext_minsize=11, uniformtext_mode="show")
+    return apply_theme(fig, height=380, margin={"l": 120, "r": 24, "t": 20, "b": 48})
 
 
 def _render_route_gauge_panel(data: dict) -> None:
@@ -15476,7 +15487,11 @@ def render_rotas() -> None:
                 st.plotly_chart(metric_bar_chart(metrics, values, unit="", color="#2563EB"), width="stretch", config=PLOTLY_CONFIG)
         with right, st.container(border=True):
             _route_section_title("Composição dos custos", "Somente categorias efetivamente atribuídas")
-            st.plotly_chart(_route_composition_chart(costs), width="stretch", config=PLOTLY_CONFIG)
+            st.plotly_chart(
+                _route_composition_chart(costs),
+                width="stretch",
+                config={"displayModeBar": False, "responsive": True},
+            )
 
         alerts = pd.DataFrame(data.get("alertas") or [])
         loss_count = int(financial["Resultado"].lt(0).sum()) if not financial.empty else 0
@@ -15626,7 +15641,12 @@ def render_rotas() -> None:
             ("Custo/receita", fmt_percent(costs.get("percentual_custo"),1), "#D97706"),
         ])
         left, right = st.columns(2)
-        with left, st.container(border=True): st.plotly_chart(_route_composition_chart(costs), width="stretch", config=PLOTLY_CONFIG)
+        with left, st.container(border=True):
+            st.plotly_chart(
+                _route_composition_chart(costs),
+                width="stretch",
+                config={"displayModeBar": False, "responsive": True},
+            )
         with right, st.container(border=True):
             fig = go.Figure()
             if not route_summary.empty:
