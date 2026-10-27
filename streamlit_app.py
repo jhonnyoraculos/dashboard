@@ -65,7 +65,7 @@ MUTED = "#6B7280"
 CARD_BORDER = "#c2d2f3"
 LOGO_PATH = Path(__file__).parent / "static" / "logo-jr.png"
 CURRENT_YEAR = date.today().year
-APP_VERSION = "routes-unprofitable-trips-v18"
+APP_VERSION = "routes-map-forecast-answers-v19"
 RANK_ROUTES_ENABLED = True
 ROUTE_CACHE_TTL_SECONDS = max(int(os.environ.get("JR_ROUTE_CACHE_TTL_SECONDS", "180") or 180), 30)
 DATA_EDITOR_PAGE_SIZE = 100
@@ -78,6 +78,40 @@ FREIGHT_HOTEL_DAY_HOURS = 10.0
 FREIGHT_WORKDAY_HOURS = 8.0
 FREIGHT_REFERENCE_CREW_SIZE = 2.0
 FREIGHT_FLEET_AVERAGE_LABEL = "Média da frota (sem placa)"
+CITIES_COORDINATES = {
+    "ARCOS": (-20.2863, -45.5373),
+    "BELO HORIZONTE": (-19.9167, -43.9345),
+    "BETIM": (-19.9678, -44.1983),
+    "BOA ESPERANCA": (-21.0902, -45.5658),
+    "BOM DESPACHO": (-19.7361, -45.2522),
+    "BRUMADINHO": (-20.1436, -44.2000),
+    "CAPITOLIO": (-20.6153, -46.0493),
+    "CARATINGA": (-19.7894, -42.1392),
+    "CARMO DO CAJURU": (-20.1842, -44.7711),
+    "CLAUDIO": (-20.4435, -44.7653),
+    "CONTAGEM": (-19.9321, -44.0539),
+    "CURVELO": (-18.7565, -44.4303),
+    "DIVINOPOLIS": (-20.1436, -44.8908),
+    "FORMIGA": (-20.4618, -45.4268),
+    "ITAUNA": (-20.0756, -44.5764),
+    "ITAGUARA": (-20.3947, -44.4875),
+    "JOAO MONLEVADE": (-19.8126, -43.1735),
+    "LAGOA DA PRATA": (-20.0233, -45.5406),
+    "LAVRAS": (-21.2450, -44.9998),
+    "NOVA SERRANA": (-19.8713, -44.9847),
+    "OLIVEIRA": (-20.6965, -44.8275),
+    "OURO PRETO": (-20.3856, -43.5035),
+    "PARA DE MINAS": (-19.8606, -44.6083),
+    "PEDRO LEOPOLDO": (-19.6181, -44.0437),
+    "PITANGUI": (-19.6828, -44.8903),
+    "POMPEU": (-19.2244, -45.0003),
+    "PONTE NOVA": (-20.4111, -42.8978),
+    "RIO DE JANEIRO": (-22.9068, -43.1729),
+    "SANTA LUZIA": (-19.7697, -43.8514),
+    "SAO JOAO DEL REI": (-21.1356, -44.2617),
+    "SETE LAGOAS": (-19.4658, -44.2467),
+    "VARGINHA": (-21.5513, -45.4308),
+}
 CATEGORY_OPTIONS = ["Transporte", "Freteiro", "Empilhadeira", "Estoque", "Vex", "Equipamento"]
 CADASTRO_TABS = ["Placas", "Rotas", "Empilhadeiras", "Combustível", "KM mensal", "Manutenção", "Pneus", "Hotéis", "Peso", "Velocidade", "Pedágio/Extras", "Aluguel de veículos"]
 PEDAGIO_TIPO_OPTIONS = ["Pedágio", "Extras", "Táxi", "IPVA", "Seguro", "Licenciamento", "DPVAT", "Outros"]
@@ -15377,6 +15411,164 @@ def _render_unprofitable_trips(financial: pd.DataFrame, *, compact: bool = False
         )
 
 
+def _route_city_key(value: object) -> str:
+    normalized = unicodedata.normalize("NFKD", clean_text(value))
+    normalized = "".join(character for character in normalized if not unicodedata.combining(character))
+    normalized = re.sub(r"[^A-Za-z0-9 ]+", " ", normalized).upper()
+    normalized = re.sub(r"\s+(MG|RJ|SP|ES|GO)$", "", normalized)
+    return re.sub(r"\s+", " ", normalized).strip()
+
+
+def _route_city_map_frame(data: dict) -> pd.DataFrame:
+    cities = pd.DataFrame(data.get("ranking_cidades") or [])
+    columns = ["Cidade", "Rotas", "Entregas", "Peso kg", "Valor Notas", "Latitude", "Longitude", "Localizada"]
+    if cities.empty:
+        return pd.DataFrame(columns=columns)
+    for column in ["Rotas", "Entregas", "Peso kg", "Valor Notas"]:
+        source = cities[column] if column in cities.columns else pd.Series(0.0, index=cities.index)
+        cities[column] = pd.to_numeric(source, errors="coerce").fillna(0.0)
+    cities["_Cidade chave"] = cities.get("Cidade", pd.Series("", index=cities.index)).map(_route_city_key)
+    cities["_Coordenada"] = cities["_Cidade chave"].map(CITIES_COORDINATES)
+    cities["Latitude"] = cities["_Coordenada"].map(lambda value: value[0] if isinstance(value, tuple) else pd.NA)
+    cities["Longitude"] = cities["_Coordenada"].map(lambda value: value[1] if isinstance(value, tuple) else pd.NA)
+    cities["Localizada"] = cities["Latitude"].notna() & cities["Longitude"].notna()
+    return cities[columns].sort_values(["Entregas", "Peso kg"], ascending=[False, False]).reset_index(drop=True)
+
+
+def _route_week_start(values: pd.Series) -> pd.Series:
+    dates = pd.to_datetime(values, errors="coerce").dt.normalize()
+    return dates - pd.to_timedelta(dates.dt.day_of_week, unit="D")
+
+
+def _route_weekly_history(
+    data: dict,
+    financial: pd.DataFrame,
+    *,
+    today: date | pd.Timestamp | None = None,
+) -> pd.DataFrame:
+    activity = pd.DataFrame(data.get("tempos_rotas") or [])
+    activity_columns = ["Semana", "Viagens", "Entregas", "KM"]
+    if activity.empty or "Data" not in activity.columns:
+        activity_weekly = pd.DataFrame(columns=activity_columns)
+    else:
+        work = activity.copy()
+        work["Semana"] = _route_week_start(work["Data"])
+        for column in ["Entregas", "KM Rodados"]:
+            source = work[column] if column in work.columns else pd.Series(0.0, index=work.index)
+            work[column] = pd.to_numeric(source, errors="coerce").fillna(0.0)
+        if "Rota ID" not in work.columns:
+            work["Rota ID"] = work.index.astype(str)
+        activity_weekly = work.dropna(subset=["Semana"]).groupby("Semana", as_index=False).agg(
+            Viagens=("Rota ID", "nunique"), Entregas=("Entregas", "sum"), KM=("KM Rodados", "sum")
+        )
+
+    if financial.empty or "Data" not in financial.columns:
+        cost_weekly = pd.DataFrame(columns=["Semana", "Custos"])
+    else:
+        costs = financial.copy()
+        costs["Semana"] = _route_week_start(costs["Data"])
+        cost_source = costs["Custo total"] if "Custo total" in costs.columns else pd.Series(0.0, index=costs.index)
+        costs["Custo total"] = pd.to_numeric(cost_source, errors="coerce").fillna(0.0)
+        cost_weekly = costs.dropna(subset=["Semana"]).groupby("Semana", as_index=False).agg(Custos=("Custo total", "sum"))
+
+    weekly = activity_weekly.merge(cost_weekly, on="Semana", how="outer").sort_values("Semana")
+    if weekly.empty:
+        return pd.DataFrame(columns=["Semana", "Viagens", "Entregas", "KM", "Custos"])
+    start, end = weekly["Semana"].min(), weekly["Semana"].max()
+    calendar_weeks = pd.DataFrame({"Semana": pd.date_range(start, end, freq="7D")})
+    weekly = calendar_weeks.merge(weekly, on="Semana", how="left")
+    for column in ["Viagens", "Entregas", "KM", "Custos"]:
+        weekly[column] = pd.to_numeric(weekly.get(column), errors="coerce").fillna(0.0)
+    reference = pd.Timestamp(today or date.today()).normalize()
+    current_week = reference - pd.Timedelta(days=reference.weekday())
+    return weekly.loc[weekly["Semana"].lt(current_week)].reset_index(drop=True)
+
+
+def _route_forecast(weekly: pd.DataFrame, *, horizon: int = 4) -> pd.DataFrame:
+    columns = ["Semana", "Métrica", "Previsto", "Mínimo", "Máximo", "Semanas históricas", "Confiabilidade"]
+    if weekly.empty or len(weekly) < 4:
+        return pd.DataFrame(columns=columns)
+    n = len(weekly)
+    x_values = [float(index) for index in range(n)]
+    x_mean = sum(x_values) / n
+    sxx = sum((value - x_mean) ** 2 for value in x_values)
+    confidence = "Alta" if n >= 12 else "Moderada" if n >= 8 else "Inicial"
+    latest_week = pd.Timestamp(weekly["Semana"].max())
+    rows: list[dict] = []
+    for metric in ["Entregas", "KM", "Custos"]:
+        values = pd.to_numeric(weekly.get(metric), errors="coerce").fillna(0.0).astype(float).tolist()
+        y_mean = sum(values) / n
+        slope = sum((x - x_mean) * (y - y_mean) for x, y in zip(x_values, values)) / sxx if sxx else 0.0
+        intercept = y_mean - slope * x_mean
+        fitted = [intercept + slope * x for x in x_values]
+        residual_error = math.sqrt(sum((actual - estimate) ** 2 for actual, estimate in zip(values, fitted)) / max(n - 2, 1))
+        for step in range(1, horizon + 1):
+            future_x = float(n - 1 + step)
+            estimate = max(intercept + slope * future_x, 0.0)
+            uncertainty = 1.282 * residual_error * math.sqrt(
+                1.0 + (1.0 / n) + (((future_x - x_mean) ** 2 / sxx) if sxx else 0.0)
+            )
+            rows.append(
+                {
+                    "Semana": latest_week + pd.Timedelta(days=7 * step),
+                    "Métrica": metric,
+                    "Previsto": round(estimate, 2),
+                    "Mínimo": round(max(estimate - uncertainty, 0.0), 2),
+                    "Máximo": round(max(estimate + uncertainty, 0.0), 2),
+                    "Semanas históricas": n,
+                    "Confiabilidade": confidence,
+                }
+            )
+    return pd.DataFrame(rows, columns=columns)
+
+
+def _route_cost_change_snapshot(
+    financial: pd.DataFrame,
+    *,
+    today: date | pd.Timestamp | None = None,
+) -> dict[str, object]:
+    categories = ["Combustivel", "Manutencao", "Pedagio", "Hoteis", "Salarios", "Freteiro"]
+    labels = {
+        "Combustivel": "Combustível", "Manutencao": "Manutenção", "Pedagio": "Pedágio/extras",
+        "Hoteis": "Hospedagem", "Salarios": "Mão de obra", "Freteiro": "Freteiros",
+    }
+    if financial.empty or "Data" not in financial.columns:
+        return {"disponivel": False, "motivo": "Não há datas financeiras suficientes."}
+    work = financial.copy()
+    work["Semana"] = _route_week_start(work["Data"])
+    for column in ["Custo total", *categories]:
+        source = work[column] if column in work.columns else pd.Series(0.0, index=work.index)
+        work[column] = pd.to_numeric(source, errors="coerce").fillna(0.0)
+    reference = pd.Timestamp(today or date.today()).normalize()
+    current_week = reference - pd.Timedelta(days=reference.weekday())
+    work = work.loc[work["Semana"].notna() & work["Semana"].lt(current_week)]
+    grouped = work.groupby("Semana", as_index=False)[["Custo total", *categories]].sum().sort_values("Semana")
+    if len(grouped) < 2:
+        return {"disponivel": False, "motivo": "São necessárias pelo menos duas semanas concluídas com custos."}
+    previous, current = grouped.iloc[-2], grouped.iloc[-1]
+    previous_cost, current_cost = float(previous["Custo total"]), float(current["Custo total"])
+    change = current_cost - previous_cost
+    percent = (change / previous_cost * 100.0) if previous_cost else None
+    contributions = sorted(
+        [
+            {"Categoria": labels[column], "Variação": float(current[column] - previous[column])}
+            for column in categories
+        ],
+        key=lambda row: abs(float(row["Variação"])),
+        reverse=True,
+    )
+    return {
+        "disponivel": True,
+        "semana_anterior": previous["Semana"],
+        "semana_atual": current["Semana"],
+        "custo_anterior": previous_cost,
+        "custo_atual": current_cost,
+        "variacao": change,
+        "percentual": percent,
+        "contribuicoes": contributions,
+    }
+
+
 @st.cache_data(show_spinner=False, max_entries=12)
 def _route_management_workbook(data_json: str) -> bytes:
     payload = json.loads(data_json)
@@ -15983,6 +16175,248 @@ def _route_profitability_snapshot(financial: pd.DataFrame) -> dict[str, object]:
     }
 
 
+def _render_route_operational_map(data: dict) -> None:
+    cities = _route_city_map_frame(data)
+    if cities.empty:
+        st.info("Não há cidades nas entregas concluídas para os filtros selecionados.")
+        return
+    mapped = cities.loc[cities["Localizada"]].copy()
+    missing = cities.loc[~cities["Localizada"]].copy()
+    delivered_total = float(cities["Entregas"].sum())
+    mapped_deliveries = float(mapped["Entregas"].sum()) if not mapped.empty else 0.0
+    biggest = cities.iloc[0]
+    concentration = float(biggest["Entregas"]) / delivered_total * 100.0 if delivered_total else 0.0
+    render_kpis(
+        [
+            ("Cidades atendidas", fmt_num(len(cities), 0), JR_BLUE),
+            ("Cidades no mapa", fmt_num(len(mapped), 0), "#0F766E"),
+            ("Entregas localizadas", fmt_num(mapped_deliveries, 0), "#2563EB"),
+            ("Maior concentração", clean_text(biggest.get("Cidade")) or "—", "#D97706"),
+            ("Participação da maior", fmt_percent(concentration, 1), "#7C3AED"),
+        ]
+    )
+    if mapped.empty:
+        st.warning("As cidades filtradas ainda não possuem coordenadas municipais cadastradas para exibição no mapa.")
+        st.dataframe(cities.drop(columns=["Latitude", "Longitude", "Localizada"]), width="stretch", hide_index=True)
+        return
+
+    color_metric = st.radio(
+        "Colorir o mapa por",
+        ["Entregas", "Peso kg", "Valor Notas"],
+        horizontal=True,
+        key="routes_map_color_metric_v1",
+    )
+    maximum_deliveries = max(float(mapped["Entregas"].max()), 1.0)
+    marker_sizes = mapped["Entregas"].map(lambda value: 14 + 32 * math.sqrt(max(float(value), 0.0) / maximum_deliveries))
+    hover_text = [
+        "<b>{}</b><br>{} entrega(s)<br>{} rota(s)<br>{}<br>{}".format(
+            h(row.get("Cidade")), fmt_num(row.get("Entregas"), 0), fmt_num(row.get("Rotas"), 0),
+            fmt_peso(row.get("Peso kg")), fmt_brl(row.get("Valor Notas")),
+        )
+        for _, row in mapped.iterrows()
+    ]
+    geographic_span = max(
+        float(mapped["Latitude"].max() - mapped["Latitude"].min()),
+        float(mapped["Longitude"].max() - mapped["Longitude"].min()),
+    )
+    zoom = 5.2 if geographic_span > 4 else 6.2 if geographic_span > 2 else 7.2
+    fig = go.Figure(
+        go.Scattermapbox(
+            lat=mapped["Latitude"], lon=mapped["Longitude"], mode="markers",
+            text=hover_text, hovertemplate="%{text}<extra></extra>",
+            marker={
+                "size": marker_sizes,
+                "color": mapped[color_metric],
+                "colorscale": [[0, "#93C5FD"], [0.5, "#2563EB"], [1, "#BE1E2D"]],
+                "showscale": True,
+                "colorbar": {"title": color_metric, "thickness": 12},
+                "opacity": 0.84,
+            },
+        )
+    )
+    fig.update_layout(
+        mapbox={
+            "style": "open-street-map",
+            "center": {"lat": float(mapped["Latitude"].mean()), "lon": float(mapped["Longitude"].mean())},
+            "zoom": zoom,
+        },
+        margin={"l": 0, "r": 0, "t": 0, "b": 0},
+        height=610,
+        paper_bgcolor="rgba(0,0,0,0)",
+    )
+    st.plotly_chart(fig, width="stretch", config=PLOTLY_CONFIG, key="routes_operational_map_v1")
+    st.caption(
+        "As bolhas usam coordenadas do centro do município apenas para posicionamento. "
+        "Entregas, rotas, peso e valores são os dados reais filtrados do dashboard."
+    )
+    if not missing.empty:
+        with st.expander(f"{len(missing)} cidade(s) sem coordenada cadastrada"):
+            st.dataframe(
+                missing[["Cidade", "Rotas", "Entregas", "Peso kg", "Valor Notas"]],
+                width="stretch", hide_index=True,
+                column_config={"Valor Notas": _money_col("Valor das notas")},
+            )
+
+
+def _render_route_forecast(data: dict, financial: pd.DataFrame) -> None:
+    weekly = _route_weekly_history(data, financial)
+    forecast = _route_forecast(weekly)
+    _route_section_title(
+        "Previsão para as próximas quatro semanas",
+        "Tendência linear sobre semanas concluídas; a faixa mostra a incerteza estatística de 80%.",
+    )
+    if len(weekly) < 4:
+        missing_weeks = max(4 - len(weekly), 0)
+        st.warning(
+            f"Previsão ainda não liberada: há {len(weekly)} semana(s) concluída(s) no filtro. "
+            f"São necessárias pelo menos 4; faltam {missing_weeks}."
+        )
+        if not weekly.empty:
+            st.dataframe(weekly, width="stretch", hide_index=True, column_config={"Semana": _date_col("Início da semana"), "Custos": _money_col("Custos")})
+        return
+
+    reliability = clean_text(forecast["Confiabilidade"].iloc[0])
+    next_week = forecast[forecast["Semana"].eq(forecast["Semana"].min())].set_index("Métrica")
+    render_kpis(
+        [
+            ("Histórico usado", f"{len(weekly)} semanas", JR_BLUE),
+            ("Confiabilidade", reliability, "#D97706" if reliability == "Inicial" else "#0F766E"),
+            ("Entregas — próxima semana", fmt_num(next_week.loc["Entregas", "Previsto"], 0), "#2563EB"),
+            ("KM — próxima semana", f"{fmt_num(next_week.loc['KM', 'Previsto'], 0)} km", "#7C3AED"),
+            ("Custos — próxima semana", fmt_brl(next_week.loc["Custos", "Previsto"]), JR_RED),
+        ]
+    )
+    metric_labels = {"Entregas": "Entregas", "KM": "Quilômetros", "Custos": "Custos"}
+    tabs = st.tabs(list(metric_labels.values()))
+    for tab, (metric, label) in zip(tabs, metric_labels.items()):
+        with tab:
+            selected = forecast.loc[forecast["Métrica"].eq(metric)].copy()
+            fig = go.Figure()
+            fig.add_trace(go.Scatter(
+                x=weekly["Semana"], y=weekly[metric], name="Realizado", mode="lines+markers",
+                line={"color": "#1C2D6B", "width": 3},
+            ))
+            fig.add_trace(go.Scatter(
+                x=selected["Semana"], y=selected["Máximo"], name="Limite máximo", mode="lines",
+                line={"color": "rgba(190,30,45,.15)"}, hoverinfo="skip",
+            ))
+            fig.add_trace(go.Scatter(
+                x=selected["Semana"], y=selected["Mínimo"], name="Faixa de incerteza", mode="lines",
+                fill="tonexty", fillcolor="rgba(190,30,45,.12)", line={"color": "rgba(190,30,45,.15)"},
+            ))
+            fig.add_trace(go.Scatter(
+                x=selected["Semana"], y=selected["Previsto"], name="Previsto", mode="lines+markers",
+                line={"color": "#BE1E2D", "width": 3, "dash": "dash"},
+            ))
+            fig.update_yaxes(tickprefix="R$ " if metric == "Custos" else "", title=label)
+            st.plotly_chart(apply_theme(fig, height=420), width="stretch", config=PLOTLY_CONFIG, key=f"routes_forecast_{metric}_v1")
+    display = forecast.pivot(index="Semana", columns="Métrica", values=["Previsto", "Mínimo", "Máximo"])
+    display.columns = [f"{metric} — {measure.lower()}" for measure, metric in display.columns]
+    st.dataframe(display.reset_index(), width="stretch", hide_index=True, column_config={"Semana": _date_col("Semana prevista")})
+    st.info(
+        "A previsão é operacional, não uma meta. Quanto menor o histórico, maior a faixa de incerteza; "
+        "os valores são recalculados ao mudar período, rota, placa, motorista ou categoria."
+    )
+
+
+def _render_route_management_questions(data: dict, financial: pd.DataFrame, route_summary: pd.DataFrame) -> None:
+    question = st.selectbox(
+        "Escolha uma pergunta",
+        [
+            "Por que os custos aumentaram?",
+            "Qual motorista foi mais produtivo?",
+            "Quais rotas tiveram os piores resultados?",
+        ],
+        key="routes_management_question_v1",
+    )
+    st.caption("A resposta considera somente as viagens concluídas e todos os filtros ativos no dashboard.")
+
+    if question == "Por que os custos aumentaram?":
+        snapshot = _route_cost_change_snapshot(financial)
+        if not snapshot.get("disponivel"):
+            st.warning(clean_text(snapshot.get("motivo")))
+            return
+        change = float(snapshot.get("variacao") or 0.0)
+        percent = snapshot.get("percentual")
+        direction = "aumentaram" if change > 0 else "diminuíram" if change < 0 else "ficaram estáveis"
+        message = (
+            f"Os custos {direction} em {fmt_brl(abs(change))}"
+            f" ({fmt_percent(abs(float(percent)), 1) if percent is not None else 'sem base percentual'})."
+        )
+        (st.error if change > 0 else st.success)(message)
+        render_kpis(
+            [
+                ("Semana anterior", fmt_brl(snapshot.get("custo_anterior")), JR_BLUE),
+                ("Última semana concluída", fmt_brl(snapshot.get("custo_atual")), JR_RED if change > 0 else "#0F766E"),
+                ("Variação", ("+" if change > 0 else "−" if change < 0 else "") + fmt_brl(abs(change)), JR_RED if change > 0 else "#0F766E"),
+            ]
+        )
+        st.markdown(
+            f"**Cálculo:** {fmt_brl(snapshot.get('custo_atual'))} − {fmt_brl(snapshot.get('custo_anterior'))} "
+            f"= **{fmt_brl(change)}**."
+        )
+        contributions = pd.DataFrame(snapshot.get("contribuicoes") or [])
+        if not contributions.empty:
+            st.markdown("**Categorias que mais explicam a mudança**")
+            st.dataframe(contributions, width="stretch", hide_index=True, column_config={"Variação": st.column_config.NumberColumn("Variação", format="R$ %.2f")})
+
+    elif question == "Qual motorista foi mais produtivo?":
+        ranking = pd.DataFrame(data.get("ranking_motoristas") or [])
+        if ranking.empty:
+            st.warning("Não há motoristas com viagens concluídas nos filtros selecionados.")
+            return
+        ranking["Pontuacao"] = pd.to_numeric(ranking.get("Pontuacao"), errors="coerce").fillna(0.0)
+        best = ranking.sort_values(["Pontuacao", "Rotas", "Entregas"], ascending=[False, False, False]).iloc[0]
+        st.success(f"O motorista mais produtivo foi **{clean_text(best.get('Motorista'))}**, com {fmt_num(best.get('Pontuacao'), 1)} pontos.")
+        render_kpis(
+            [
+                ("Entregas", fmt_num(best.get("Entregas"), 0), JR_BLUE),
+                ("Horas trabalhadas", f"{fmt_num(best.get('Horas trabalhadas'), 1)} h", "#2563EB"),
+                ("Entregas por hora", fmt_num(best.get("Entregas por hora"), 3), "#0F766E"),
+                ("Toneladas por hora", fmt_num(best.get("Toneladas por hora"), 3), "#7C3AED"),
+                ("Qualidade dos dados", fmt_percent(best.get("Qualidade dos dados %"), 1), "#D97706"),
+            ]
+        )
+        st.markdown(
+            f"**Cálculos diretos:** entregas/h = {fmt_num(best.get('Entregas'), 0)} ÷ "
+            f"{fmt_num(best.get('Horas trabalhadas'), 2)} = **{fmt_num(best.get('Entregas por hora'), 3)}**; "
+            f"toneladas/h = ({fmt_num(best.get('Peso kg'), 2)} kg ÷ 1.000) ÷ "
+            f"{fmt_num(best.get('Horas trabalhadas'), 2)} = **{fmt_num(best.get('Toneladas por hora'), 3)}**."
+        )
+        st.caption(
+            "Pontuação: 30% posição relativa em entregas/h + 30% em toneladas/h + 20% volume de viagens "
+            "+ 10% diversidade de rotas + 10% qualidade dos dados."
+        )
+
+    else:
+        if route_summary.empty:
+            st.warning("Não há rotas com base financeira nos filtros selecionados.")
+            return
+        worst = route_summary.sort_values("Resultado operacional").head(10).copy()
+        negative = worst.loc[pd.to_numeric(worst["Resultado operacional"], errors="coerce").fillna(0).lt(0)]
+        if negative.empty:
+            st.success("Nenhuma rota consolidada apresentou resultado operacional negativo no período.")
+        else:
+            leader = negative.iloc[0]
+            st.error(
+                f"O pior resultado foi da rota **{clean_text(leader.get('Rota'))}**: "
+                f"{fmt_brl(leader.get('Resultado operacional'))}."
+            )
+            st.markdown(
+                f"**Cálculo do pior resultado:** {fmt_brl(leader.get('Receita atribuída'))} de receita − "
+                f"{fmt_brl(leader.get('Custo total'))} de custo = **{fmt_brl(leader.get('Resultado operacional'))}**."
+            )
+        st.dataframe(
+            worst[["Rota", "Viagens", "Custo total", "Receita atribuída", "Resultado operacional", "Custo/receita %", "Situação"]],
+            width="stretch", hide_index=True,
+            column_config={
+                "Custo total": _money_col("Custo"), "Receita atribuída": _money_col("Receita"),
+                "Resultado operacional": st.column_config.NumberColumn("Resultado", format="R$ %.2f"),
+                "Custo/receita %": st.column_config.NumberColumn("Custo/receita", format="%.1f%%"),
+            },
+        )
+
+
 def render_rotas() -> None:
     options = route_json("rotas", {"somente_opcoes": True})
     raw_minimum = pd.to_datetime(options.get("data_min"), errors="coerce")
@@ -16006,8 +16440,9 @@ def render_rotas() -> None:
         section = st.radio(
             "Navegação",
             [
-                "Visão geral", "Análise de rotas", "Entregas e produtividade", "Motoristas",
+                "Visão geral", "Mapa operacional", "Análise de rotas", "Entregas e produtividade", "Motoristas",
                 "Frota e veículos", "Custos e rentabilidade", "Rankings", "Relatórios", "Qualidade dos dados",
+                "Previsões", "Perguntas gerenciais",
             ],
             key="routes_workspace_section",
         )
@@ -16020,6 +16455,7 @@ def render_rotas() -> None:
 
     page_subtitles = {
         "Visão geral": "Leitura executiva da operação concluída",
+        "Mapa operacional": "Cidades, concentração das entregas e distribuição geográfica",
         "Análise de rotas": "Eficiência, comparação e histórico de cada viagem",
         "Entregas e produtividade": "Volume, duração e capacidade operacional",
         "Motoristas": "Desempenho individual sem penalizar dados ausentes",
@@ -16028,6 +16464,8 @@ def render_rotas() -> None:
         "Rankings": "Comparações transparentes entre os principais grupos",
         "Relatórios": "Documentos gerenciais conforme os filtros aplicados",
         "Qualidade dos dados": "Inconsistências, alertas e cobertura das informações",
+        "Previsões": "Demanda, quilômetros e custos projetados com margem de incerteza",
+        "Perguntas gerenciais": "Respostas calculadas e auditáveis usando os dados reais",
     }
 
     header_mode = st.session_state.get("routes_period_mode_v5", "Todo o período")
@@ -16099,7 +16537,11 @@ def render_rotas() -> None:
     delivery_frame = pd.DataFrame(data.get("entregas_detalhes") or [])
     costs = data.get("custos") or {}
 
-    if section != "Visão geral":
+    sections_with_gauges = {
+        "Análise de rotas", "Entregas e produtividade", "Motoristas", "Frota e veículos",
+        "Custos e rentabilidade", "Rankings", "Relatórios", "Qualidade dos dados",
+    }
+    if section in sections_with_gauges:
         _route_section_title(
             "Visão ampla do período",
             "Indicadores específicos desta área comparados com referências calculadas a partir dos dados selecionados.",
@@ -16169,6 +16611,13 @@ def render_rotas() -> None:
                 args=("Qualidade dos dados",),
             )
         _render_unprofitable_trips(financial, compact=True)
+
+    elif section == "Mapa operacional":
+        _route_section_title(
+            "Mapa operacional interativo",
+            "Distribuição geográfica das cidades atendidas e concentração das entregas concluídas.",
+        )
+        _render_route_operational_map(data)
 
     elif section == "Análise de rotas":
         _route_section_title("Central inteligente de rotas", "Custos, eficiência e comparação usando somente viagens concluídas")
@@ -16416,6 +16865,16 @@ def render_rotas() -> None:
         st.caption("O Excel contém resumo executivo, rotas, entregas, custos, motoristas, placas e alertas em abas separadas. A metodologia financeira permanece explícita no painel.")
         _route_executive_kpis(data, comparison if compare_period else None)
         st.dataframe(pd.DataFrame(data.get("alertas") or []),width="stretch",hide_index=True,column_config={"Data":_date_col()})
+
+    elif section == "Previsões":
+        _render_route_forecast(data, financial)
+
+    elif section == "Perguntas gerenciais":
+        _route_section_title(
+            "Perguntas gerenciais",
+            "Escolha uma pergunta para obter a resposta, a base utilizada e os cálculos.",
+        )
+        _render_route_management_questions(data, financial, route_summary)
 
     elif section == "Qualidade dos dados":
         _route_section_title("Qualidade dos dados e alertas", "Regras simples e transparentes; nenhum alerta de atraso é criado sem prazo planejado")

@@ -167,6 +167,48 @@ class RoutesDashboardTests(unittest.TestCase):
         self.assertAlmostEqual(float(losses.iloc[0]["Faltou para se pagar"]), 1_000.0)
         self.assertAlmostEqual(float(losses.iloc[0]["Custo/receita %"]), 116.666666, places=4)
 
+    def test_operational_map_uses_real_city_metrics_and_known_coordinates(self):
+        cities = dashboard._route_city_map_frame(
+            {
+                "ranking_cidades": [
+                    {"Cidade": "Divinópolis - MG", "Rotas": 3, "Entregas": 12, "Peso kg": 5000, "Valor Notas": 9000},
+                    {"Cidade": "Cidade sem cadastro", "Rotas": 1, "Entregas": 2, "Peso kg": 200, "Valor Notas": 500},
+                ]
+            }
+        )
+        mapped = cities.set_index("Cidade")["Localizada"].to_dict()
+        self.assertTrue(mapped["Divinópolis - MG"])
+        self.assertFalse(mapped["Cidade sem cadastro"])
+        self.assertEqual(float(cities["Entregas"].sum()), 14.0)
+
+    def test_weekly_forecast_and_cost_explanation_use_completed_weeks(self):
+        weeks = pd.date_range("2026-09-14", periods=6, freq="7D")
+        data = {
+            "tempos_rotas": [
+                {"Rota ID": f"r{index}", "Data": week, "Entregas": 10 + index, "KM Rodados": 100 + index * 10}
+                for index, week in enumerate(weeks)
+            ]
+        }
+        financial = pd.DataFrame(
+            [
+                {
+                    "Rota ID": f"r{index}", "Data": week, "Custo total": 1000 + index * 100,
+                    "Combustivel": 600 + index * 80, "Manutencao": 100 + index * 20,
+                    "Pedagio": 100, "Hoteis": 100, "Salarios": 100, "Freteiro": 0,
+                }
+                for index, week in enumerate(weeks)
+            ]
+        )
+        weekly = dashboard._route_weekly_history(data, financial, today=pd.Timestamp("2026-10-27"))
+        forecast = dashboard._route_forecast(weekly)
+        change = dashboard._route_cost_change_snapshot(financial, today=pd.Timestamp("2026-10-27"))
+        self.assertEqual(len(weekly), 6)
+        self.assertEqual(len(forecast), 12)
+        self.assertEqual(set(forecast["Métrica"]), {"Entregas", "KM", "Custos"})
+        self.assertTrue(change["disponivel"])
+        self.assertAlmostEqual(float(change["variacao"]), 100.0)
+        self.assertEqual(change["contribuicoes"][0]["Categoria"], "Combustível")
+
     def test_fuel_cost_uses_plate_history_per_km(self):
         fuel = pd.DataFrame(
             [
