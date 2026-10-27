@@ -65,7 +65,7 @@ MUTED = "#6B7280"
 CARD_BORDER = "#c2d2f3"
 LOGO_PATH = Path(__file__).parent / "static" / "logo-jr.png"
 CURRENT_YEAR = date.today().year
-APP_VERSION = "routes-small-gauge-values-v16"
+APP_VERSION = "routes-global-route-navigation-v17"
 RANK_ROUTES_ENABLED = True
 ROUTE_CACHE_TTL_SECONDS = max(int(os.environ.get("JR_ROUTE_CACHE_TTL_SECONDS", "180") or 180), 30)
 DATA_EDITOR_PAGE_SIZE = 100
@@ -15068,6 +15068,19 @@ def _inject_routes_platform_css(dark_mode: bool) -> None:
         .st-key-routes_persistent_nav [data-testid="stToggle"] p {{
           color:#EAF0FF !important; -webkit-text-fill-color:#EAF0FF !important;
         }}
+        .st-key-routes_persistent_nav div[data-baseweb="select"] > div {{
+          background:rgba(255,255,255,.10) !important;
+          border-color:rgba(255,255,255,.18) !important;
+          color:#FFFFFF !important;
+        }}
+        .st-key-routes_persistent_nav div[data-baseweb="select"] svg {{ color:#FFFFFF !important; fill:#FFFFFF !important; }}
+        .st-key-routes_back_home button {{
+          background:rgba(255,255,255,.08) !important;
+          border:1px solid rgba(255,255,255,.20) !important;
+          color:#FFFFFF !important;
+          box-shadow:none !important;
+        }}
+        .st-key-routes_back_home button:hover {{ background:rgba(255,255,255,.15) !important; }}
         [data-testid="stSidebar"] *,
         [data-testid="stSidebar"] label,
         [data-testid="stSidebar"] label p,
@@ -15133,6 +15146,33 @@ def _inject_routes_platform_css(dark_mode: bool) -> None:
         .routes-insight.critical {{ border-left:4px solid #DC2626; }}
         .routes-insight.attention {{ border-left:4px solid #D97706; }}
         .routes-insight.positive {{ border-left:4px solid #0F766E; }}
+        .st-key-routes_insight_driver_button button,
+        .st-key-routes_insight_profit_button button,
+        .st-key-routes_insight_quality_button button {{
+          min-height:94px !important;
+          justify-content:flex-start !important;
+          padding:14px 18px !important;
+          border-radius:13px !important;
+          background:var(--routes-surface) !important;
+          border:1px solid var(--routes-border) !important;
+          box-shadow:var(--routes-shadow) !important;
+          text-align:left !important;
+          cursor:pointer !important;
+          white-space:normal !important;
+        }}
+        .st-key-routes_insight_driver_button button {{ border-left:4px solid #0F766E !important; }}
+        .st-key-routes_insight_profit_button button {{ border-left:4px solid #DC2626 !important; }}
+        .st-key-routes_insight_quality_button button {{ border-left:4px solid #D97706 !important; }}
+        .st-key-routes_insight_driver_button button p,
+        .st-key-routes_insight_profit_button button p,
+        .st-key-routes_insight_quality_button button p {{
+          color:var(--routes-text) !important;
+          text-align:left !important;
+          line-height:1.45 !important;
+        }}
+        .st-key-routes_insight_driver_button button:hover,
+        .st-key-routes_insight_profit_button button:hover,
+        .st-key-routes_insight_quality_button button:hover {{ transform:translateY(-2px); }}
         .routes-gauge-context {{
           min-height:86px; margin:-8px 4px 6px; padding:10px 12px; border-top:1px solid var(--routes-border);
         }}
@@ -15835,6 +15875,51 @@ def _render_route_section_gauge_panel(
             )
 
 
+def _select_route_workspace_section(section: str) -> None:
+    st.session_state["routes_workspace_section"] = section
+
+
+def _route_profitability_snapshot(financial: pd.DataFrame) -> dict[str, object]:
+    if financial.empty:
+        return {
+            "custo": 0.0,
+            "receita": 0.0,
+            "resultado": 0.0,
+            "custo_receita": None,
+            "viagens": 0,
+            "situacao": "Sem dados",
+            "se_pagou": None,
+        }
+    cost_source = financial["Custo total"] if "Custo total" in financial.columns else pd.Series(0.0, index=financial.index)
+    revenue_source = financial["Ganho entregas"] if "Ganho entregas" in financial.columns else pd.Series(0.0, index=financial.index)
+    cost = float(pd.to_numeric(cost_source, errors="coerce").fillna(0.0).sum())
+    revenue = float(pd.to_numeric(revenue_source, errors="coerce").fillna(0.0).sum())
+    result = revenue - cost
+    ratio = (cost / revenue * 100.0) if revenue > 0 else None
+    trips = (
+        int(financial["Rota ID"].astype("string").nunique())
+        if "Rota ID" in financial.columns
+        else int(len(financial))
+    )
+    if revenue <= 0 and cost > 0:
+        situation, paid = "Sem receita atribuída", False
+    elif revenue <= 0:
+        situation, paid = "Sem base financeira", None
+    elif result >= 0:
+        situation, paid = "Se pagou", True
+    else:
+        situation, paid = "Não se pagou", False
+    return {
+        "custo": round(cost, 2),
+        "receita": round(revenue, 2),
+        "resultado": round(result, 2),
+        "custo_receita": round(ratio, 2) if ratio is not None else None,
+        "viagens": trips,
+        "situacao": situation,
+        "se_pagou": paid,
+    }
+
+
 def render_rotas() -> None:
     options = route_json("rotas", {"somente_opcoes": True})
     raw_minimum = pd.to_datetime(options.get("data_min"), errors="coerce")
@@ -15848,6 +15933,13 @@ def render_rotas() -> None:
             f'<div class="routes-brand"><img src="{logo}" alt="JR"><div><strong>JR Dashboard</strong><span>Inteligência logística</span></div></div>',
             unsafe_allow_html=True,
         )
+        all_routes_label = "Todas as rotas"
+        global_route = st.selectbox(
+            "Rota geral — todas as áreas",
+            [all_routes_label, *(options.get("rotas") or [])],
+            key="routes_global_route_v1",
+            help="Este filtro é aplicado a todas as abas, gráficos, KPIs, rankings e relatórios.",
+        )
         section = st.radio(
             "Navegação",
             [
@@ -15857,11 +15949,11 @@ def render_rotas() -> None:
             key="routes_workspace_section",
         )
         st.divider()
-        dark_mode = st.toggle("Modo escuro", key="routes_dark_mode")
         compare_period = st.toggle("Comparar período anterior", value=False, key="routes_compare_period")
-        st.markdown("[← Voltar ao início](?page=home)")
+        if st.button("← Voltar ao início", key="routes_back_home", width="stretch"):
+            navigate("home")
 
-    _inject_routes_platform_css(dark_mode)
+    _inject_routes_platform_css(False)
 
     page_subtitles = {
         "Visão geral": "Leitura executiva da operação concluída",
@@ -15907,21 +15999,19 @@ def render_rotas() -> None:
             )
         start_date, end_date = _route_period_dates(period_mode, minimum, maximum, custom_dates)
         with st.expander("Filtros avançados", expanded=False):
-            f1, f2, f3, f4 = st.columns(4)
+            f1, f2, f3 = st.columns(3)
             with f1:
                 categories = st.multiselect("Categoria", options.get("categorias") or [], key="routes_categories_v5")
             with f2:
                 plates = st.multiselect("Placa", options.get("placas") or [], key="routes_plates_v5")
             with f3:
                 drivers = st.multiselect("Motorista", options.get("motoristas") or [], key="routes_drivers_v5")
-            with f4:
-                route_names = st.multiselect("Rota", options.get("rotas") or [], key="routes_names_v5")
 
     params: dict[str, object] = {"data_inicio": start_date.isoformat(), "data_fim": end_date.isoformat()}
     if categories: params["categoria"] = categories
     if plates: params["placa"] = plates
     if drivers: params["motorista"] = drivers
-    if route_names: params["rota"] = route_names
+    if global_route != all_routes_label: params["rota"] = [global_route]
     if search.strip(): params["busca"] = search.strip()
     data = route_json("rotas", params)
 
@@ -15986,15 +16076,68 @@ def render_rotas() -> None:
         alerts = pd.DataFrame(data.get("alertas") or [])
         loss_count = int(financial["Resultado"].lt(0).sum()) if not financial.empty else 0
         best_driver = data.get("melhor_motorista") or {}
-        insight_html = (
-            f'<div class="routes-insights"><div class="routes-insight positive"><strong>Melhor desempenho</strong><span>{h(best_driver.get("Motorista") or "Sem base suficiente")} • {h(fmt_num(best_driver.get("Pontuacao"),1))} pontos.</span></div>'
-            f'<div class="routes-insight {"critical" if loss_count else "positive"}"><strong>Rentabilidade das viagens</strong><span>{h(loss_count)} viagem(ns) com resultado operacional negativo no período.</span></div>'
-            f'<div class="routes-insight {"attention" if len(alerts) else "positive"}"><strong>Qualidade e riscos</strong><span>{h(len(alerts))} alerta(s) transparente(s) para conferência.</span></div></div>'
-        )
-        st.markdown(insight_html, unsafe_allow_html=True)
+        insight_driver, insight_profit, insight_quality = st.columns(3)
+        with insight_driver:
+            st.button(
+                "**Melhor desempenho**\n\n"
+                f"{clean_text(best_driver.get('Motorista') or 'Sem base suficiente')} · "
+                f"{fmt_num(best_driver.get('Pontuacao'), 1)} pontos  →",
+                key="routes_insight_driver_button",
+                width="stretch",
+                on_click=_select_route_workspace_section,
+                args=("Motoristas",),
+            )
+        with insight_profit:
+            st.button(
+                "**Rentabilidade das viagens**\n\n"
+                f"{loss_count} viagem(ns) com resultado negativo. Ver análise  →",
+                key="routes_insight_profit_button",
+                width="stretch",
+                on_click=_select_route_workspace_section,
+                args=("Análise de rotas",),
+            )
+        with insight_quality:
+            st.button(
+                "**Qualidade e riscos**\n\n"
+                f"{len(alerts)} alerta(s) para conferência  →",
+                key="routes_insight_quality_button",
+                width="stretch",
+                on_click=_select_route_workspace_section,
+                args=("Qualidade dos dados",),
+            )
 
     elif section == "Análise de rotas":
         _route_section_title("Central inteligente de rotas", "Custos, eficiência e comparação usando somente viagens concluídas")
+        profitability = _route_profitability_snapshot(financial)
+        selected_scope = global_route if global_route != all_routes_label else "Todas as rotas"
+        _route_section_title(
+            f"Resultado financeiro — {selected_scope}",
+            f"Consolidado de {int(profitability['viagens'] or 0)} viagem(ns) concluída(s) no período filtrado.",
+        )
+        result_color = "#0F766E" if profitability.get("se_pagou") is True else "#DC2626"
+        render_kpis(
+            [
+                ("Escopo analisado", selected_scope, JR_BLUE),
+                ("Custo atribuído", fmt_brl(profitability.get("custo")), JR_RED),
+                ("Receita atribuída", fmt_brl(profitability.get("receita")), "#15803D"),
+                ("Resultado operacional", fmt_brl(profitability.get("resultado")), result_color),
+                ("Custo sobre receita", fmt_percent(profitability.get("custo_receita"), 1), "#D97706"),
+                ("Conclusão", profitability.get("situacao") or "Sem dados", result_color),
+            ]
+        )
+        scope_prefix = "Esta rota" if global_route != all_routes_label else "O conjunto das rotas"
+        if profitability.get("se_pagou") is True:
+            st.success(
+                f"{scope_prefix} se pagou: a receita atribuída superou o custo em "
+                f"{fmt_brl(profitability.get('resultado'))}."
+            )
+        elif profitability.get("se_pagou") is False:
+            st.error(
+                f"{scope_prefix} não se pagou: o resultado operacional foi "
+                f"{fmt_brl(profitability.get('resultado'))}."
+            )
+        else:
+            st.warning(f"{scope_prefix} ainda não possui base financeira suficiente para concluir se se pagou.")
         if route_summary.empty:
             st.info("Não há custos associáveis às rotas selecionadas.")
         else:

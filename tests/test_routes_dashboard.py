@@ -140,6 +140,25 @@ class RoutesDashboardTests(unittest.TestCase):
         self.assertAlmostEqual(float(expensive["Custo por km"]), 14.0)
         self.assertAlmostEqual(float(expensive["Intervalos e noites"]), 14.0)
 
+    def test_route_profitability_states_if_route_paid_for_itself(self):
+        paid = dashboard._route_profitability_snapshot(
+            pd.DataFrame(
+                [
+                    {"Rota ID": "r1", "Custo total": 700.0, "Ganho entregas": 1_000.0},
+                    {"Rota ID": "r2", "Custo total": 100.0, "Ganho entregas": 200.0},
+                ]
+            )
+        )
+        loss = dashboard._route_profitability_snapshot(
+            pd.DataFrame([{"Rota ID": "r3", "Custo total": 1_200.0, "Ganho entregas": 900.0}])
+        )
+        self.assertTrue(paid["se_pagou"])
+        self.assertEqual(paid["situacao"], "Se pagou")
+        self.assertAlmostEqual(float(paid["resultado"]), 400.0)
+        self.assertFalse(loss["se_pagou"])
+        self.assertEqual(loss["situacao"], "Não se pagou")
+        self.assertAlmostEqual(float(loss["resultado"]), -300.0)
+
     def test_fuel_cost_uses_plate_history_per_km(self):
         fuel = pd.DataFrame(
             [
