@@ -65,7 +65,7 @@ MUTED = "#6B7280"
 CARD_BORDER = "#c2d2f3"
 LOGO_PATH = Path(__file__).parent / "static" / "logo-jr.png"
 CURRENT_YEAR = date.today().year
-APP_VERSION = "routes-platform-redesign-v5"
+APP_VERSION = "routes-platform-gauges-v6"
 RANK_ROUTES_ENABLED = True
 ROUTE_CACHE_TTL_SECONDS = max(int(os.environ.get("JR_ROUTE_CACHE_TTL_SECONDS", "180") or 180), 30)
 DATA_EDITOR_PAGE_SIZE = 100
@@ -14838,13 +14838,31 @@ def _inject_routes_platform_css(dark_mode: bool) -> None:
           border-right: 1px solid rgba(255,255,255,.10);
           box-shadow: 14px 0 40px rgba(15,23,42,.12);
         }}
-        [data-testid="stSidebar"] * {{ color: #EAF0FF; }}
+        [data-testid="stSidebar"] *,
+        [data-testid="stSidebar"] label,
+        [data-testid="stSidebar"] label p,
+        [data-testid="stSidebar"] label span,
+        [data-testid="stSidebar"] [data-testid="stWidgetLabel"] p,
+        [data-testid="stSidebar"] [data-testid="stMarkdownContainer"] p,
+        [data-testid="stSidebar"] [data-testid="stMarkdownContainer"] a {{
+          color: #EAF0FF !important;
+          -webkit-text-fill-color: #EAF0FF !important;
+          opacity: 1 !important;
+        }}
         [data-testid="stSidebar"] [data-testid="stRadio"] label {{
           min-height: 42px; padding: 9px 12px; border-radius: 10px; transition: .15s ease;
+          font-weight: 650 !important;
         }}
         [data-testid="stSidebar"] [data-testid="stRadio"] label:hover {{ background: rgba(255,255,255,.09); }}
         [data-testid="stSidebar"] [data-testid="stRadio"] label:has(input:checked) {{
           background: rgba(37,99,235,.34); box-shadow: inset 3px 0 #60A5FA;
+        }}
+        [data-testid="stSidebar"] [data-testid="stRadio"] label:has(input:checked) p {{
+          color: #FFFFFF !important; -webkit-text-fill-color: #FFFFFF !important; font-weight: 800 !important;
+        }}
+        [data-testid="stSidebar"] [data-testid="stToggle"] label,
+        [data-testid="stSidebar"] [data-testid="stToggle"] p {{
+          color: #EAF0FF !important; -webkit-text-fill-color: #EAF0FF !important;
         }}
         [data-testid="stSidebar"] [data-baseweb="select"] > div {{
           background: rgba(255,255,255,.09) !important; border-color: rgba(255,255,255,.16) !important;
@@ -15248,6 +15266,81 @@ def _route_composition_chart(costs: dict) -> go.Figure:
     return apply_theme(fig, height=350, margin={"l": 110, "r": 90, "t": 20, "b": 45})
 
 
+def _render_route_gauge_panel(data: dict) -> None:
+    time_reference = pd.DataFrame(data.get("tempos_rotas") or [])
+    duration_values = (
+        pd.to_numeric(time_reference.get("Tempo Viagem Horas"), errors="coerce").dropna()
+        if not time_reference.empty and "Tempo Viagem Horas" in time_reference.columns
+        else pd.Series(dtype="float64")
+    )
+    duration_positive = duration_values[duration_values > 0]
+    duration_target = (
+        float(duration_positive.median())
+        if not duration_positive.empty
+        else max(float(data.get("tempo_medio_rota") or 0.0), 1.0)
+    )
+    duration_maximum = max(
+        float(duration_positive.quantile(0.95)) if not duration_positive.empty else 0.0,
+        duration_target * 1.8,
+        float(data.get("tempo_medio_rota") or 0.0) * 1.2,
+        1.0,
+    )
+
+    delivery_days_values = (
+        pd.to_numeric(time_reference.get("Dias Rota"), errors="coerce").dropna()
+        if not time_reference.empty and "Dias Rota" in time_reference.columns
+        else pd.Series(dtype="float64")
+    )
+    delivery_days_positive = delivery_days_values[delivery_days_values > 0]
+    delivery_days_target = (
+        float(delivery_days_positive.median())
+        if not delivery_days_positive.empty
+        else max(float(data.get("dias_medios_rota") or 0.0), 1.0)
+    )
+    delivery_days_maximum = max(
+        float(delivery_days_positive.quantile(0.95)) if not delivery_days_positive.empty else 0.0,
+        delivery_days_target * 2.0,
+        float(data.get("dias_medios_rota") or 0.0) * 1.4,
+        2.0,
+    )
+
+    route_ranking = pd.DataFrame(data.get("ranking_rotas") or [])
+    productivity_values = (
+        pd.to_numeric(route_ranking.get("Entregas por hora"), errors="coerce").dropna()
+        if not route_ranking.empty and "Entregas por hora" in route_ranking.columns
+        else pd.Series(dtype="float64")
+    )
+    productivity_positive = productivity_values[productivity_values > 0]
+    productivity_target = (
+        float(productivity_positive.median())
+        if not productivity_positive.empty
+        else max(float(data.get("entregas_por_hora") or 0.0), 0.5)
+    )
+    productivity_maximum = max(
+        float(productivity_positive.max()) * 1.15 if not productivity_positive.empty else 0.0,
+        productivity_target * 1.6,
+        1.0,
+    )
+    cost_ratio = float((data.get("custos") or {}).get("percentual_custo") or 0.0)
+
+    specifications = [
+        (data.get("qualidade_media"), "Qualidade dos dados", 100.0, 95.0, "%", False, "routes_v6_gauge_quality"),
+        (data.get("entregas_por_hora"), "Produtividade", productivity_maximum, productivity_target, " ent/h", False, "routes_v6_gauge_productivity"),
+        (data.get("tempo_medio_rota"), "Duração média", duration_maximum, duration_target, " h", True, "routes_v6_gauge_duration"),
+        (data.get("dias_medios_rota"), "Dias para entregar", delivery_days_maximum, delivery_days_target, " dias", True, "routes_v6_gauge_days"),
+        (cost_ratio, "Custo sobre receita", max(120.0, cost_ratio * 1.1), 60.0, "%", True, "routes_v6_gauge_cost"),
+    ]
+    columns = st.columns(5)
+    for column, (value, title, maximum, target, suffix, inverse, key) in zip(columns, specifications):
+        with column, st.container(border=True):
+            st.plotly_chart(
+                _route_gauge(value, title, maximum=maximum, target=target, suffix=suffix, inverse=inverse),
+                width="stretch",
+                config={"displayModeBar": False, "responsive": True},
+                key=key,
+            )
+
+
 def render_rotas() -> None:
     options = route_json("rotas", {"somente_opcoes": True})
     raw_minimum = pd.to_datetime(options.get("data_min"), errors="coerce")
@@ -15361,6 +15454,11 @@ def render_rotas() -> None:
 
     if section == "Visão geral":
         _route_executive_kpis(data, comparison if compare_period else None)
+        _route_section_title(
+            "Indicadores de referência",
+            "Os velocímetros mostram o valor atual e a referência calculada com o histórico do período.",
+        )
+        _render_route_gauge_panel(data)
         monthly = pd.DataFrame(data.get("evolucao_mensal") or [])
         left, right = st.columns([1.65, 1])
         with left, st.container(border=True):
