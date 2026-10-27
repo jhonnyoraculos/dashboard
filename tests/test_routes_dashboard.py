@@ -65,6 +65,21 @@ class RoutesDashboardTests(unittest.TestCase):
         self.assertIn("OUTRO MOTORISTA", context)
         self.assertIn("Refer&#234;ncia atingida", context)
 
+        city_context = dashboard._route_gauge_context_html(
+            [("Maior volume", "CARMO DO CAJURU")],
+            value=526,
+            target=5,
+            inverse=False,
+            positive_text="Acima da mediana",
+            attention_text="Abaixo da mediana",
+        )
+        city_gauge = dashboard._route_gauge(
+            526, "Maior cidade", maximum=632, target=5, suffix=" ent."
+        )
+        self.assertIn("Acima da mediana", city_context)
+        self.assertEqual(city_gauge.data[0]["number"]["valueformat"], ".0f")
+        self.assertEqual(city_gauge.data[0]["number"]["suffix"], " ent.")
+
     def test_driver_ranking_adds_linear_score_indicators(self):
         frame = dashboard._route_driver_ranking_frame(
             [
@@ -80,6 +95,25 @@ class RoutesDashboardTests(unittest.TestCase):
         self.assertIn("🟨", indicators["AMARELO"])
         self.assertIn("🟧", indicators["LARANJA"])
         self.assertIn("🟥", indicators["VERMELHO"])
+
+        plates = dashboard._route_ranking_indicator_frame(
+            [{"PLACA": "AAA1A11", "Pontuacao": 90.0}], entity_column="PLACA"
+        )
+        routes = dashboard._route_ranking_indicator_frame(
+            [{"Rota": "ROTA TESTE", "Pontuacao": 70.0}], entity_column="Rota"
+        )
+        cities = dashboard._route_ranking_indicator_frame(
+            [
+                {"Cidade": "MAIOR", "Entregas": 100},
+                {"Cidade": "MENOR", "Entregas": 25},
+            ],
+            entity_column="Cidade",
+            volume=True,
+        )
+        self.assertIn("🟩", plates.iloc[0]["Indicador"])
+        self.assertIn("🟨", routes.iloc[0]["Indicador"])
+        self.assertIn("Muito alto", cities.iloc[0]["Indicador"])
+        self.assertIn("Baixo", cities.iloc[1]["Indicador"])
 
     def test_pending_routes_never_enter_completed_scope(self):
         routes = pd.DataFrame(

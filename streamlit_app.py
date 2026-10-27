@@ -65,7 +65,7 @@ MUTED = "#6B7280"
 CARD_BORDER = "#c2d2f3"
 LOGO_PATH = Path(__file__).parent / "static" / "logo-jr.png"
 CURRENT_YEAR = date.today().year
-APP_VERSION = "routes-driver-linear-indicators-v12"
+APP_VERSION = "routes-navigation-scroll-indicators-v13"
 RANK_ROUTES_ENABLED = True
 ROUTE_CACHE_TTL_SECONDS = max(int(os.environ.get("JR_ROUTE_CACHE_TTL_SECONDS", "180") or 180), 30)
 DATA_EDITOR_PAGE_SIZE = 100
@@ -247,6 +247,26 @@ def inject_css() -> None:
           scroll-behavior: auto !important;
           max-width: 100%;
           overflow-x: hidden;
+        }}
+
+        html, body {{
+          height: 100%;
+          min-height: 100%;
+          overflow: hidden !important;
+        }}
+
+        [data-testid="stAppViewContainer"] {{
+          height: 100vh;
+          min-height: 100vh;
+          overflow: hidden !important;
+        }}
+
+        [data-testid="stMain"] {{
+          height: 100vh;
+          min-height: 0 !important;
+          overflow-x: hidden !important;
+          overflow-y: auto !important;
+          overscroll-behavior: contain;
         }}
 
         /*
@@ -2714,18 +2734,10 @@ def inject_css() -> None:
         }}
 
         div[data-testid="stVerticalBlockBorderWrapper"]:has(div[data-testid="stPlotlyChart"]),
-        .ranking-native-row {{
-          content-visibility: auto;
-          contain-intrinsic-size: auto 420px;
-        }}
-
-        .ranking-native-row {{
-          contain-intrinsic-size: auto 58px;
-        }}
-
+        .ranking-native-row,
         .ranking-native-row[open] {{
           content-visibility: visible;
-          contain-intrinsic-size: auto;
+          contain: none;
         }}
 
         @media (max-width: 780px) {{
@@ -13778,6 +13790,9 @@ def _route_gauge(
     numeric_value = max(float(value or 0.0), 0.0)
     maximum = max(float(maximum or 0.0), numeric_value * 1.08, 1.0)
     target = min(max(float(target or 0.0), 0.0), maximum)
+    compact_value = numeric_value >= 100 or len(suffix.strip()) > 5
+    value_format = ".0f" if compact_value else ".1f"
+    number_font_size = 23 if compact_value else 28
     if inverse:
         green_end = min(target, maximum)
         yellow_end = min(max(target * 1.25, green_end), maximum)
@@ -13803,10 +13818,21 @@ def _route_gauge(
         go.Indicator(
             mode="gauge+number",
             value=min(numeric_value, maximum),
-            number={"suffix": suffix, "font": {"size": 28, "color": JR_BLUE}, "valueformat": ".1f"},
+            number={
+                "suffix": suffix,
+                "font": {"size": number_font_size, "color": JR_BLUE},
+                "valueformat": value_format,
+            },
             title={"text": f"<b>{h(title)}</b>", "font": {"size": 15, "color": JR_BLUE}},
             gauge={
-                "axis": {"range": [0, maximum], "tickwidth": 1, "tickcolor": "#94A3B8", "tickfont": {"size": 10}},
+                "axis": {
+                    "range": [0, maximum],
+                    "nticks": 4,
+                    "tickformat": "~s",
+                    "tickwidth": 1,
+                    "tickcolor": "#94A3B8",
+                    "tickfont": {"size": 9},
+                },
                 "bar": {"color": bar_color, "thickness": 0.12},
                 "bgcolor": "white",
                 "borderwidth": 0,
@@ -13830,7 +13856,7 @@ def _route_gauge(
     )
     fig.update_layout(
         height=265,
-        margin={"l": 18, "r": 18, "t": 55, "b": 24},
+        margin={"l": 26, "r": 26, "t": 55, "b": 24},
         paper_bgcolor="rgba(0,0,0,0)",
         plot_bgcolor="rgba(0,0,0,0)",
         font={"family": "Inter, sans-serif"},
@@ -13844,11 +13870,13 @@ def _route_gauge_context_html(
     value: object,
     target: float,
     inverse: bool,
+    positive_text: str = "Referência atingida",
+    attention_text: str = "Atenção à referência",
 ) -> str:
     numeric_value = float(pd.to_numeric(pd.Series([value]), errors="coerce").fillna(0.0).iloc[0])
     reference_met = numeric_value <= float(target or 0.0) if inverse else numeric_value >= float(target or 0.0)
     status_class = "positive" if reference_met else "attention"
-    status_text = "Referência atingida" if reference_met else "Atenção à referência"
+    status_text = positive_text if reference_met else attention_text
     visible_rows = [
         (clean_text(label), clean_text(row_value))
         for label, row_value in rows
@@ -13865,43 +13893,82 @@ def _route_gauge_context_html(
     )
 
 
-def _route_driver_score_indicator(value: object) -> str:
+def _route_linear_indicator(value: object, *, volume: bool = False) -> str:
     score = float(pd.to_numeric(pd.Series([value]), errors="coerce").fillna(0.0).iloc[0])
     score = min(max(score, 0.0), 100.0)
     if score >= 80.0:
-        square, label = "🟩", "Bom"
+        square, label = "🟩", "Muito alto" if volume else "Bom"
     elif score >= 65.0:
-        square, label = "🟨", "Regular"
+        square, label = "🟨", "Alto" if volume else "Regular"
     elif score >= 50.0:
-        square, label = "🟧", "Atenção"
+        square, label = "🟧", "Médio" if volume else "Atenção"
     else:
-        square, label = "🟥", "Crítico"
+        square, label = "🟥", "Baixo" if volume else "Crítico"
     filled = min(max(math.ceil(score / 20.0), 1), 5)
     return f"{square * filled}{'⬜' * (5 - filled)}  {label}"
 
 
-def _route_driver_ranking_frame(rows: list[dict] | pd.DataFrame) -> pd.DataFrame:
+def _route_driver_score_indicator(value: object) -> str:
+    return _route_linear_indicator(value)
+
+
+def _route_ranking_indicator_frame(
+    rows: list[dict] | pd.DataFrame,
+    *,
+    entity_column: str,
+    volume: bool = False,
+) -> pd.DataFrame:
     frame = rows.copy() if isinstance(rows, pd.DataFrame) else pd.DataFrame(rows or [])
     if frame.empty:
         return frame
-    score_source = frame["Pontuacao"] if "Pontuacao" in frame.columns else pd.Series(0.0, index=frame.index)
-    scores = pd.to_numeric(score_source, errors="coerce").fillna(0.0)
-    frame["Indicador"] = scores.map(_route_driver_score_indicator)
-    preferred = ["Motorista", "Indicador", "Posicao", "Pontuacao"]
+    if volume:
+        deliveries = pd.to_numeric(
+            frame["Entregas"] if "Entregas" in frame.columns else pd.Series(0.0, index=frame.index),
+            errors="coerce",
+        ).fillna(0.0).clip(lower=0.0)
+        maximum_deliveries = float(deliveries.max() or 0.0)
+        scores = deliveries.div(maximum_deliveries).mul(100.0) if maximum_deliveries else deliveries
+    else:
+        score_source = frame["Pontuacao"] if "Pontuacao" in frame.columns else pd.Series(0.0, index=frame.index)
+        scores = pd.to_numeric(score_source, errors="coerce").fillna(0.0)
+    frame["Indicador"] = scores.map(lambda value: _route_linear_indicator(value, volume=volume))
+    preferred = [entity_column, "Indicador", "Posicao", "Pontuacao"]
     columns = [column for column in preferred if column in frame.columns]
     columns.extend(column for column in frame.columns if column not in columns)
     return frame[columns]
 
 
+def _route_driver_ranking_frame(rows: list[dict] | pd.DataFrame) -> pd.DataFrame:
+    return _route_ranking_indicator_frame(rows, entity_column="Motorista")
+
+
 def _render_route_driver_ranking_table(rows: list[dict] | pd.DataFrame) -> None:
-    frame = _route_driver_ranking_frame(rows)
+    _render_route_ranking_indicator_table(rows, entity_column="Motorista", entity_label="motoristas")
+
+
+def _render_route_ranking_indicator_table(
+    rows: list[dict] | pd.DataFrame,
+    *,
+    entity_column: str,
+    entity_label: str,
+    volume: bool = False,
+) -> None:
+    frame = _route_ranking_indicator_frame(rows, entity_column=entity_column, volume=volume)
     if frame.empty:
-        st.info("Não há motoristas no período selecionado.")
+        st.info(f"Não há {entity_label} no período selecionado.")
         return
-    st.caption(
-        "Indicador linear: 🟥 abaixo de 50 · 🟧 de 50 a 64,9 · "
-        "🟨 de 65 a 79,9 · 🟩 a partir de 80 pontos."
-    )
+    if volume:
+        st.caption(
+            "Volume relativo à cidade líder: 🟥 abaixo de 50% · 🟧 de 50% a 64,9% · "
+            "🟨 de 65% a 79,9% · 🟩 a partir de 80%. Não é uma nota de qualidade."
+        )
+        indicator_help = "A cor compara as entregas da cidade com a cidade de maior volume do período."
+    else:
+        st.caption(
+            "Pontuação: 🟥 abaixo de 50 · 🟧 de 50 a 64,9 · "
+            "🟨 de 65 a 79,9 · 🟩 a partir de 80 pontos."
+        )
+        indicator_help = "A cor considera a pontuação geral no período filtrado."
     st.dataframe(
         frame,
         width="stretch",
@@ -13909,7 +13976,7 @@ def _render_route_driver_ranking_table(rows: list[dict] | pd.DataFrame) -> None:
         column_config={
             "Indicador": st.column_config.TextColumn(
                 "Indicador linear",
-                help="A cor considera a pontuação geral do motorista no período filtrado.",
+                help=indicator_help,
                 width="medium",
             ),
             "Pontuacao": st.column_config.NumberColumn("Pontuação", format="%.1f"),
@@ -14043,11 +14110,17 @@ def _render_rotas_legacy() -> None:
         st.caption("Ordenado primeiro por rotas concluídas, depois por quantidade de rotas e KM realizados.")
         _render_route_driver_ranking_table(data.get("ranking_motoristas") or [])
     with rank_plate:
-        st.dataframe(pd.DataFrame(data.get("ranking_placas") or []), width="stretch", hide_index=True)
+        _render_route_ranking_indicator_table(
+            data.get("ranking_placas") or [], entity_column="PLACA", entity_label="placas"
+        )
     with rank_route:
-        st.dataframe(pd.DataFrame(data.get("ranking_rotas") or []), width="stretch", hide_index=True)
+        _render_route_ranking_indicator_table(
+            data.get("ranking_rotas") or [], entity_column="Rota", entity_label="rotas"
+        )
     with rank_city:
-        st.dataframe(pd.DataFrame(data.get("ranking_cidades") or []), width="stretch", hide_index=True)
+        _render_route_ranking_indicator_table(
+            data.get("ranking_cidades") or [], entity_column="Cidade", entity_label="cidades", volume=True
+        )
 
     route_records = data.get("rotas_detalhes") or []
     delivery_records = data.get("entregas_detalhes") or []
@@ -14791,11 +14864,17 @@ def _render_rotas_v4() -> None:
             st.caption("A pontuação considera produtividade, volume, diversidade e qualidade dos dados.")
             _render_route_driver_ranking_table(data.get("ranking_motoristas") or [])
         with rank_plate:
-            st.dataframe(pd.DataFrame(data.get("ranking_placas") or []), width="stretch", hide_index=True)
+            _render_route_ranking_indicator_table(
+                data.get("ranking_placas") or [], entity_column="PLACA", entity_label="placas"
+            )
         with rank_route:
-            st.dataframe(pd.DataFrame(data.get("ranking_rotas") or []), width="stretch", hide_index=True)
+            _render_route_ranking_indicator_table(
+                data.get("ranking_rotas") or [], entity_column="Rota", entity_label="rotas"
+            )
         with rank_city:
-            st.dataframe(pd.DataFrame(data.get("ranking_cidades") or []), width="stretch", hide_index=True)
+            _render_route_ranking_indicator_table(
+                data.get("ranking_cidades") or [], entity_column="Cidade", entity_label="cidades", volume=True
+            )
 
     with detail_tab:
         route_records = data.get("rotas_detalhes") or []
@@ -14916,7 +14995,10 @@ def _inject_routes_platform_css(dark_mode: bool) -> None:
           background: linear-gradient(180deg, rgba(23,37,84,.99), rgba(15,30,69,.99)) !important;
           border-right: 1px solid rgba(255,255,255,.10);
           box-shadow: 14px 0 40px rgba(15,23,42,.12);
+          height: 100vh !important;
+          z-index: 1000;
         }}
+        [data-testid="stSidebarCollapsedControl"] {{ display:flex !important; z-index:1001; }}
         [data-testid="stSidebar"] *,
         [data-testid="stSidebar"] label,
         [data-testid="stSidebar"] label p,
@@ -15502,6 +15584,7 @@ def _render_route_section_gauge_panel(
 
     specifications: list[tuple[object, str, float, float, str, bool, str]] = []
     gauge_context: dict[str, list[tuple[str, object]]] = {}
+    gauge_status_copy: dict[str, tuple[str, str]] = {}
     prefix = {
         "Análise de rotas": "route_analysis",
         "Entregas e produtividade": "delivery",
@@ -15631,12 +15714,13 @@ def _render_route_section_gauge_panel(
             "rank_quality": [("Classificação", quality_label)],
             "rank_city": [("Maior volume", biggest_city), ("Menor volume", smallest_city)],
         }
+        gauge_status_copy["rank_city"] = ("Acima da mediana", "Abaixo da mediana")
         specifications = [
             (float(numeric(drivers, "Pontuacao").max()) if not drivers.empty else 0, "Melhor motorista", 100.0, 80.0, " pts", False, "rank_driver"),
             (float(numeric(plates, "Pontuacao").max()) if not plates.empty else 0, "Melhor veículo", 100.0, 80.0, " pts", False, "rank_plate"),
             (float(numeric(routes, "Pontuacao").max()) if not routes.empty else 0, "Melhor rota", 100.0, 80.0, " pts", False, "rank_route"),
             (float(data.get("qualidade_media") or 0), "Qualidade geral", 100.0, 95.0, "%", False, "rank_quality"),
-            (float(numeric(cities, "Entregas").max()) if not cities.empty else 0, "Maior cidade", maximum(float(numeric(cities, "Entregas").max()) if not cities.empty else 0, median(positive(cities, "Entregas"), 1), positive(cities, "Entregas")), median(positive(cities, "Entregas"), 1), " entregas", False, "rank_city"),
+            (float(numeric(cities, "Entregas").max()) if not cities.empty else 0, "Maior cidade", maximum(float(numeric(cities, "Entregas").max()) if not cities.empty else 0, median(positive(cities, "Entregas"), 1), positive(cities, "Entregas")), median(positive(cities, "Entregas"), 1), " ent.", False, "rank_city"),
         ]
     else:
         own_fleet = time_frame.loc[~time_frame.get("Categoria", pd.Series("", index=time_frame.index)).astype("string").str.casefold().eq("freteiro")] if not time_frame.empty else time_frame
@@ -15658,6 +15742,9 @@ def _render_route_section_gauge_panel(
 
     columns = st.columns(len(specifications))
     for column, (value, title, max_value, target, suffix, inverse, key) in zip(columns, specifications):
+        positive_text, attention_text = gauge_status_copy.get(
+            key, ("Referência atingida", "Atenção à referência")
+        )
         with column, st.container(border=True):
             st.plotly_chart(
                 _route_gauge(value, title, maximum=max_value, target=target, suffix=suffix, inverse=inverse),
@@ -15671,6 +15758,8 @@ def _render_route_section_gauge_panel(
                     value=value,
                     target=target,
                     inverse=inverse,
+                    positive_text=positive_text,
+                    attention_text=attention_text,
                 ),
                 unsafe_allow_html=True,
             )
@@ -16025,9 +16114,18 @@ def render_rotas() -> None:
         _route_section_title("Rankings", "Ordenações transparentes com os filtros globais aplicados")
         rank_driver, rank_plate, rank_route, rank_city = st.tabs(["Motoristas","Placas","Rotas","Cidades"])
         with rank_driver: _render_route_driver_ranking_table(data.get("ranking_motoristas") or [])
-        with rank_plate: st.dataframe(pd.DataFrame(data.get("ranking_placas") or []),width="stretch",hide_index=True)
-        with rank_route: st.dataframe(pd.DataFrame(data.get("ranking_rotas") or []),width="stretch",hide_index=True)
-        with rank_city: st.dataframe(pd.DataFrame(data.get("ranking_cidades") or []),width="stretch",hide_index=True)
+        with rank_plate:
+            _render_route_ranking_indicator_table(
+                data.get("ranking_placas") or [], entity_column="PLACA", entity_label="placas"
+            )
+        with rank_route:
+            _render_route_ranking_indicator_table(
+                data.get("ranking_rotas") or [], entity_column="Rota", entity_label="rotas"
+            )
+        with rank_city:
+            _render_route_ranking_indicator_table(
+                data.get("ranking_cidades") or [], entity_column="Cidade", entity_label="cidades", volume=True
+            )
 
     elif section == "Relatórios":
         _route_section_title("Relatórios gerenciais", "Exportações respeitam integralmente o período, a busca e os filtros aplicados")
@@ -16063,7 +16161,12 @@ def footer(text: str) -> None:
 
 
 def main() -> None:
-    st.set_page_config(page_title="JR Dashboard", page_icon=str(LOGO_PATH), layout="wide")
+    st.set_page_config(
+        page_title="JR Dashboard",
+        page_icon=str(LOGO_PATH),
+        layout="wide",
+        initial_sidebar_state="expanded",
+    )
     inject_css()
     page = page_param()
     try:
