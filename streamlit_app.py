@@ -65,7 +65,7 @@ MUTED = "#6B7280"
 CARD_BORDER = "#c2d2f3"
 LOGO_PATH = Path(__file__).parent / "static" / "logo-jr.png"
 CURRENT_YEAR = date.today().year
-APP_VERSION = "routes-sidebar-control-v14"
+APP_VERSION = "routes-persistent-navigation-v15"
 RANK_ROUTES_ENABLED = True
 ROUTE_CACHE_TTL_SECONDS = max(int(os.environ.get("JR_ROUTE_CACHE_TTL_SECONDS", "180") or 180), 30)
 DATA_EDITOR_PAGE_SIZE = 100
@@ -14990,7 +14990,7 @@ def _inject_routes_platform_css(dark_mode: bool) -> None:
         }}
         .stApp {{ background: var(--routes-bg) !important; color: var(--routes-text) !important; }}
         .stApp::before, .stApp::after {{ display: none !important; }}
-        .block-container {{ max-width: 1680px; padding: 18px 34px 54px; }}
+        .block-container {{ max-width:none; width:100%; padding:18px 34px 54px 282px; }}
         header[data-testid="stHeader"] {{
           visibility: visible !important;
           height: 0 !important;
@@ -15024,6 +15024,47 @@ def _inject_routes_platform_css(dark_mode: bool) -> None:
         }}
         [data-testid="stSidebarCollapsedControl"],
         [data-testid="stSidebarCollapseButton"] {{ visibility:visible !important; display:flex !important; z-index:1001; }}
+        [data-testid="stSidebar"],
+        [data-testid="stExpandSidebarButton"],
+        [data-testid="stSidebarCollapsedControl"] {{ display:none !important; }}
+        .st-key-routes_persistent_nav {{
+          position:fixed !important;
+          inset:0 auto 0 0 !important;
+          width:248px !important;
+          height:100vh !important;
+          padding:24px 16px 20px !important;
+          overflow-x:hidden !important;
+          overflow-y:auto !important;
+          z-index:1050 !important;
+          background:linear-gradient(180deg, rgba(23,37,84,.995), rgba(15,30,69,.995)) !important;
+          border-right:1px solid rgba(255,255,255,.10) !important;
+          box-shadow:14px 0 40px rgba(15,23,42,.14) !important;
+        }}
+        .st-key-routes_persistent_nav * ,
+        .st-key-routes_persistent_nav label,
+        .st-key-routes_persistent_nav label p,
+        .st-key-routes_persistent_nav label span,
+        .st-key-routes_persistent_nav [data-testid="stWidgetLabel"] p,
+        .st-key-routes_persistent_nav [data-testid="stMarkdownContainer"] p,
+        .st-key-routes_persistent_nav [data-testid="stMarkdownContainer"] a {{
+          color:#EAF0FF !important;
+          -webkit-text-fill-color:#EAF0FF !important;
+          opacity:1 !important;
+        }}
+        .st-key-routes_persistent_nav [data-testid="stRadio"] label {{
+          min-height:42px; padding:9px 12px; border-radius:10px; transition:.15s ease; font-weight:650 !important;
+        }}
+        .st-key-routes_persistent_nav [data-testid="stRadio"] label:hover {{ background:rgba(255,255,255,.09); }}
+        .st-key-routes_persistent_nav [data-testid="stRadio"] label:has(input:checked) {{
+          background:rgba(37,99,235,.34); box-shadow:inset 3px 0 #60A5FA;
+        }}
+        .st-key-routes_persistent_nav [data-testid="stRadio"] label:has(input:checked) p {{
+          color:#FFFFFF !important; -webkit-text-fill-color:#FFFFFF !important; font-weight:800 !important;
+        }}
+        .st-key-routes_persistent_nav [data-testid="stToggle"] label,
+        .st-key-routes_persistent_nav [data-testid="stToggle"] p {{
+          color:#EAF0FF !important; -webkit-text-fill-color:#EAF0FF !important;
+        }}
         [data-testid="stSidebar"] *,
         [data-testid="stSidebar"] label,
         [data-testid="stSidebar"] label p,
@@ -15118,7 +15159,8 @@ def _inject_routes_platform_css(dark_mode: bool) -> None:
         }}
         @media (max-width:1200px) {{ .routes-kpi-grid {{ grid-template-columns:repeat(3,1fr); }} }}
         @media (max-width:760px) {{
-          .block-container {{ padding:12px 14px 34px; }}
+          .block-container {{ padding:12px 14px 34px 218px; }}
+          .st-key-routes_persistent_nav {{ width:202px !important; padding:18px 10px !important; }}
           .routes-page-head {{ flex-direction:column; padding:16px; }}
           .routes-kpi-grid {{ grid-template-columns:repeat(2,minmax(0,1fr)); gap:9px; }}
           .routes-kpi-card {{ min-height:138px; padding:14px; }}
@@ -15798,7 +15840,7 @@ def render_rotas() -> None:
     maximum = raw_maximum.date() if pd.notna(raw_maximum) else date.today()
 
     logo = logo_data_uri()
-    with st.sidebar:
+    with st.container(key="routes_persistent_nav"):
         st.markdown(
             f'<div class="routes-brand"><img src="{logo}" alt="JR"><div><strong>JR Dashboard</strong><span>Inteligência logística</span></div></div>',
             unsafe_allow_html=True,
