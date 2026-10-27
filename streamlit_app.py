@@ -65,7 +65,7 @@ MUTED = "#6B7280"
 CARD_BORDER = "#c2d2f3"
 LOGO_PATH = Path(__file__).parent / "static" / "logo-jr.png"
 CURRENT_YEAR = date.today().year
-APP_VERSION = "routes-gauge-identities-v11"
+APP_VERSION = "routes-driver-linear-indicators-v12"
 RANK_ROUTES_ENABLED = True
 ROUTE_CACHE_TTL_SECONDS = max(int(os.environ.get("JR_ROUTE_CACHE_TTL_SECONDS", "180") or 180), 30)
 DATA_EDITOR_PAGE_SIZE = 100
@@ -13865,6 +13865,58 @@ def _route_gauge_context_html(
     )
 
 
+def _route_driver_score_indicator(value: object) -> str:
+    score = float(pd.to_numeric(pd.Series([value]), errors="coerce").fillna(0.0).iloc[0])
+    score = min(max(score, 0.0), 100.0)
+    if score >= 80.0:
+        square, label = "🟩", "Bom"
+    elif score >= 65.0:
+        square, label = "🟨", "Regular"
+    elif score >= 50.0:
+        square, label = "🟧", "Atenção"
+    else:
+        square, label = "🟥", "Crítico"
+    filled = min(max(math.ceil(score / 20.0), 1), 5)
+    return f"{square * filled}{'⬜' * (5 - filled)}  {label}"
+
+
+def _route_driver_ranking_frame(rows: list[dict] | pd.DataFrame) -> pd.DataFrame:
+    frame = rows.copy() if isinstance(rows, pd.DataFrame) else pd.DataFrame(rows or [])
+    if frame.empty:
+        return frame
+    score_source = frame["Pontuacao"] if "Pontuacao" in frame.columns else pd.Series(0.0, index=frame.index)
+    scores = pd.to_numeric(score_source, errors="coerce").fillna(0.0)
+    frame["Indicador"] = scores.map(_route_driver_score_indicator)
+    preferred = ["Motorista", "Indicador", "Posicao", "Pontuacao"]
+    columns = [column for column in preferred if column in frame.columns]
+    columns.extend(column for column in frame.columns if column not in columns)
+    return frame[columns]
+
+
+def _render_route_driver_ranking_table(rows: list[dict] | pd.DataFrame) -> None:
+    frame = _route_driver_ranking_frame(rows)
+    if frame.empty:
+        st.info("Não há motoristas no período selecionado.")
+        return
+    st.caption(
+        "Indicador linear: 🟥 abaixo de 50 · 🟧 de 50 a 64,9 · "
+        "🟨 de 65 a 79,9 · 🟩 a partir de 80 pontos."
+    )
+    st.dataframe(
+        frame,
+        width="stretch",
+        hide_index=True,
+        column_config={
+            "Indicador": st.column_config.TextColumn(
+                "Indicador linear",
+                help="A cor considera a pontuação geral do motorista no período filtrado.",
+                width="medium",
+            ),
+            "Pontuacao": st.column_config.NumberColumn("Pontuação", format="%.1f"),
+        },
+    )
+
+
 def _route_city_treemap(rows: list[dict]) -> go.Figure:
     frame = pd.DataFrame(rows or [])
     if frame.empty:
@@ -13989,7 +14041,7 @@ def _render_rotas_legacy() -> None:
     )
     with rank_driver:
         st.caption("Ordenado primeiro por rotas concluídas, depois por quantidade de rotas e KM realizados.")
-        st.dataframe(pd.DataFrame(data.get("ranking_motoristas") or []), width="stretch", hide_index=True)
+        _render_route_driver_ranking_table(data.get("ranking_motoristas") or [])
     with rank_plate:
         st.dataframe(pd.DataFrame(data.get("ranking_placas") or []), width="stretch", hide_index=True)
     with rank_route:
@@ -14737,7 +14789,7 @@ def _render_rotas_v4() -> None:
         )
         with rank_driver:
             st.caption("A pontuação considera produtividade, volume, diversidade e qualidade dos dados.")
-            st.dataframe(pd.DataFrame(data.get("ranking_motoristas") or []), width="stretch", hide_index=True)
+            _render_route_driver_ranking_table(data.get("ranking_motoristas") or [])
         with rank_plate:
             st.dataframe(pd.DataFrame(data.get("ranking_placas") or []), width="stretch", hide_index=True)
         with rank_route:
@@ -15883,7 +15935,7 @@ def render_rotas() -> None:
             st.plotly_chart(metric_bar_chart(top["Motorista"].tolist(), top["Pontuacao"].tolist(), unit="pontos", horizontal=True, color="#0F766E"), width="stretch", config=PLOTLY_CONFIG)
             with st.expander("Como a pontuação é calculada"):
                 st.write("A fórmula atual foi mantida: entregas por hora (30%), toneladas por hora (30%), quantidade de rotas (20%), diversidade de rotas (10%) e qualidade dos dados (10%). Dados ausentes são mostrados na qualidade e não geram uma penalidade adicional inventada.")
-            st.dataframe(ranking, width="stretch", hide_index=True)
+            _render_route_driver_ranking_table(ranking)
 
     elif section == "Frota e veículos":
         _route_section_title("Frota e veículos", "Custo e produtividade por placa, sem inventar KM para freteiros")
@@ -15972,7 +16024,7 @@ def render_rotas() -> None:
     elif section == "Rankings":
         _route_section_title("Rankings", "Ordenações transparentes com os filtros globais aplicados")
         rank_driver, rank_plate, rank_route, rank_city = st.tabs(["Motoristas","Placas","Rotas","Cidades"])
-        with rank_driver: st.dataframe(pd.DataFrame(data.get("ranking_motoristas") or []),width="stretch",hide_index=True)
+        with rank_driver: _render_route_driver_ranking_table(data.get("ranking_motoristas") or [])
         with rank_plate: st.dataframe(pd.DataFrame(data.get("ranking_placas") or []),width="stretch",hide_index=True)
         with rank_route: st.dataframe(pd.DataFrame(data.get("ranking_rotas") or []),width="stretch",hide_index=True)
         with rank_city: st.dataframe(pd.DataFrame(data.get("ranking_cidades") or []),width="stretch",hide_index=True)

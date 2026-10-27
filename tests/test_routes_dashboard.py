@@ -65,6 +65,22 @@ class RoutesDashboardTests(unittest.TestCase):
         self.assertIn("OUTRO MOTORISTA", context)
         self.assertIn("Refer&#234;ncia atingida", context)
 
+    def test_driver_ranking_adds_linear_score_indicators(self):
+        frame = dashboard._route_driver_ranking_frame(
+            [
+                {"Motorista": "VERDE", "Pontuacao": 85.0, "Posicao": 1},
+                {"Motorista": "AMARELO", "Pontuacao": 72.0, "Posicao": 2},
+                {"Motorista": "LARANJA", "Pontuacao": 60.0, "Posicao": 3},
+                {"Motorista": "VERMELHO", "Pontuacao": 40.0, "Posicao": 4},
+            ]
+        )
+        self.assertEqual(frame.columns[:4].tolist(), ["Motorista", "Indicador", "Posicao", "Pontuacao"])
+        indicators = frame.set_index("Motorista")["Indicador"].to_dict()
+        self.assertIn("🟩", indicators["VERDE"])
+        self.assertIn("🟨", indicators["AMARELO"])
+        self.assertIn("🟧", indicators["LARANJA"])
+        self.assertIn("🟥", indicators["VERMELHO"])
+
     def test_pending_routes_never_enter_completed_scope(self):
         routes = pd.DataFrame(
             [
