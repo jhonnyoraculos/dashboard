@@ -54,7 +54,7 @@ _backend_aluguel_period_ready = {"Inicio", "Fim"}.issubset(
 )
 _backend_aluguel_monthly_ready = getattr(backend, "BACKEND_BUILD_VERSION", "") == "aluguel-multiplicar-meses-v1"
 _backend_pedagio_chart_ready = getattr(backend, "PEDAGIO_CHART_VERSION", "") == "all-types-v1"
-_backend_routes_ready = getattr(backend, "ROUTES_BUILD_VERSION", "") == "rotas-pdf-v16"
+_backend_routes_ready = getattr(backend, "ROUTES_BUILD_VERSION", "") == "rotas-fuel-per-km-v17"
 if not _backend_features_ready or not _backend_aluguel_period_ready or not _backend_aluguel_monthly_ready or not _backend_pedagio_chart_ready or not _backend_routes_ready:
     backend = importlib.reload(backend)
 
@@ -65,7 +65,7 @@ MUTED = "#6B7280"
 CARD_BORDER = "#c2d2f3"
 LOGO_PATH = Path(__file__).parent / "static" / "logo-jr.png"
 CURRENT_YEAR = date.today().year
-APP_VERSION = "routes-driver-ranking-v9"
+APP_VERSION = "routes-fuel-per-km-v10"
 RANK_ROUTES_ENABLED = True
 ROUTE_CACHE_TTL_SECONDS = max(int(os.environ.get("JR_ROUTE_CACHE_TTL_SECONDS", "180") or 180), 30)
 DATA_EDITOR_PAGE_SIZE = 100
@@ -15009,6 +15009,7 @@ def _route_financial_frame(data: dict) -> pd.DataFrame:
         costs = costs.merge(activity[columns].drop_duplicates("Rota ID"), on="Rota ID", how="left")
     numeric = [
         "Combustivel", "Manutencao", "Pedagio", "Hoteis", "Salarios", "Freteiro", "Custo total",
+        "Combustivel R$/km", "Combustivel Historico", "KM Historico Combustivel",
         "Ganho entregas", "Resultado", "Custo sobre ganho %", "Entregas", "KM Rodados", "Peso Carga", "Dias Rota",
     ]
     for column in numeric:
@@ -15852,8 +15853,39 @@ def render_rotas() -> None:
                 fig.add_trace(go.Scatter(x=[0,maximum_value],y=[0,maximum_value],mode="lines",line={"color":"#111827","dash":"dash"},name="Equilíbrio"))
             fig.update_xaxes(title="Receita atribuída",tickprefix="R$ "); fig.update_yaxes(title="Custo atribuído",tickprefix="R$ ")
             st.plotly_chart(apply_theme(fig,height=350),width="stretch",config=PLOTLY_CONFIG)
-        st.info("Incluídos conforme disponibilidade: combustível, manutenção, pedágio/extras, hotéis, salários e freteiros. Tributos, depreciação e outros custos não cadastrados não são presumidos; por isso o resultado não deve ser chamado de lucro líquido.")
-        st.dataframe(financial, width="stretch", hide_index=True, column_config={"Data":_date_col(),"Custo total":_money_col("Custo total"),"Ganho entregas":_money_col("Receita atribuída"),"Resultado":_money_col("Resultado operacional"),"Custo por km":_money_col("Custo/km"),"Custo por entrega":_money_col("Custo/entrega")})
+        with st.expander("Como o combustível de cada rota é calculado", expanded=True):
+            st.write(
+                "Para cada placa, o sistema soma todo o custo de combustível registrado até hoje e divide pelo total "
+                "de KM históricos da mesma placa. Essa taxa real em R$/km é multiplicada pelos KM informados naquela "
+                "rota. Abastecimentos não são mais associados por proximidade de data, posto ou cidade."
+            )
+            st.code(
+                "Combustível da rota = (combustível histórico da placa ÷ KM histórico da placa) × KM da rota",
+                language=None,
+            )
+            st.caption(
+                "Rotas sem KM e placas sem base histórica permanecem sem custo de combustível; nenhum valor médio da frota é inventado."
+            )
+        for warning in costs.get("avisos") or []:
+            st.warning(clean_text(warning))
+        st.info("Incluídos conforme disponibilidade: combustível histórico por KM da placa, manutenção, pedágio/extras, hotéis, salários e freteiros. Tributos, depreciação e outros custos não cadastrados não são presumidos; por isso o resultado não deve ser chamado de lucro líquido.")
+        st.dataframe(
+            financial,
+            width="stretch",
+            hide_index=True,
+            column_config={
+                "Data": _date_col(),
+                "Combustivel": _money_col("Combustível da rota"),
+                "Combustivel R$/km": _money_col("Combustível histórico por KM"),
+                "Combustivel Historico": _money_col("Combustível histórico da placa"),
+                "KM Historico Combustivel": _number_col("KM histórico da placa", step=1.0, format="%.1f"),
+                "Custo total": _money_col("Custo total"),
+                "Ganho entregas": _money_col("Receita atribuída"),
+                "Resultado": _money_col("Resultado operacional"),
+                "Custo por km": _money_col("Custo/km"),
+                "Custo por entrega": _money_col("Custo/entrega"),
+            },
+        )
 
     elif section == "Rankings":
         _route_section_title("Rankings", "Ordenações transparentes com os filtros globais aplicados")

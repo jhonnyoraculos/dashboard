@@ -59,7 +59,7 @@ DB_TABLES = {
 }
 DB_METADATA_TABLE = "dashboard_metadata"
 BACKEND_BUILD_VERSION = "aluguel-multiplicar-meses-v1"
-ROUTES_BUILD_VERSION = "rotas-pdf-v16"
+ROUTES_BUILD_VERSION = "rotas-fuel-per-km-v17"
 PEDAGIO_CHART_VERSION = "all-types-v1"
 BACKUP_METADATA_KEY = "backup.last_downloaded_at"
 _DB_ENGINE = None
@@ -4825,6 +4825,119 @@ def _route_calendar_days(routes: pd.DataFrame) -> pd.DataFrame:
     return pd.DataFrame(rows, columns=columns)
 
 
+def _historical_plate_fuel_rates(
+    fuel_rows: pd.DataFrame,
+    km_rows: pd.DataFrame,
+    *,
+    cutoff: pd.Timestamp | None = None,
+) -> pd.DataFrame:
+    """Calcula combustível histórico por KM de cada placa até a data de corte."""
+    columns = ["PLACA", "Combustivel Historico", "KM Historico", "Combustivel R$/km"]
+    if cutoff is None:
+        cutoff = pd.Timestamp.now(tz="America/Sao_Paulo").tz_localize(None).normalize()
+    else:
+        cutoff = pd.to_datetime(cutoff, errors="coerce")
+        if pd.isna(cutoff):
+            cutoff = pd.Timestamp.now(tz="America/Sao_Paulo").tz_localize(None).normalize()
+        if getattr(cutoff, "tzinfo", None) is not None:
+            cutoff = cutoff.tz_localize(None)
+        cutoff = cutoff.normalize()
+    cutoff_month = cutoff.to_period("M").strftime("%Y-%m")
+
+    if fuel_rows.empty or not {"PLACA", "Custo"}.issubset(fuel_rows.columns):
+        fuel = pd.DataFrame(columns=["PLACA", "Combustivel Historico"])
+    else:
+        fuel = fuel_rows.copy()
+        fuel["PLACA"] = _normalize_plate_series(fuel["PLACA"])
+        fuel["Custo"] = pd.to_numeric(fuel["Custo"], errors="coerce").fillna(0.0).clip(lower=0)
+        if "Data" in fuel.columns:
+            fuel_dates = pd.to_datetime(fuel["Data"], errors="coerce").dt.normalize()
+            fuel = fuel.loc[fuel_dates.notna() & fuel_dates.le(cutoff)].copy()
+        elif "Mes" in fuel.columns:
+            _normalize_mes(fuel)
+            fuel_months = fuel["Mes"].astype("string").fillna("")
+            fuel = fuel.loc[fuel_months.ne("") & fuel_months.le(cutoff_month)].copy()
+        else:
+            fuel = fuel.iloc[0:0].copy()
+        fuel = (
+            fuel.dropna(subset=["PLACA"])
+            .groupby("PLACA", as_index=False)["Custo"]
+            .sum()
+            .rename(columns={"Custo": "Combustivel Historico"})
+        )
+
+    if km_rows.empty or not {"PLACA", "Km Rodados"}.issubset(km_rows.columns):
+        mileage = pd.DataFrame(columns=["PLACA", "KM Historico"])
+    else:
+        mileage = km_rows.copy()
+        mileage["PLACA"] = _normalize_plate_series(mileage["PLACA"])
+        mileage["Km Rodados"] = pd.to_numeric(
+            mileage["Km Rodados"], errors="coerce"
+        ).fillna(0.0).clip(lower=0)
+        _normalize_mes(mileage)
+        mileage_months = mileage["Mes"].astype("string").fillna("")
+        mileage = mileage.loc[mileage_months.ne("") & mileage_months.le(cutoff_month)].copy()
+        mileage = (
+            mileage.dropna(subset=["PLACA"])
+            .groupby("PLACA", as_index=False)["Km Rodados"]
+            .sum()
+            .rename(columns={"Km Rodados": "KM Historico"})
+        )
+
+    rates = fuel.merge(mileage, on="PLACA", how="outer")
+    if rates.empty:
+        return pd.DataFrame(columns=columns)
+    rates["Combustivel Historico"] = pd.to_numeric(
+        rates["Combustivel Historico"], errors="coerce"
+    ).fillna(0.0)
+    rates["KM Historico"] = pd.to_numeric(rates["KM Historico"], errors="coerce").fillna(0.0)
+    rates["Combustivel R$/km"] = rates["Combustivel Historico"].div(
+        rates["KM Historico"].replace(0, pd.NA)
+    )
+    return rates[columns].sort_values("PLACA").reset_index(drop=True)
+
+
+def _route_fuel_costs_from_history(
+    route_rows: pd.DataFrame,
+    fuel_rates: pd.DataFrame,
+) -> tuple[pd.DataFrame, list[str]]:
+    """Aplica a taxa histórica da placa aos KM reais de cada rota."""
+    if route_rows.empty:
+        return route_rows.copy(), []
+    work = route_rows.copy()
+    km_column = "Km Rodados" if "Km Rodados" in work.columns else "KM Rodados"
+    if not {"PLACA", km_column}.issubset(work.columns):
+        work["Custo"] = 0.0
+        return work, ["Rotas sem placa ou KM para calcular o combustivel historico."]
+    work["PLACA"] = _normalize_plate_series(work["PLACA"])
+    work[km_column] = pd.to_numeric(work[km_column], errors="coerce").fillna(0.0).clip(lower=0)
+    rate_columns = [
+        "PLACA", "Combustivel Historico", "KM Historico", "Combustivel R$/km",
+    ]
+    available_rates = fuel_rates[
+        [column for column in rate_columns if column in fuel_rates.columns]
+    ].copy() if not fuel_rates.empty else pd.DataFrame(columns=rate_columns)
+    work = work.merge(available_rates, on="PLACA", how="left")
+    work["Custo"] = (
+        pd.to_numeric(work.get("Combustivel R$/km"), errors="coerce").fillna(0.0)
+        * work[km_column]
+    )
+    work["Criterio Rota"] = "custo historico de combustivel da placa por KM x KM da rota"
+    missing = work.loc[
+        work[km_column].gt(0)
+        & pd.to_numeric(work.get("Combustivel R$/km"), errors="coerce").isna(),
+        "PLACA",
+    ].dropna().astype("string").drop_duplicates().tolist()
+    warnings = []
+    if missing:
+        warnings.append(
+            "Sem historico completo de combustivel e KM para as placas: "
+            + ", ".join(sorted(missing))
+            + "."
+        )
+    return work, warnings
+
+
 def _route_cost_breakdown(
     all_completed_routes: pd.DataFrame,
     selected_routes: pd.DataFrame,
@@ -4867,14 +4980,65 @@ def _route_cost_breakdown(
         months = frame["Mes"].astype("string").fillna("").str.strip()
         return frame.loc[months.isin(active_months)].copy()
 
+    fuel_rate_by_route: dict[str, float] = {}
+    fuel_history_cost_by_route: dict[str, float] = {}
+    fuel_history_km_by_route: dict[str, float] = {}
+    fuel_warnings: list[str] = []
     try:
-        fuel = period_rows(_ranking_filter_valid_plates(_apply_plate_categories(load_combustivel())))
-        _, _, route_context = _ranking_imported_route_frames()
-        allocated_fuel, fuel_warnings = _ranking_allocate_fuel_to_imported_routes(fuel, route_context)
-        for _, row in allocated_fuel.iterrows():
-            add_cost(row.get("Rota ID"), "Combustivel", row.get("Custo"))
+        fuel_history = _ranking_filter_valid_plates(_apply_plate_categories(load_combustivel()))
+        mileage_history = _ranking_filter_valid_plates(_apply_plate_categories(load_combustivel_km()))
+        fuel_rates = _historical_plate_fuel_rates(fuel_history, mileage_history)
+        rates_by_plate = fuel_rates.set_index("PLACA").to_dict("index") if not fuel_rates.empty else {}
+        missing_rate_plates: set[str] = set()
+        missing_fuel_plates: set[str] = set()
+        missing_route_km = 0
+        for _, route in selected_routes.iterrows():
+            route_id = str(route.get("Rota ID") or "")
+            normalized_plate = _normalize_plate_value(route.get("PLACA"))
+            plate = "" if pd.isna(normalized_plate) else str(normalized_plate).strip()
+            route_km = pd.to_numeric(pd.Series([route.get("KM Rodados")]), errors="coerce").iloc[0]
+            category = _normalize_category_value(route.get("Categoria"))
+            if pd.isna(route_km) or float(route_km) <= 0:
+                if category != "Freteiro":
+                    missing_route_km += 1
+                continue
+            history = rates_by_plate.get(plate)
+            if not history:
+                missing_rate_plates.add(plate or "sem placa")
+                continue
+            rate = pd.to_numeric(
+                pd.Series([history.get("Combustivel R$/km")]), errors="coerce"
+            ).iloc[0]
+            historical_cost = float(history.get("Combustivel Historico") or 0.0)
+            historical_km = float(history.get("KM Historico") or 0.0)
+            if historical_cost <= 0:
+                missing_fuel_plates.add(plate or "sem placa")
+                continue
+            if pd.isna(rate) or float(rate) < 0:
+                missing_rate_plates.add(plate or "sem placa")
+                continue
+            fuel_rate_by_route[route_id] = float(rate)
+            fuel_history_cost_by_route[route_id] = historical_cost
+            fuel_history_km_by_route[route_id] = historical_km
+            add_cost(route_id, "Combustivel", float(rate) * float(route_km))
+        if missing_route_km:
+            fuel_warnings.append(
+                f"{missing_route_km} rota(s) da frota propria ficaram sem custo de combustivel por nao possuir KM informado."
+            )
+        if missing_rate_plates:
+            fuel_warnings.append(
+                "Sem KM historico para calcular combustivel nas placas: "
+                + ", ".join(sorted(missing_rate_plates))
+                + "."
+            )
+        if missing_fuel_plates:
+            fuel_warnings.append(
+                "Sem custo historico de combustivel nas placas: "
+                + ", ".join(sorted(missing_fuel_plates))
+                + "."
+            )
     except Exception:
-        fuel_warnings = ["Combustivel indisponivel para o calculo das rotas."]
+        fuel_warnings = ["Combustivel historico por KM indisponivel para o calculo das rotas."]
 
     def allocate_plate_day(frame: pd.DataFrame, part_name: str) -> None:
         if frame.empty or not {"Data", "PLACA", "Custo"}.issubset(frame.columns):
@@ -4992,6 +5156,15 @@ def _route_cost_breakdown(
                 "PLACA": route.get("PLACA"),
                 "Motorista": route.get("Motorista"),
                 "Combustivel": round(parts["Combustivel"], 2),
+                "Combustivel R$/km": round(fuel_rate_by_route[str(route_id)], 4)
+                if str(route_id) in fuel_rate_by_route
+                else None,
+                "Combustivel Historico": round(fuel_history_cost_by_route[str(route_id)], 2)
+                if str(route_id) in fuel_history_cost_by_route
+                else None,
+                "KM Historico Combustivel": round(fuel_history_km_by_route[str(route_id)], 2)
+                if str(route_id) in fuel_history_km_by_route
+                else None,
                 "Manutencao": round(parts["Manutencao"], 2),
                 "Pedagio": round(parts["Pedagio"], 2),
                 "Hoteis": round(parts["Hoteis"], 2),
@@ -6697,11 +6870,11 @@ def data_frota(params: dict | None = None) -> dict:
         else 0.0
     )
     daily_rates = _ranking_freighter_daily_rates()
-    imported_fuel_costs, _imported_fuel_warnings = _ranking_allocate_fuel_to_imported_routes(
-        route_comb_period,
-        imported_route_context,
+    historical_fuel_rates = _historical_plate_fuel_rates(df_comb_base, df_km_base)
+    route_fuel_costs_all, _imported_fuel_warnings = _route_fuel_costs_from_history(
+        imported_route_km,
+        historical_fuel_rates,
     )
-    route_fuel_costs_all = imported_fuel_costs
     route_cost_gain_analysis = _ranking_route_cost_gain_analysis(
         _ranking_filter_plates(df_peso_route_eligible, placas),
         _ranking_filter_plates(route_fuel_costs_all, placas),
@@ -6716,7 +6889,7 @@ def data_frota(params: dict | None = None) -> dict:
     rotas_disponiveis = sorted(
         _ranking_route_labels(df_peso_route_eligible).dropna().unique().tolist()
     )
-    route_fuel_warnings: list[str] = []
+    route_fuel_warnings: list[str] = list(_imported_fuel_warnings)
     if rotas:
         df_peso = _ranking_filter_routes(df_peso_route_eligible, rotas)
         df_peso_total = df_peso.copy()
@@ -6786,32 +6959,15 @@ def data_frota(params: dict | None = None) -> dict:
                 & {str(route).strip().casefold() for route in rotas if str(route).strip()}
             )
             if selected_imported:
-                if df_comb.empty:
+                route_cost_values = (
+                    pd.to_numeric(df_comb["Custo"], errors="coerce").fillna(0.0)
+                    if "Custo" in df_comb.columns
+                    else pd.Series(dtype="float64")
+                )
+                if df_comb.empty or not route_cost_values.gt(0).any():
                     route_fuel_warnings.append(
-                        "Nenhum abastecimento da mesma placa foi encontrado durante a viagem ou até 1 dia antes/depois."
+                        "Nenhum custo historico por KM das placas selecionadas pôde ser aplicado às rotas."
                     )
-                elif "Criterio Rota" in df_comb.columns:
-                    criteria = df_comb["Criterio Rota"].astype("string").fillna("")
-                    source_ids = (
-                        df_comb["_FuelSourceId"].astype("string")
-                        if "_FuelSourceId" in df_comb.columns
-                        else pd.Series(df_comb.index.astype("string"), index=df_comb.index)
-                    )
-                    no_city_count = int(
-                        source_ids.loc[criteria.str.contains("sem cidade", case=False, regex=False)].nunique()
-                    )
-                    split_count = int(
-                        source_ids.loc[criteria.str.contains("dividido", case=False, regex=False)].nunique()
-                    )
-                    if no_city_count:
-                        route_fuel_warnings.append(
-                            f"Em {no_city_count} abastecimento(s), o posto não indicava uma cidade reconhecível; "
-                            "foi usada a rota mais próxima no tempo."
-                        )
-                    if split_count:
-                        route_fuel_warnings.append(
-                            f"{split_count} abastecimento(s) tiveram custo e litros divididos entre rotas empatadas."
-                        )
             needs_mileage = (
                 "Categoria" in df_peso.columns
                 and not _normalize_categoria(df_peso["Categoria"]).eq("freteiro").all()

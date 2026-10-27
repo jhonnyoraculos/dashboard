@@ -100,8 +100,10 @@ comparacao e ativada, o sistema consulta o intervalo imediatamente anterior com
 a mesma quantidade de dias e preserva os filtros de placa, motorista, rota,
 categoria e pesquisa.
 
-O custo operacional atribuido preserva as regras existentes: combustivel e
-associado pela placa, periodo e proximidade; manutencao e pedagio/extras sao
+O custo operacional atribuido usa o custo historico real de combustivel por KM
+de cada placa ate a data atual. O combustivel de uma rota e esse valor em R$/KM
+multiplicado pelos KM informados na propria rota; nao ha mais associacao por
+proximidade de posto, cidade ou horario. Manutencao e pedagio/extras sao
 rateados entre rotas da mesma placa e dia; hospedagem usa motorista e data;
 salarios usam os dias operacionais; freteiros usam a diaria cadastrada. O
 resultado operacional e a receita atribuida menos esses custos disponiveis e

@@ -4,6 +4,7 @@ import unittest
 import zipfile
 from datetime import date
 from io import BytesIO
+from unittest.mock import patch
 
 import pandas as pd
 
@@ -71,6 +72,63 @@ class RoutesDashboardTests(unittest.TestCase):
         self.assertAlmostEqual(float(expensive["Custo por entrega"]), 700.0)
         self.assertAlmostEqual(float(expensive["Custo por km"]), 14.0)
         self.assertAlmostEqual(float(expensive["Intervalos e noites"]), 14.0)
+
+    def test_fuel_cost_uses_plate_history_per_km(self):
+        fuel = pd.DataFrame(
+            [
+                {"Data": "2026-01-05", "PLACA": "AAA1A11", "Custo": 1_000.0},
+                {"Data": "2099-01-05", "PLACA": "AAA1A11", "Custo": 9_999.0},
+            ]
+        )
+        mileage = pd.DataFrame(
+            [
+                {"Mes": "2026-01", "PLACA": "AAA1A11", "Km Rodados": 400.0},
+                {"Mes": "2099-01", "PLACA": "AAA1A11", "Km Rodados": 1.0},
+            ]
+        )
+        rates = backend._historical_plate_fuel_rates(
+            fuel, mileage, cutoff=pd.Timestamp("2026-10-27")
+        )
+        self.assertEqual(len(rates), 1)
+        self.assertAlmostEqual(float(rates.iloc[0]["Combustivel R$/km"]), 2.5)
+        allocated, warnings = backend._route_fuel_costs_from_history(
+            pd.DataFrame(
+                [{"Rota ID": "r1", "Rota": "ROTA TESTE", "PLACA": "AAA1A11", "Km Rodados": 100.0}]
+            ),
+            rates,
+        )
+        self.assertEqual(warnings, [])
+        self.assertAlmostEqual(float(allocated.iloc[0]["Custo"]), 250.0)
+
+        routes = pd.DataFrame(
+            [
+                {
+                    "Rota ID": "r1", "Data": pd.Timestamp("2026-10-20"),
+                    "Saida": pd.Timestamp("2026-10-20 07:00"),
+                    "Retorno": pd.Timestamp("2026-10-20 17:00"), "Mes": "2026-10",
+                    "Rota": "ROTA TESTE", "PLACA": "AAA1A11", "Motorista": "TESTE",
+                    "Categoria": "Transporte", "KM Rodados": 100.0,
+                }
+            ]
+        )
+        deliveries = pd.DataFrame([{"Rota ID": "r1", "Valor Nota": 1_000.0}])
+        empty_costs = pd.DataFrame(columns=["Data", "Mes", "PLACA", "Custo"])
+        empty_salary = pd.DataFrame(columns=["Mes", "Valor"])
+        empty_hotels = pd.DataFrame(columns=["Data", "Valor", "Motorista", "Ajudante"])
+        with (
+            patch.object(backend, "load_combustivel", return_value=fuel),
+            patch.object(backend, "load_combustivel_km", return_value=mileage),
+            patch.object(backend, "load_manutencao", return_value=empty_costs),
+            patch.object(backend, "load_pedagio", return_value=empty_costs),
+            patch.object(backend, "load_salarios_transporte", return_value=empty_salary),
+            patch.object(backend, "load_hoteis", return_value=empty_hotels),
+            patch.object(backend, "_ranking_freighter_daily_rates", return_value={}),
+            patch.object(backend, "_apply_plate_categories", side_effect=lambda frame: frame),
+        ):
+            result = backend._route_cost_breakdown(routes, routes, deliveries)
+        route_cost = result["rotas"][0]
+        self.assertAlmostEqual(float(route_cost["Combustivel R$/km"]), 2.5)
+        self.assertAlmostEqual(float(route_cost["Combustivel"]), 250.0)
 
     def test_route_summary_preserves_operational_result_name(self):
         summary = dashboard._route_summary_table(dashboard._route_financial_frame(sample_payload()))
