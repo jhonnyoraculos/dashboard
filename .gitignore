@@ -1,11 +1,12 @@
-__pycache__/
-*.py[cod]
-
 .env
 .env.*
-
+!.env.example
+__pycache__/
+*.py[cod]
 .venv/
 venv/
 
 .streamlit/secrets.toml
 data/*.xlsx
+.pytest_cache/
+.ruff_cache/

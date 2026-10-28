@@ -27,6 +27,17 @@ import streamlit.components.v1 as components
 from PIL import Image, ImageDraw, ImageEnhance, ImageFilter, ImageFont, ImageOps
 
 import app as backend
+from ai_assistant import (
+    AssistantConfig,
+    AssistantError,
+    GroqDashboardAssistant,
+    PAGE_CATALOG,
+    compact_data,
+    dashboard_summary_payload,
+    global_usage_snapshot,
+    normalize_page,
+    numeric_metrics,
+)
 from route_pdf import parse_route_pdf
 
 # O Streamlit pode recarregar este arquivo sem reiniciar o processo Python.
@@ -66,7 +77,7 @@ MUTED = "#6B7280"
 CARD_BORDER = "#c2d2f3"
 LOGO_PATH = Path(__file__).parent / "static" / "logo-jr.png"
 CURRENT_YEAR = date.today().year
-APP_VERSION = "routes-map-geocoding-v22"
+APP_VERSION = "global-groq-assistant-v23"
 RANK_ROUTES_ENABLED = True
 ROUTE_CACHE_TTL_SECONDS = max(int(os.environ.get("JR_ROUTE_CACHE_TTL_SECONDS", "180") or 180), 30)
 DATA_EDITOR_PAGE_SIZE = 100
@@ -3172,6 +3183,458 @@ def navigate(page: str) -> None:
     st.rerun()
 
 
+AI_DASHBOARD_FILTERS = {
+    "overview": {"ano", "mes"},
+    "combustivel": {"ano", "mes", "categoria", "placa", "posto", "combustivel"},
+    "manutencao": {"ano", "mes", "placa", "oficina", "segmento"},
+    "hoteis": {"ano", "mes", "segmento", "cidade", "hotel"},
+    "pedagio": {"ano", "mes", "placa", "tipo", "segmento"},
+    "vex": {"ano", "mes", "placa"},
+    "alertas": {"ano", "mes", "placa"},
+    "velocidade": {"ano", "mes", "placa", "motorista", "rota"},
+    "frota": {"ano", "mes", "categoria", "placa", "rota", "ordenar_por"},
+    "rotas": {"data_inicio", "data_fim", "categoria", "placa", "motorista", "rota", "busca"},
+}
+
+AI_ALLOWED_SERIES = {
+    "overview": {"segmentos", "periodos_disponiveis"},
+    "combustivel": {"custo_mensal", "km_mensal", "litros_mensal", "gasto_semana", "gasto_por_placa", "gasto_por_posto", "gasto_por_combustivel"},
+    "manutencao": {"custo_mensal", "custo_semana", "gasto_por_placa", "gasto_por_oficina"},
+    "hoteis": {"valor_mensal", "valor_semana", "valor_por_cidade", "valor_por_hotel"},
+    "pedagio": {"custo_mensal", "custo_semana", "gasto_por_placa", "gasto_por_tipo"},
+    "vex": {"mensal_total", "km_mensal", "litros_mensal", "gasto_por_placa"},
+    "alertas": {"ranking_placas", "mensal", "tipos"},
+    "velocidade": {"velocidade_por_placa", "tempo_por_rota", "distancia_por_rota", "evolucao_mensal"},
+    "frota": {"ranking", "custo_ganho_rotas", "evolucao_mensal"},
+    "rotas": {"evolucao_mensal", "ranking_motoristas", "ranking_colaboradores", "ranking_placas", "ranking_rotas", "ranking_cidades", "alertas"},
+}
+
+AI_FILTER_STATE_KEYS = {
+    "combustivel": {"ano": "comb_ano", "mes": "comb_mes", "categoria": "comb_categoria", "placa": "comb_placa", "posto": "comb_posto", "combustivel": "comb_combustivel"},
+    "manutencao": {"ano": "manu_ano", "mes": "manu_mes", "placa": "manu_placa", "oficina": "manu_oficina", "segmento": "manu_segmento"},
+    "hoteis": {"ano": "hotel_ano", "mes": "hotel_mes", "segmento": "hotel_segmento", "cidade": "hotel_cidade", "hotel": "hotel_hotel"},
+    "pedagio": {"ano": "ped_ano", "mes": "ped_mes", "placa": "ped_placa", "tipo": "ped_tipo", "segmento": "ped_segmento"},
+    "vex": {"ano": "vex_ano", "mes": "vex_mes", "placa": "vex_placa"},
+    "velocidade": {"ano": "velocidade_ano", "mes": "velocidade_mes", "placa": "velocidade_placa", "motorista": "velocidade_motorista", "rota": "velocidade_rota"},
+    "alertas": {"ano": "alertas_ano", "mes": "alertas_mes", "placa": "alertas_placa"},
+    "overview": {"ano": "home_ano", "mes": "home_mes"},
+    "frota": {"ano": "rank_ano", "mes": "rank_mes", "categoria": "rank_categoria", "placa": "rank_placa", "rota": "rank_rota_selecao", "ordenar_por": "rank_ordenar"},
+    "rotas": {"categoria": "routes_categories_v5", "placa": "routes_plates_v5", "motorista": "routes_drivers_v5", "rota": "routes_global_route_v1", "busca": "routes_search_v5"},
+}
+
+
+def _ai_secret_mapping() -> dict[str, object]:
+    try:
+        return {key: st.secrets[key] for key in st.secrets}
+    except Exception:
+        return {}
+
+
+def _ai_config() -> AssistantConfig:
+    return AssistantConfig.from_sources(secrets=_ai_secret_mapping())
+
+
+def _ai_sanitize_filters(dashboard: str, filters: object) -> dict[str, object]:
+    if dashboard not in AI_DASHBOARD_FILTERS or not isinstance(filters, dict):
+        return {}
+    allowed = AI_DASHBOARD_FILTERS[dashboard]
+    result: dict[str, object] = {}
+    for key, value in filters.items():
+        if key not in allowed or value in (None, "", "Todos", "Todas as rotas"):
+            continue
+        if isinstance(value, (list, tuple, set)):
+            clean_values = [item for item in list(value)[:12] if isinstance(item, (str, int, float)) and str(item).strip()]
+            if clean_values:
+                result[key] = clean_values
+        elif isinstance(value, (str, int, float, bool)):
+            result[key] = value
+    return result
+
+
+def _ai_current_filters(page: str) -> dict[str, object]:
+    page = normalize_page(page)
+    dashboard = PAGE_CATALOG.get(page, {}).get("dashboard")
+    if not dashboard:
+        return {}
+    state_keys = AI_FILTER_STATE_KEYS.get(dashboard, {})
+    filters = {
+        parameter: st.session_state.get(state_key)
+        for parameter, state_key in state_keys.items()
+        if state_key in st.session_state
+    }
+    if dashboard == "rotas":
+        try:
+            options = route_json("rotas", {"somente_opcoes": True})
+            raw_minimum = pd.to_datetime(options.get("data_min"), errors="coerce")
+            raw_maximum = pd.to_datetime(options.get("data_max"), errors="coerce")
+            minimum = raw_minimum.date() if pd.notna(raw_minimum) else date.today().replace(month=1, day=1)
+            maximum = raw_maximum.date() if pd.notna(raw_maximum) else date.today()
+            mode = st.session_state.get("routes_period_mode_v5", "Todo o período")
+            custom = st.session_state.get("routes_custom_dates_v5", (minimum, maximum))
+            start, end = _route_period_dates(mode, minimum, maximum, custom)
+            filters.update({"data_inicio": start.isoformat(), "data_fim": end.isoformat()})
+        except Exception:
+            pass
+    return _ai_sanitize_filters(dashboard, filters)
+
+
+def _ai_dashboard_payload(dashboard: str, filters: dict[str, object] | None = None) -> dict:
+    if dashboard not in AI_DASHBOARD_FILTERS or dashboard not in ROUTES:
+        raise ValueError("Dashboard não autorizado")
+    safe_filters = _ai_sanitize_filters(dashboard, filters or {})
+    payload = route_json(dashboard, safe_filters)
+    return payload if isinstance(payload, dict) else {}
+
+
+def _ai_page_context(page: str) -> dict[str, object]:
+    page = normalize_page(page)
+    meta = PAGE_CATALOG[page]
+    dashboard = meta.get("dashboard")
+    filters = _ai_current_filters(page)
+    context: dict[str, object] = {
+        "pagina": page,
+        "nome": meta["label"],
+        "finalidade": meta["purpose"],
+        "filtros_ativos": filters,
+    }
+    if page == "rotas":
+        context["secao"] = st.session_state.get("routes_workspace_section", "Visão geral")
+        context["comparar_periodo_anterior"] = bool(st.session_state.get("routes_compare_period", False))
+    if dashboard:
+        try:
+            context["dados_visiveis"] = dashboard_summary_payload(
+                dashboard, _ai_dashboard_payload(dashboard, filters)
+            )
+        except Exception:
+            context["dados_visiveis"] = {"aviso": "Dados indisponíveis nesta execução."}
+    focus = st.session_state.get("ai_focus_context")
+    if isinstance(focus, dict):
+        context["foco_solicitado"] = compact_data(focus, max_depth=4, max_items=20)
+    return compact_data(context, max_depth=6, max_items=25)
+
+
+def _ai_compare_metrics(first: dict, second: dict) -> dict[str, object]:
+    metrics_a = numeric_metrics(first)
+    metrics_b = numeric_metrics(second)
+    rows = []
+    for metric in sorted(set(metrics_a) & set(metrics_b))[:30]:
+        value_a = metrics_a[metric]
+        value_b = metrics_b[metric]
+        absolute = value_b - value_a
+        percent = absolute / abs(value_a) * 100.0 if value_a else None
+        rows.append(
+            {
+                "metrica": metric,
+                "periodo_a": value_a,
+                "periodo_b": value_b,
+                "variacao_absoluta": round(absolute, 4),
+                "variacao_percentual": round(percent, 2) if percent is not None else None,
+            }
+        )
+    return {"comparacao": rows}
+
+
+def _ai_tool_executor(page: str, page_context: dict[str, object]):
+    def execute(name: str, arguments: dict[str, object]) -> object:
+        if name == "get_current_page_context":
+            return _ai_page_context(page)
+        if name == "list_available_dashboards":
+            return [
+                {"pagina": key, "nome": item["label"], "finalidade": item["purpose"]}
+                for key, item in PAGE_CATALOG.items()
+            ]
+        if name in {"get_dashboard_metrics", "get_chart_data", "get_historical_data"}:
+            dashboard = clean_text(arguments.get("dashboard")).strip().lower()
+            filters = _ai_sanitize_filters(dashboard, arguments.get("filters") or {})
+            payload = _ai_dashboard_payload(dashboard, filters)
+            if name == "get_dashboard_metrics":
+                return dashboard_summary_payload(dashboard, payload)
+            series = clean_text(arguments.get("series")).strip()
+            if series not in AI_ALLOWED_SERIES.get(dashboard, set()):
+                return {"erro": "Série não autorizada", "series_disponiveis": sorted(AI_ALLOWED_SERIES.get(dashboard, set()))}
+            return {"dashboard": dashboard, "serie": series, "dados": compact_data(payload.get(series), max_depth=5, max_items=24)}
+        if name == "compare_periods":
+            dashboard = clean_text(arguments.get("dashboard")).strip().lower()
+            base_filters = _ai_sanitize_filters(dashboard, arguments.get("filters") or {})
+            first_filters = {**base_filters, **_ai_sanitize_filters(dashboard, arguments.get("period_a") or {})}
+            second_filters = {**base_filters, **_ai_sanitize_filters(dashboard, arguments.get("period_b") or {})}
+            first = _ai_dashboard_payload(dashboard, first_filters)
+            second = _ai_dashboard_payload(dashboard, second_filters)
+            return {
+                "dashboard": dashboard,
+                "periodo_a": first_filters,
+                "periodo_b": second_filters,
+                **_ai_compare_metrics(first, second),
+            }
+        if name == "analyze_metric_variation":
+            current = float(arguments.get("current") or 0.0)
+            previous = float(arguments.get("previous") or 0.0)
+            absolute = current - previous
+            percent = absolute / abs(previous) * 100.0 if previous else None
+            return {
+                "metrica": clean_text(arguments.get("metric")),
+                "atual": current,
+                "anterior": previous,
+                "variacao_absoluta": round(absolute, 4),
+                "variacao_percentual": round(percent, 2) if percent is not None else None,
+                "formula": "(atual - anterior) / |anterior| × 100",
+            }
+        if name == "navigate_to_page":
+            target = normalize_page(clean_text(arguments.get("page")))
+            return {"pagina": target, "nome": PAGE_CATALOG[target]["label"], "url": f"?page={target}"}
+        if name == "apply_dashboard_filter":
+            dashboard = clean_text(arguments.get("dashboard")).strip().lower()
+            filters = _ai_sanitize_filters(dashboard, arguments.get("filters") or {})
+            if not filters:
+                return {"erro": "Nenhum filtro válido foi informado."}
+            st.session_state["ai_pending_filter_action"] = {"dashboard": dashboard, "filters": filters}
+            return {"status": "Aguardando confirmação do usuário", "dashboard": dashboard, "filters": filters}
+        if name == "generate_dashboard_summary":
+            return page_context
+        raise ValueError("Ferramenta não autorizada")
+
+    return execute
+
+
+def _ai_apply_pending_filters(action: dict[str, object]) -> None:
+    dashboard = clean_text(action.get("dashboard")).strip().lower()
+    filters = _ai_sanitize_filters(dashboard, action.get("filters") or {})
+    for parameter, value in filters.items():
+        state_key = AI_FILTER_STATE_KEYS.get(dashboard, {}).get(parameter)
+        if not state_key:
+            continue
+        if parameter == "ano" and isinstance(value, str) and value.isdigit():
+            value = int(value)
+        if parameter == "mes" and dashboard != "alertas":
+            value = value if isinstance(value, list) else [value]
+        elif parameter in {"placa", "categoria", "motorista"} and dashboard in {"rotas", "frota"}:
+            value = value if isinstance(value, list) else [value]
+        elif parameter == "rota" and dashboard == "frota":
+            value = value if isinstance(value, list) else [value]
+        st.session_state[state_key] = value
+    target_page = next(
+        (page_name for page_name, meta in PAGE_CATALOG.items() if meta.get("dashboard") == dashboard),
+        "home",
+    )
+    st.session_state.pop("ai_pending_filter_action", None)
+    st.query_params["page"] = target_page
+    st.rerun()
+
+
+def _ai_chart_snapshot(title: str, fig: go.Figure) -> dict[str, object]:
+    traces = []
+    for trace in list(fig.data)[:8]:
+        traces.append(
+            compact_data(
+                {
+                    "tipo": getattr(trace, "type", None),
+                    "nome": getattr(trace, "name", None),
+                    "x": getattr(trace, "x", None),
+                    "y": getattr(trace, "y", None),
+                    "labels": getattr(trace, "labels", None),
+                    "values": getattr(trace, "values", None),
+                },
+                max_depth=4,
+                max_items=30,
+                max_string=200,
+            )
+        )
+    return {"grafico": title, "series": traces}
+
+
+def _ai_suggestions(page: str) -> list[str]:
+    page = normalize_page(page)
+    suggestions = {
+        "combustivel": ["Qual foi o maior custo do período?", "Qual placa teve o pior consumo?", "Existe alguma anomalia nos abastecimentos?"],
+        "manutencao": ["Quais placas mais gastaram com manutenção?", "O custo aumentou em relação ao período anterior?", "Quais oficinas concentram mais despesas?"],
+        "hoteis": ["Quais cidades geraram mais hospedagens?", "Qual foi o custo médio por reserva?", "Há reservas fora do padrão?"],
+        "rotas": ["Quais viagens não se pagaram?", "Qual motorista foi mais produtivo?", "Quais rotas merecem atenção?"],
+        "frota": ["Qual caminhão teve o maior custo por KM?", "Qual placa foi mais eficiente?", "Compare custos e produção da frota."],
+        "velocidade": ["Quais viagens tiveram maior duração?", "Existe excesso de velocidade?", "Qual rota teve mais tempo parado?"],
+    }
+    return suggestions.get(page, ["Faça uma análise geral desta página.", "Quais indicadores merecem atenção?", "Explique os principais números exibidos."])
+
+
+def _inject_ai_assistant_css() -> None:
+    st.markdown(
+        """
+        <style>
+        .st-key-ai_assistant_shell {
+          position:fixed !important; right:22px !important; bottom:20px !important;
+          width:auto !important; z-index:2200 !important;
+        }
+        .st-key-ai_assistant_shell [data-testid="stPopover"] > button {
+          min-height:52px !important; padding:0 20px !important; border-radius:999px !important;
+          color:#fff !important; -webkit-text-fill-color:#fff !important; font-weight:800 !important;
+          border:1px solid rgba(255,255,255,.50) !important;
+          background:linear-gradient(135deg,rgba(28,45,107,.96),rgba(37,99,235,.91)) !important;
+          box-shadow:0 18px 45px rgba(28,45,107,.32),inset 0 1px rgba(255,255,255,.35) !important;
+          backdrop-filter:blur(20px) saturate(160%) !important;
+        }
+        .st-key-ai_assistant_shell [data-testid="stPopover"] > button:hover {
+          transform:translateY(-2px); box-shadow:0 22px 52px rgba(28,45,107,.40) !important;
+        }
+        div[data-testid="stPopoverBody"]:has(.st-key-ai_chat_panel) {
+          width:min(470px,calc(100vw - 26px)) !important; max-height:min(760px,calc(100vh - 90px)) !important;
+          overflow-y:auto !important; border-radius:24px !important;
+          border:1px solid rgba(255,255,255,.75) !important;
+          background:rgba(248,250,252,.88) !important;
+          box-shadow:0 28px 80px rgba(15,23,42,.28) !important;
+          backdrop-filter:blur(28px) saturate(170%) !important;
+        }
+        .st-key-ai_chat_panel { color:#172554 !important; }
+        .st-key-ai_chat_panel [data-testid="stChatMessage"] {
+          background:rgba(255,255,255,.72); border:1px solid rgba(194,210,243,.8);
+          border-radius:16px; padding:4px 10px; margin:8px 0;
+        }
+        .ai-panel-head {display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:8px}
+        .ai-panel-head strong {font-size:17px;color:#172554}.ai-panel-head span {font-size:11px;color:#64748B}
+        .ai-status {display:inline-flex;align-items:center;gap:6px;padding:5px 9px;border-radius:999px;background:#DCFCE7;color:#166534;font-size:11px;font-weight:800}
+        .ai-status.offline {background:#FEF3C7;color:#92400E}.ai-dot{width:7px;height:7px;border-radius:50%;background:currentColor}
+        [class*="st-key-ai_chart_action_"] button {min-height:34px !important;border-radius:10px !important;color:#1C2D6B !important;font-weight:700 !important}
+        @media(max-width:640px){.st-key-ai_assistant_shell{right:12px !important;bottom:12px !important}.st-key-ai_assistant_shell [data-testid="stPopover"] > button{min-height:48px !important;padding:0 15px !important}}
+        </style>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
+def render_ai_assistant(page: str) -> None:
+    _inject_ai_assistant_css()
+    page = normalize_page(page)
+    config = _ai_config()
+    assistant = GroqDashboardAssistant(config)
+    history_key = "ai_assistant_history"
+    history = st.session_state.setdefault(history_key, [])
+    if not isinstance(history, list):
+        history = []
+        st.session_state[history_key] = history
+
+    pending_question = st.session_state.pop("ai_pending_question", None)
+    with st.container(key="ai_assistant_shell"):
+        with st.popover("✦ Assistente IA", use_container_width=False):
+            with st.container(key="ai_chat_panel"):
+                status_class = "" if assistant.available else " offline"
+                status_text = "Groq conectada" if assistant.available else "Configuração pendente"
+                st.markdown(
+                    f'<div class="ai-panel-head"><div><strong>Assistente JR</strong><br><span>{h(PAGE_CATALOG[page]["label"])}</span></div>'
+                    f'<span class="ai-status{status_class}"><i class="ai-dot"></i>{h(status_text)}</span></div>',
+                    unsafe_allow_html=True,
+                )
+
+                action_cols = st.columns(2)
+                with action_cols[0]:
+                    if st.button("Resumir esta página", key="ai_summarize_page", width="stretch", disabled=not assistant.available):
+                        pending_question = "Faça um resumo executivo desta página, destacando os números, tendências e pontos de atenção comprovados pelos dados."
+                with action_cols[1]:
+                    if st.button("Limpar conversa", key="ai_clear_history", width="stretch"):
+                        st.session_state[history_key] = []
+                        st.session_state.pop("ai_response_cache", None)
+                        st.session_state.pop("ai_focus_context", None)
+                        st.rerun()
+
+                pending_action = st.session_state.get("ai_pending_filter_action")
+                if isinstance(pending_action, dict):
+                    st.info(f"A IA sugeriu filtros para **{pending_action.get('dashboard')}**: `{pending_action.get('filters')}`")
+                    confirm_cols = st.columns(2)
+                    with confirm_cols[0]:
+                        if st.button("Aplicar filtros", key="ai_confirm_filters", type="primary", width="stretch"):
+                            _ai_apply_pending_filters(pending_action)
+                    with confirm_cols[1]:
+                        if st.button("Cancelar", key="ai_cancel_filters", width="stretch"):
+                            st.session_state.pop("ai_pending_filter_action", None)
+                            st.rerun()
+
+                suggestion_cols = st.columns(3)
+                for index, suggestion in enumerate(_ai_suggestions(page)):
+                    with suggestion_cols[index]:
+                        if st.button(suggestion, key=f"ai_suggestion_{page}_{index}", width="stretch", disabled=not assistant.available):
+                            pending_question = suggestion
+
+                with st.form("ai_assistant_question_form", clear_on_submit=True):
+                    question = st.text_area(
+                        "Pergunte sobre os dados",
+                        placeholder="Ex.: quais indicadores merecem atenção?",
+                        height=82,
+                        disabled=not assistant.available,
+                    )
+                    submitted = st.form_submit_button(
+                        "Enviar pergunta",
+                        type="primary",
+                        width="stretch",
+                        disabled=not assistant.available,
+                    )
+                if submitted:
+                    pending_question = question
+
+                user_messages = sum(1 for item in history if item.get("role") == "user")
+                if pending_question and user_messages >= config.session_message_limit:
+                    st.warning("O limite de mensagens desta sessão foi atingido. Limpe a conversa para continuar.")
+                    pending_question = None
+
+                if pending_question:
+                    page_context = _ai_page_context(page)
+                    cache = st.session_state.setdefault("ai_response_cache", {})
+                    cache_source = json.dumps(
+                        {"pergunta": pending_question, "contexto": page_context},
+                        ensure_ascii=False,
+                        sort_keys=True,
+                        default=str,
+                    )
+                    cache_key = hashlib.sha256(cache_source.encode()).hexdigest()
+                    history_before = list(history)
+                    history.append({"role": "user", "content": clean_text(pending_question), "page": page})
+                    try:
+                        cached = cache.get(cache_key)
+                        if cached:
+                            result_answer = cached["answer"]
+                            result_tokens = cached.get("tokens", 0)
+                            result_tools = cached.get("tools", 0)
+                        else:
+                            with st.spinner("Analisando dados reais do dashboard..."):
+                                result = assistant.answer(
+                                    clean_text(pending_question),
+                                    history=history_before,
+                                    page_context=page_context,
+                                    tool_executor=_ai_tool_executor(page, page_context),
+                                )
+                            result_answer = result.answer
+                            result_tokens = result.prompt_tokens + result.completion_tokens
+                            result_tools = result.tool_calls
+                            cache[cache_key] = {"answer": result_answer, "tokens": result_tokens, "tools": result_tools}
+                            if len(cache) > 20:
+                                cache.pop(next(iter(cache)))
+                        history.append(
+                            {
+                                "role": "assistant",
+                                "content": result_answer,
+                                "page": page,
+                                "tokens": result_tokens,
+                                "tools": result_tools,
+                            }
+                        )
+                    except AssistantError as exc:
+                        history.append({"role": "assistant", "content": f"⚠️ {exc}", "page": page, "error": True})
+                    finally:
+                        st.session_state.pop("ai_focus_context", None)
+
+                if not assistant.available:
+                    st.warning("Adicione `GROQ_API_KEY` aos Secrets do Streamlit para ativar a IA. Nenhuma chave é enviada ao navegador.")
+
+                for item in history[-14:]:
+                    avatar = "🧑" if item.get("role") == "user" else "✦"
+                    with st.chat_message(item.get("role", "assistant"), avatar=avatar):
+                        st.markdown(clean_text(item.get("content")))
+                        if item.get("role") == "assistant" and item.get("tokens"):
+                            st.caption(f"{fmt_num(item.get('tokens'), 0)} tokens · {fmt_num(item.get('tools'), 0)} consulta(s) aos dados")
+
+                usage = global_usage_snapshot()
+                st.caption(
+                    f"Sessão: {user_messages}/{config.session_message_limit} perguntas · "
+                    f"Uso global hoje: {fmt_num(usage.get('requests'), 0)} requisições"
+                )
+
+
 def fmt_brl(value: object, *, compact_threshold: float = 1000.0) -> str:
     try:
         number = float(value or 0)
@@ -4939,6 +5402,14 @@ def chart_card(title: str, fig: go.Figure, *, key: str) -> None:
                 st.plotly_chart(fig, width="stretch", config=PLOTLY_CONFIG, key=key)
         else:
             st.plotly_chart(fig, width="stretch", config=PLOTLY_CONFIG, key=key)
+        with st.container(key=f"ai_chart_action_{key}"):
+            if st.button("✦ Analisar este gráfico com IA", key=f"{key}_ai_analyze", width="stretch"):
+                st.session_state["ai_focus_context"] = _ai_chart_snapshot(title, fig)
+                st.session_state["ai_pending_question"] = (
+                    f"Analise o gráfico '{title}' usando os dados estruturados fornecidos no contexto. "
+                    "Explique tendências, variações, pontos de atenção e limitações sem inventar causas."
+                )
+                st.rerun()
 
 
 def chart_grid(charts: list[tuple[str, go.Figure]], *, key_prefix: str = "chart") -> None:
@@ -17417,6 +17888,11 @@ def main() -> None:
     except Exception as exc:
         st.error("Não foi possível carregar este dashboard. Configure o DATABASE_URL do Neon nos Secrets do Streamlit e tente novamente.")
         st.exception(exc)
+    finally:
+        try:
+            render_ai_assistant(page)
+        except Exception:
+            st.toast("Assistente de IA temporariamente indisponível. O dashboard continua normal.", icon="⚠️")
 
 
 if __name__ == "__main__":

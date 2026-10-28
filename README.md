@@ -28,6 +28,44 @@ No Streamlit Cloud, coloque a mesma chave em `Secrets`:
 
 Sem esse Secret no Streamlit Cloud, o app nao consegue ler o Neon e os dados ficam indisponiveis.
 
+## Assistente de IA com Groq
+
+O assistente flutuante esta disponivel em todas as paginas e usa exclusivamente
+ferramentas autorizadas e somente leitura para consultar os mesmos calculos do
+dashboard. Ele nao recebe acesso a SQL, Python, sistema operacional ou funcoes de
+escrita. Dados detalhados, campos pessoais, textos extraidos e arquivos sao
+removidos ou resumidos antes de qualquer chamada ao provedor.
+
+Para ativar em producao, adicione estas chaves aos `Secrets` do Streamlit:
+
+```toml
+GROQ_API_KEY = "gsk_..."
+GROQ_MODEL = "openai/gpt-oss-120b"
+GROQ_MAX_OUTPUT_TOKENS = 1200
+GROQ_MAX_TOOL_ROUNDS = 3
+AI_SESSION_MESSAGE_LIMIT = 24
+AI_GLOBAL_DAILY_REQUEST_LIMIT = 800
+AI_GLOBAL_DAILY_TOKEN_LIMIT = 180000
+AI_HISTORY_MESSAGES = 10
+```
+
+A chave nunca e enviada ao navegador nem registrada no repositorio. Sem
+`GROQ_API_KEY`, o painel exibe o estado de configuracao pendente e todos os
+dashboards continuam funcionando normalmente. Consulte `.env.example` para a
+configuracao local completa.
+
+Recursos principais:
+
+- contexto da pagina, secao, periodo e filtros ativos;
+- consultas reais a KPIs, rankings e series historicas agregadas;
+- comparacao de periodos e calculo auditavel de variacoes;
+- botao `Analisar este grafico com IA` nos graficos padrao;
+- resumo da pagina, perguntas sugeridas e historico durante a sessao;
+- proposta de filtros com confirmacao do usuario antes da aplicacao;
+- limites de mensagens, requisicoes, tokens, tamanho e rodadas de ferramentas;
+- cache de respostas repetidas limitado a sessao atual;
+- tratamento de indisponibilidade e limites HTTP 429 da Groq.
+
 4. Inicie o Streamlit:
    ```bash
    streamlit run streamlit_app.py

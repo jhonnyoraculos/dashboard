@@ -54,6 +54,19 @@ def sample_payload() -> dict:
 
 
 class RoutesDashboardTests(unittest.TestCase):
+    def test_ai_chart_context_is_structured_and_filters_are_whitelisted(self):
+        figure = dashboard.go.Figure(dashboard.go.Bar(x=["jan", "fev"], y=[10, 15], name="Custo"))
+        snapshot = dashboard._ai_chart_snapshot("Custo mensal", figure)
+        self.assertEqual(snapshot["grafico"], "Custo mensal")
+        self.assertEqual(snapshot["series"][0]["x"], ["jan", "fev"])
+        self.assertEqual(snapshot["series"][0]["y"], [10, 15])
+
+        filters = dashboard._ai_sanitize_filters(
+            "combustivel",
+            {"ano": 2026, "placa": "ABC1D23", "sql": "DROP TABLE", "senha": "x"},
+        )
+        self.assertEqual(filters, {"ano": 2026, "placa": "ABC1D23"})
+
     def test_decimal_days_are_shown_as_days_plus_extra_hours(self):
         self.assertEqual(dashboard._format_days_hours(1.3), "1 dia + 7 horas")
         self.assertEqual(dashboard._format_days_hours(2.0), "2 dias")
