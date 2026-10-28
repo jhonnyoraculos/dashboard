@@ -78,7 +78,7 @@ MUTED = "#6B7280"
 CARD_BORDER = "#c2d2f3"
 LOGO_PATH = Path(__file__).parent / "static" / "logo-jr.png"
 CURRENT_YEAR = date.today().year
-APP_VERSION = "global-groq-assistant-v32"
+APP_VERSION = "global-groq-assistant-v33"
 LOGGER = logging.getLogger("jr_dashboard.streamlit")
 RANK_ROUTES_ENABLED = True
 ROUTE_CACHE_TTL_SECONDS = max(int(os.environ.get("JR_ROUTE_CACHE_TTL_SECONDS", "180") or 180), 30)
@@ -3836,6 +3836,7 @@ def render_ai_assistant(page: str) -> None:
                     pending_question = None
 
                 if pending_question:
+                    response_ready = False
                     history_before = list(history)
                     message_time = datetime.now(BR_TZ).strftime("%H:%M")
                     history.append(
@@ -3908,6 +3909,7 @@ def render_ai_assistant(page: str) -> None:
                                 "time": datetime.now(BR_TZ).strftime("%H:%M"),
                             }
                         )
+                        response_ready = True
                     except AssistantError as exc:
                         history.append(
                             {
@@ -3918,6 +3920,7 @@ def render_ai_assistant(page: str) -> None:
                                 "time": datetime.now(BR_TZ).strftime("%H:%M"),
                             }
                         )
+                        response_ready = True
                     except Exception as exc:
                         LOGGER.exception("Assistant response processing failed: page=%s type=%s", page, type(exc).__name__)
                         history.append(
@@ -3932,8 +3935,11 @@ def render_ai_assistant(page: str) -> None:
                                 "time": datetime.now(BR_TZ).strftime("%H:%M"),
                             }
                         )
+                        response_ready = True
                     finally:
                         st.session_state.pop("ai_focus_context", None)
+                    if response_ready:
+                        st.rerun()
 
                 if not assistant.available:
                     st.warning("Adicione `GROQ_API_KEY` aos Secrets do Streamlit para ativar a IA. Nenhuma chave é enviada ao navegador.")
