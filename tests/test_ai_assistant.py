@@ -5,10 +5,10 @@ from unittest.mock import patch
 import ai_assistant as ai
 
 
-def fake_response(content="", tool_calls=None, prompt_tokens=10, completion_tokens=5):
+def fake_response(content="", tool_calls=None, prompt_tokens=10, completion_tokens=5, finish_reason="stop"):
     message = SimpleNamespace(content=content, tool_calls=tool_calls or [])
     return SimpleNamespace(
-        choices=[SimpleNamespace(message=message)],
+        choices=[SimpleNamespace(message=message, finish_reason=finish_reason)],
         usage=SimpleNamespace(prompt_tokens=prompt_tokens, completion_tokens=completion_tokens),
     )
 
@@ -163,6 +163,31 @@ class AssistantTests(unittest.TestCase):
         with self.assertRaisesRegex(ai.AssistantError, "chave GROQ_API_KEY foi recusada"):
             assistant.answer("Teste", history=[], page_context={}, tool_executor=lambda *_: {})
         self.assertEqual(len(client.chat.completions.calls), 1)
+
+    def test_length_limited_answer_is_continued_and_joined(self):
+        client = FakeClient(
+            [
+                fake_response(content="Primeira parte incompleta:", finish_reason="length"),
+                fake_response(content="continuação e conclusão.", finish_reason="stop"),
+            ]
+        )
+        assistant = ai.GroqDashboardAssistant(
+            ai.AssistantConfig(api_key="test", global_daily_request_limit=100_000),
+            client=client,
+        )
+
+        result = assistant.answer("Faça um cálculo futuro", history=[], page_context={}, tool_executor=lambda *_: {})
+
+        self.assertEqual(result.answer, "Primeira parte incompleta:\n\ncontinuação e conclusão.")
+        self.assertEqual(len(client.chat.completions.calls), 2)
+        continuation_messages = client.chat.completions.calls[1]["messages"]
+        self.assertTrue(
+            any(
+                "Continue exatamente de onde parou" in message.get("content", "")
+                for message in continuation_messages
+                if message.get("role") == "user"
+            )
+        )
 
     def test_tools_never_expose_sql_or_code_execution(self):
         names = {tool["function"]["name"] for tool in ai.TOOL_SCHEMAS}

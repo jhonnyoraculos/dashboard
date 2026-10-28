@@ -129,6 +129,7 @@ class AssistantConfig:
     timeout_seconds: float = 30.0
     max_output_tokens: int = 1_200
     max_tool_rounds: int = 3
+    max_continuations: int = 2
     session_message_limit: int = 24
     global_daily_request_limit: int = 800
     global_daily_token_limit: int = 180_000
@@ -183,6 +184,7 @@ class AssistantConfig:
             timeout_seconds=number("GROQ_TIMEOUT_SECONDS", 30.0, 5.0, 90.0),
             max_output_tokens=integer("GROQ_MAX_OUTPUT_TOKENS", 1_200, 256, 4_096),
             max_tool_rounds=integer("GROQ_MAX_TOOL_ROUNDS", 3, 1, 5),
+            max_continuations=integer("GROQ_MAX_CONTINUATIONS", 2, 0, 3),
             session_message_limit=integer("AI_SESSION_MESSAGE_LIMIT", 24, 4, 100),
             global_daily_request_limit=integer("AI_GLOBAL_DAILY_REQUEST_LIMIT", 800, 1, 100_000),
             global_daily_token_limit=integer("AI_GLOBAL_DAILY_TOKEN_LIMIT", 180_000, 1_000, 10_000_000),
@@ -529,6 +531,9 @@ REGRAS OBRIGATÓRIAS:
 - Não execute escrita, exclusão ou alteração de registros. Filtros devem ser preparados para confirmação.
 - Explique fórmulas e cálculos quando comparar valores.
 - Use Markdown, listas e tabelas pequenas quando melhorarem a leitura.
+- Entregue primeiro a conclusão e depois os cálculos essenciais. Seja conciso: normalmente até 600 palavras.
+- Não comece tabelas grandes. Para séries mensais, prefira uma lista curta ou uma tabela com no máximo 12 linhas e sempre finalize a explicação.
+- Não use títulos Markdown de nível 1 ou 2; use no máximo títulos com ### para não ocupar toda a conversa.
 - Se a pergunta for ambígua, peça uma informação curta e específica.
 - Ao sugerir navegação, use somente links retornados pela ferramenta navigate_to_page.
 """
@@ -686,42 +691,73 @@ class GroqDashboardAssistant:
 
         prompt_tokens = completion_tokens = tool_count = 0
         response = None
-        for _ in range(self.config.max_tool_rounds + 1):
+        answer_parts: list[str] = []
+        tool_rounds = 0
+        continuations = 0
+        max_calls = self.config.max_tool_rounds + self.config.max_continuations + 2
+        for _ in range(max_calls):
             response = self._call(messages)
             used_prompt, used_completion = self._usage(response)
             prompt_tokens += used_prompt
             completion_tokens += used_completion
             message = response.choices[0].message
             messages.append(self._assistant_message(message))
-            if not message.tool_calls:
-                break
-            for tool_call in message.tool_calls:
-                tool_count += 1
-                try:
-                    arguments = json.loads(tool_call.function.arguments or "{}")
-                    if not isinstance(arguments, dict):
-                        raise TypeError("arguments must be an object")
-                    result = tool_executor(tool_call.function.name, arguments)
-                    content = json.dumps(
-                        compact_data(result, max_depth=7, max_items=24, max_string=400),
-                        ensure_ascii=False,
-                        default=str,
+            if message.tool_calls:
+                if tool_rounds >= self.config.max_tool_rounds:
+                    answer_parts.append(
+                        "Não consegui concluir todas as consultas dentro do limite de segurança. "
+                        "Refaça a pergunta com um período ou indicador mais específico."
                     )
-                except Exception as exc:  # noqa: BLE001 - tool failures must not break the dashboard.
-                    LOGGER.warning("Assistant tool failed: tool=%s type=%s", tool_call.function.name, type(exc).__name__)
-                    content = json.dumps({"erro": "Ferramenta indisponível ou parâmetros inválidos."}, ensure_ascii=False)
+                    break
+                tool_rounds += 1
+                for tool_call in message.tool_calls:
+                    tool_count += 1
+                    try:
+                        arguments = json.loads(tool_call.function.arguments or "{}")
+                        if not isinstance(arguments, dict):
+                            raise TypeError("arguments must be an object")
+                        result = tool_executor(tool_call.function.name, arguments)
+                        content = json.dumps(
+                            compact_data(result, max_depth=7, max_items=24, max_string=400),
+                            ensure_ascii=False,
+                            default=str,
+                        )
+                    except Exception as exc:  # noqa: BLE001 - tool failures must not break the dashboard.
+                        LOGGER.warning("Assistant tool failed: tool=%s type=%s", tool_call.function.name, type(exc).__name__)
+                        content = json.dumps({"erro": "Ferramenta indisponível ou parâmetros inválidos."}, ensure_ascii=False)
+                    messages.append(
+                        {
+                            "role": "tool",
+                            "tool_call_id": tool_call.id,
+                            "name": tool_call.function.name,
+                            "content": content,
+                        }
+                    )
+                continue
+
+            part = str(message.content or "").strip()
+            if part:
+                answer_parts.append(part)
+            finish_reason = str(getattr(response.choices[0], "finish_reason", "") or "").lower()
+            if finish_reason in {"length", "max_tokens"} and continuations < self.config.max_continuations:
+                continuations += 1
                 messages.append(
                     {
-                        "role": "tool",
-                        "tool_call_id": tool_call.id,
-                        "name": tool_call.function.name,
-                        "content": content,
+                        "role": "user",
+                        "content": (
+                            "Continue exatamente de onde parou, sem repetir o texto anterior. "
+                            "Conclua os cálculos e finalize a resposta de forma breve."
+                        ),
                     }
                 )
+                continue
+            if finish_reason in {"length", "max_tokens"}:
+                answer_parts.append(
+                    "_A análise atingiu o limite máximo de extensão. Peça o detalhamento de uma parte específica se necessário._"
+                )
+            break
         record_global_tokens(prompt_tokens + completion_tokens)
-        answer = ""
-        if response is not None:
-            answer = str(response.choices[0].message.content or "").strip()
+        answer = "\n\n".join(part for part in answer_parts if part).strip()
         if not answer:
             answer = "Não consegui concluir a análise com segurança. Reformule a pergunta ou informe o indicador desejado."
         return AssistantResult(
