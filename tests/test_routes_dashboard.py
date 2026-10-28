@@ -54,6 +54,24 @@ def sample_payload() -> dict:
 
 
 class RoutesDashboardTests(unittest.TestCase):
+    def test_decimal_days_are_shown_as_days_plus_extra_hours(self):
+        self.assertEqual(dashboard._format_days_hours(1.3), "1 dia + 7 horas")
+        self.assertEqual(dashboard._format_days_hours(2.0), "2 dias")
+        self.assertEqual(dashboard._format_days_hours(0.5), "12 horas")
+
+        gauge = dashboard._route_gauge(
+            1.3,
+            "Dias para entregar",
+            maximum=3,
+            target=1,
+            inverse=True,
+            display_text=dashboard._format_days_hours(1.3),
+            reference_text=f"Referência: {dashboard._format_days_hours(1)}",
+        )
+        annotations = [annotation["text"] for annotation in gauge.layout.annotations]
+        self.assertIn("<b>1 dia + 7 horas</b>", annotations)
+        self.assertIn("Referência: 1 dia", annotations)
+
     def test_gauge_context_identifies_result_and_reference_status(self):
         context = dashboard._route_gauge_context_html(
             [("Melhor", "MOTORISTA TESTE"), ("Menor pontuação", "OUTRO MOTORISTA")],

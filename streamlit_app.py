@@ -66,7 +66,7 @@ MUTED = "#6B7280"
 CARD_BORDER = "#c2d2f3"
 LOGO_PATH = Path(__file__).parent / "static" / "logo-jr.png"
 CURRENT_YEAR = date.today().year
-APP_VERSION = "routes-colaboradores-image-v20"
+APP_VERSION = "routes-days-map-compat-v21"
 RANK_ROUTES_ENABLED = True
 ROUTE_CACHE_TTL_SECONDS = max(int(os.environ.get("JR_ROUTE_CACHE_TTL_SECONDS", "180") or 180), 30)
 DATA_EDITOR_PAGE_SIZE = 100
@@ -14165,6 +14165,19 @@ def _route_journeys_table(route: dict) -> pd.DataFrame:
     return pd.DataFrame(rows)
 
 
+def _format_days_hours(value: object) -> str:
+    """Turn a decimal day value into an operational, human-readable duration."""
+    numeric = pd.to_numeric(pd.Series([value]), errors="coerce").fillna(0.0).iloc[0]
+    total_hours = max(round(float(numeric) * 24.0), 0)
+    days, hours = divmod(total_hours, 24)
+    parts: list[str] = []
+    if days:
+        parts.append(f"{days} {'dia' if days == 1 else 'dias'}")
+    if hours or not parts:
+        parts.append(f"{hours} {'hora' if hours == 1 else 'horas'}")
+    return " + ".join(parts)
+
+
 def _route_gauge(
     value: object,
     title: str,
@@ -14173,6 +14186,8 @@ def _route_gauge(
     target: float,
     suffix: str = "",
     inverse: bool = False,
+    display_text: str | None = None,
+    reference_text: str | None = None,
 ) -> go.Figure:
     numeric_value = max(float(value or 0.0), 0.0)
     maximum = max(float(maximum or 0.0), numeric_value * 1.08, 1.0)
@@ -14206,7 +14221,7 @@ def _route_gauge(
 
     fig = go.Figure(
         go.Indicator(
-            mode="gauge+number",
+            mode="gauge" if display_text else "gauge+number",
             value=min(numeric_value, maximum),
             number={
                 "suffix": suffix,
@@ -14235,12 +14250,22 @@ def _route_gauge(
             },
         )
     )
+    if display_text:
+        fig.add_annotation(
+            x=0.5,
+            y=0.20,
+            xref="paper",
+            yref="paper",
+            text=f"<b>{h(display_text)}</b>",
+            showarrow=False,
+            font={"size": 21, "color": JR_BLUE},
+        )
     fig.add_annotation(
         x=0.5,
         y=0.02,
         xref="paper",
         yref="paper",
-        text=f"Referência: {fmt_num(target, 2 if 0 < target < 1 else 1)}{suffix}",
+        text=reference_text or f"Referência: {fmt_num(target, 2 if 0 < target < 1 else 1)}{suffix}",
         showarrow=False,
         font={"size": 11, "color": MUTED},
     )
@@ -14622,7 +14647,7 @@ def _render_rotas_v4() -> None:
             ("Tempo total de viagem", f"{fmt_num(data.get('horas_total'), decimals=1)} h", "#0F766E"),
             ("Horas trabalhadas", f"{fmt_num(data.get('horas_trabalhadas_total'), decimals=1)} h", "#2563EB"),
             ("Duração média da rota", f"{fmt_num(data.get('tempo_medio_rota'), decimals=1)} h", "#0F766E"),
-            ("Dias médios por rota", fmt_num(data.get("dias_medios_rota"), decimals=1), "#2563EB"),
+            ("Dias médios por rota", _format_days_hours(data.get("dias_medios_rota")), "#2563EB"),
             ("Entregas por rota", fmt_num(data.get("entregas_por_rota"), decimals=1), JR_BLUE),
             ("Peso médio por rota", fmt_peso(data.get("peso_medio_rota")), "#7C3AED"),
             ("Entregas por hora", fmt_num(data.get("entregas_por_hora"), decimals=2), "#0F766E"),
@@ -14738,8 +14763,14 @@ def _render_rotas_v4() -> None:
                         title,
                         maximum=maximum,
                         target=target,
-                        suffix=suffix,
+                        suffix="" if title == "Dias para entregar" else suffix,
                         inverse=inverse,
+                        display_text=_format_days_hours(value) if title == "Dias para entregar" else None,
+                        reference_text=(
+                            f"Referência: {_format_days_hours(target)}"
+                            if title == "Dias para entregar"
+                            else None
+                        ),
                     ),
                     width="stretch",
                     config={"displayModeBar": False, "responsive": True},
@@ -15309,7 +15340,7 @@ def _render_rotas_v4() -> None:
             [
                 ("Tempo da viagem", f"{fmt_num(selected_route.get('Tempo Viagem Horas'), 2)} h", "#0F766E"),
                 ("Horas trabalhadas", f"{fmt_num(selected_route.get('Horas Trabalhadas'), 2)} h", "#2563EB"),
-                ("Dias", fmt_num(selected_route.get("Dias Rota"), 0), JR_BLUE),
+                ("Dias", _format_days_hours(selected_route.get("Dias Rota")), JR_BLUE),
                 ("KM", f"{fmt_num(selected_route.get('KM Rodados'), 1)} km", "#D97706"),
                 ("Peso", fmt_peso(selected_route.get("Peso Carga")), "#7C3AED"),
                 ("Entregas", fmt_num(selected_route.get("Entregas"), 0), JR_BLUE),
@@ -16236,7 +16267,20 @@ def _render_route_gauge_panel(data: dict) -> None:
     for column, (value, title, maximum, target, suffix, inverse, key) in zip(columns, specifications):
         with column, st.container(border=True):
             st.plotly_chart(
-                _route_gauge(value, title, maximum=maximum, target=target, suffix=suffix, inverse=inverse),
+                _route_gauge(
+                    value,
+                    title,
+                    maximum=maximum,
+                    target=target,
+                    suffix="" if title == "Dias para entregar" else suffix,
+                    inverse=inverse,
+                    display_text=_format_days_hours(value) if title == "Dias para entregar" else None,
+                    reference_text=(
+                        f"Referência: {_format_days_hours(target)}"
+                        if title == "Dias para entregar"
+                        else None
+                    ),
+                ),
                 width="stretch",
                 config={"displayModeBar": False, "responsive": True},
                 key=key,
@@ -16466,7 +16510,20 @@ def _render_route_section_gauge_panel(
         )
         with column, st.container(border=True):
             st.plotly_chart(
-                _route_gauge(value, title, maximum=max_value, target=target, suffix=suffix, inverse=inverse),
+                _route_gauge(
+                    value,
+                    title,
+                    maximum=max_value,
+                    target=target,
+                    suffix="" if title == "Dias para entregar" else suffix,
+                    inverse=inverse,
+                    display_text=_format_days_hours(value) if title == "Dias para entregar" else None,
+                    reference_text=(
+                        f"Referência: {_format_days_hours(target)}"
+                        if title == "Dias para entregar"
+                        else None
+                    ),
+                ),
                 width="stretch",
                 config={"displayModeBar": False, "responsive": True},
                 key=f"routes_{prefix}_{key}_gauge_v9",
@@ -16574,8 +16631,17 @@ def _render_route_operational_map(data: dict) -> None:
         float(mapped["Longitude"].max() - mapped["Longitude"].min()),
     )
     zoom = 5.2 if geographic_span > 4 else 6.2 if geographic_span > 2 else 7.2
+    scatter_map = getattr(go, "Scattermap", None)
+    map_layout_key = "map"
+    if scatter_map is None:
+        scatter_map = getattr(go, "Scattermapbox", None)
+        map_layout_key = "mapbox"
+    if scatter_map is None:
+        st.error("A versão instalada do Plotly não oferece suporte ao mapa interativo.")
+        return
+
     fig = go.Figure(
-        go.Scattermapbox(
+        scatter_map(
             lat=mapped["Latitude"], lon=mapped["Longitude"], mode="markers",
             text=hover_text, hovertemplate="%{text}<extra></extra>",
             marker={
@@ -16589,11 +16655,11 @@ def _render_route_operational_map(data: dict) -> None:
         )
     )
     fig.update_layout(
-        mapbox={
+        **{map_layout_key: {
             "style": "open-street-map",
             "center": {"lat": float(mapped["Latitude"].mean()), "lon": float(mapped["Longitude"].mean())},
             "zoom": zoom,
-        },
+        }},
         margin={"l": 0, "r": 0, "t": 0, "b": 0},
         height=610,
         paper_bgcolor="rgba(0,0,0,0)",
@@ -17065,7 +17131,7 @@ def render_rotas() -> None:
             ("Entregas por hora", fmt_num(data.get("entregas_por_hora"),2), "#0F766E"),
             ("Toneladas por hora", fmt_num(data.get("toneladas_por_hora"),2), "#7C3AED"),
             ("Duração média", f"{fmt_num(data.get('tempo_medio_rota'),1)} h", "#2563EB"),
-            ("Dias médios", fmt_num(data.get("dias_medios_rota"),1), "#D97706"),
+            ("Dias médios", _format_days_hours(data.get("dias_medios_rota")), "#D97706"),
         ])
         if not time_frame.empty:
             days = pd.to_numeric(time_frame.get("Dias Rota"), errors="coerce").fillna(0)
