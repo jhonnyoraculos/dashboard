@@ -532,7 +532,8 @@ REGRAS OBRIGATÓRIAS:
 - Explique fórmulas e cálculos quando comparar valores.
 - Use Markdown, listas e tabelas pequenas quando melhorarem a leitura.
 - Entregue primeiro a conclusão e depois os cálculos essenciais. Seja conciso: normalmente até 600 palavras.
-- Não comece tabelas grandes. Para séries mensais, prefira uma lista curta ou uma tabela com no máximo 12 linhas e sempre finalize a explicação.
+- Na interface de conversa, não use tabelas Markdown nem caracteres de tabela (`|`). Para séries mensais, use uma lista curta com no máximo 12 itens e sempre finalize a explicação.
+- Use Markdown convencional com linhas em branco entre títulos, parágrafos e listas. Nunca emende marcadores `**`, fórmulas ou seções na mesma linha.
 - Não use títulos Markdown de nível 1 ou 2; use no máximo títulos com ### para não ocupar toda a conversa.
 - Se a pergunta for ambígua, peça uma informação curta e específica.
 - Ao sugerir navegação, use somente links retornados pela ferramenta navigate_to_page.

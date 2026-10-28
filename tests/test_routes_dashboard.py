@@ -54,6 +54,14 @@ def sample_payload() -> dict:
 
 
 class RoutesDashboardTests(unittest.TestCase):
+    def test_ai_broken_inline_table_is_normalized_for_chat(self):
+        raw = "## Projeção | Métrica |---| Valor observado | **Conclusão** custo estável"
+        normalized = dashboard._normalize_ai_markdown(raw)
+        self.assertIn("### Projeção", normalized)
+        self.assertNotIn("|", normalized)
+        self.assertNotIn("---", normalized)
+        self.assertIn("**Conclusão**", normalized)
+
     def test_ai_general_question_uses_every_dashboard_with_shared_period(self):
         self.assertTrue(dashboard._ai_is_general_question("Como está o desempenho geral de custo sobre ganho?"))
         self.assertTrue(dashboard._ai_is_general_question("Mostre o site inteiro"))
