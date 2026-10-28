@@ -77,7 +77,7 @@ MUTED = "#6B7280"
 CARD_BORDER = "#c2d2f3"
 LOGO_PATH = Path(__file__).parent / "static" / "logo-jr.png"
 CURRENT_YEAR = date.today().year
-APP_VERSION = "global-groq-assistant-v23"
+APP_VERSION = "global-groq-assistant-v24"
 RANK_ROUTES_ENABLED = True
 ROUTE_CACHE_TTL_SECONDS = max(int(os.environ.get("JR_ROUTE_CACHE_TTL_SECONDS", "180") or 180), 30)
 DATA_EDITOR_PAGE_SIZE = 100
@@ -3460,9 +3460,10 @@ def _inject_ai_assistant_css() -> None:
         """
         <style>
         .st-key-ai_assistant_shell {
-          position:fixed !important; right:22px !important; bottom:20px !important;
-          width:auto !important; z-index:2200 !important;
+          position:fixed !important; top:82px !important; right:22px !important; bottom:auto !important;
+          width:auto !important; z-index:2200 !important; pointer-events:none !important;
         }
+        .st-key-ai_assistant_shell [data-testid="stPopover"] {pointer-events:auto !important;}
         .st-key-ai_assistant_shell [data-testid="stPopover"] > button {
           min-height:52px !important; padding:0 20px !important; border-radius:999px !important;
           color:#fff !important; -webkit-text-fill-color:#fff !important; font-weight:800 !important;
@@ -3475,7 +3476,7 @@ def _inject_ai_assistant_css() -> None:
           transform:translateY(-2px); box-shadow:0 22px 52px rgba(28,45,107,.40) !important;
         }
         div[data-testid="stPopoverBody"]:has(.st-key-ai_chat_panel) {
-          width:min(470px,calc(100vw - 26px)) !important; max-height:min(760px,calc(100vh - 90px)) !important;
+          width:min(470px,calc(100vw - 26px)) !important; max-height:min(720px,calc(100vh - 155px)) !important;
           overflow-y:auto !important; border-radius:24px !important;
           border:1px solid rgba(255,255,255,.75) !important;
           background:rgba(248,250,252,.88) !important;
@@ -3492,7 +3493,7 @@ def _inject_ai_assistant_css() -> None:
         .ai-status {display:inline-flex;align-items:center;gap:6px;padding:5px 9px;border-radius:999px;background:#DCFCE7;color:#166534;font-size:11px;font-weight:800}
         .ai-status.offline {background:#FEF3C7;color:#92400E}.ai-dot{width:7px;height:7px;border-radius:50%;background:currentColor}
         [class*="st-key-ai_chart_action_"] button {min-height:34px !important;border-radius:10px !important;color:#1C2D6B !important;font-weight:700 !important}
-        @media(max-width:640px){.st-key-ai_assistant_shell{right:12px !important;bottom:12px !important}.st-key-ai_assistant_shell [data-testid="stPopover"] > button{min-height:48px !important;padding:0 15px !important}}
+        @media(max-width:640px){.st-key-ai_assistant_shell{top:70px !important;right:12px !important;bottom:auto !important}.st-key-ai_assistant_shell [data-testid="stPopover"] > button{min-height:48px !important;padding:0 15px !important}div[data-testid="stPopoverBody"]:has(.st-key-ai_chat_panel){max-height:calc(100vh - 135px) !important}}
         </style>
         """,
         unsafe_allow_html=True,
