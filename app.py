@@ -59,7 +59,7 @@ DB_TABLES = {
 }
 DB_METADATA_TABLE = "dashboard_metadata"
 BACKEND_BUILD_VERSION = "aluguel-multiplicar-meses-v1"
-ROUTES_BUILD_VERSION = "rotas-fuel-per-km-v17"
+ROUTES_BUILD_VERSION = "rotas-colaboradores-v18"
 PEDAGIO_CHART_VERSION = "all-types-v1"
 BACKUP_METADATA_KEY = "backup.last_downloaded_at"
 _DB_ENGINE = None
@@ -177,6 +177,7 @@ _ROTAS_COLUMNS = [
     "Categoria",
     "Veiculo",
     "Motorista",
+    "Ajudante",
     "Peso Carga",
     "Peso Manifesto",
     "Telefone",
@@ -2231,6 +2232,7 @@ def update_route_operation(
     km_rodados: float | None,
     placa: str,
     motorista: str,
+    ajudante: str = "",
     observacao: str = "",
     jornadas: list[dict] | None = None,
 ) -> dict:
@@ -2256,6 +2258,7 @@ def update_route_operation(
     driver_value = str(motorista or "").strip()
     if not driver_value:
         raise ValueError("Informe o motorista.")
+    helper_value = str(ajudante or "").strip() or None
 
     from sqlalchemy import text
 
@@ -2336,6 +2339,10 @@ def update_route_operation(
                         WHEN "Rota ID" = :selected_route_id THEN :motorista
                         ELSE "Motorista"
                     END,
+                    "Ajudante" = CASE
+                        WHEN "Rota ID" = :selected_route_id THEN :ajudante
+                        ELSE "Ajudante"
+                    END,
                     "Observacao" = CASE
                         WHEN "Rota ID" = :selected_route_id THEN :observacao
                         ELSE "Observacao"
@@ -2359,6 +2366,7 @@ def update_route_operation(
                 "placa": plate_value,
                 "categoria": category,
                 "motorista": driver_value,
+                "ajudante": helper_value,
                 "observacao": str(observacao or "").strip() or None,
                 "selected_route_id": route_id,
                 "selected_updated_at": selected_updated_at,
@@ -2432,6 +2440,7 @@ def update_route_history_rows(rows: list[dict]) -> dict:
             driver_value = str(row.get("Motorista") or "").strip()
             if not driver_value:
                 raise ValueError(f"Informe o motorista da rota {route_id}.")
+            helper_value = str(row.get("Ajudante") or "").strip() or None
 
             saida_dt = optional_datetime(row.get("Saida"), "Saida")
             retorno_dt = optional_datetime(row.get("Retorno"), "Retorno")
@@ -2471,6 +2480,7 @@ def update_route_history_rows(rows: list[dict]) -> dict:
                     SET "PLACA" = :placa,
                         "Categoria" = :categoria,
                         "Motorista" = :motorista,
+                        "Ajudante" = :ajudante,
                         "Jornadas" = CASE
                             WHEN "Saida" IS DISTINCT FROM :saida OR "Retorno" IS DISTINCT FROM :retorno
                                 THEN NULL
@@ -2498,6 +2508,7 @@ def update_route_history_rows(rows: list[dict]) -> dict:
                     "placa": plate_value,
                     "categoria": category,
                     "motorista": driver_value,
+                    "ajudante": helper_value,
                     "saida": saida_dt,
                     "retorno": retorno_dt,
                     "km": km_value,
@@ -2527,6 +2538,54 @@ def update_route_history_rows(rows: list[dict]) -> dict:
         _clear_dataset_cache("rotas")
         _clear_dataset_cache("placas")
     return {"updated": updated, "version": version}
+
+
+def update_route_collaborators(rows: list[dict]) -> dict:
+    """Atualiza somente motorista e ajudante de rotas já existentes."""
+    if not rows:
+        return {"updated": 0, "route_ids": []}
+
+    from sqlalchemy import text
+
+    version = datetime.now(timezone.utc).isoformat()
+    route_table = _quote_identifier(DB_TABLES["rotas"])
+    updated_ids: list[str] = []
+    with _db_engine().begin() as conn:
+        _ensure_dataset_table(conn, "rotas")
+        for row in rows:
+            route_id = str(row.get("Rota ID") or "").strip()
+            if not route_id or route_id in updated_ids:
+                continue
+            driver = str(row.get("Motorista") or "").strip() or None
+            helper = str(row.get("Ajudante") or "").strip() or None
+            if not driver and not helper:
+                continue
+            result = conn.execute(
+                text(
+                    f"""
+                    UPDATE {route_table}
+                    SET "Motorista" = COALESCE(:motorista, "Motorista"),
+                        "Ajudante" = COALESCE(:ajudante, "Ajudante"),
+                        "Atualizado Em" = :updated_at
+                    WHERE "Rota ID" = :route_id
+                    """
+                ),
+                {
+                    "motorista": driver,
+                    "ajudante": helper,
+                    "updated_at": datetime.now(timezone.utc),
+                    "route_id": route_id,
+                },
+            )
+            if result.rowcount:
+                updated_ids.append(route_id)
+        if updated_ids:
+            _write_metadata(conn, "rotas.version", version)
+            _write_metadata(conn, "import.version", version)
+
+    if updated_ids:
+        _clear_dataset_cache("rotas")
+    return {"updated": len(updated_ids), "route_ids": updated_ids, "version": version}
 
 
 def _normalize_ascii(value):
@@ -3932,6 +3991,7 @@ def load_rotas() -> pd.DataFrame:
                 "Carga",
                 "Veiculo",
                 "Motorista",
+                "Ajudante",
                 "Telefone",
                 "Empresa",
                 "Status",
@@ -4798,8 +4858,38 @@ def _route_performance_ranking(source: pd.DataFrame, column: str, *, route_mode:
     return grouped[[column, *[name for name in output_columns if name != column]]]
 
 
+def _route_collaborator_ranking(source: pd.DataFrame) -> pd.DataFrame:
+    pieces: list[pd.DataFrame] = []
+    for column, role in (("Motorista", "Motorista"), ("Ajudante", "Ajudante")):
+        if column not in source.columns:
+            continue
+        part = source.copy()
+        part["Colaborador"] = part[column].astype("string").fillna("").str.strip()
+        part = part.loc[part["Colaborador"].ne("")].copy()
+        if not part.empty:
+            part["Função"] = role
+            pieces.append(part)
+    if not pieces:
+        return pd.DataFrame(columns=["Colaborador", "Função", "Posicao", "Pontuacao"])
+
+    expanded = pd.concat(pieces, ignore_index=True)
+    role_map = (
+        expanded.groupby("Colaborador")["Função"]
+        .agg(lambda values: " / ".join(sorted(set(values))))
+        .to_dict()
+    )
+    # Se uma pessoa aparecer como motorista e ajudante na mesma rota, a rota é
+    # contada uma única vez, mas ambas as funções continuam visíveis.
+    metrics = expanded.drop_duplicates(["Rota ID", "Colaborador"])
+    ranking = _route_performance_ranking(metrics, "Colaborador")
+    if ranking.empty:
+        return ranking.assign(**{"Função": pd.Series(dtype="string")})
+    ranking.insert(1, "Função", ranking["Colaborador"].map(role_map).fillna(""))
+    return ranking
+
+
 def _route_calendar_days(routes: pd.DataFrame) -> pd.DataFrame:
-    columns = ["Rota ID", "Data", "Mes", "Rota", "PLACA", "Motorista", "Categoria"]
+    columns = ["Rota ID", "Data", "Mes", "Rota", "PLACA", "Motorista", "Ajudante", "Categoria"]
     rows: list[dict] = []
     for _, route in routes.iterrows():
         start = pd.to_datetime(route.get("Saida"), errors="coerce")
@@ -4819,6 +4909,7 @@ def _route_calendar_days(routes: pd.DataFrame) -> pd.DataFrame:
                     "Rota": route.get("Rota"),
                     "PLACA": route.get("PLACA"),
                     "Motorista": route.get("Motorista"),
+                    "Ajudante": route.get("Ajudante"),
                     "Categoria": route.get("Categoria"),
                 }
             )
@@ -5115,12 +5206,24 @@ def _route_cost_breakdown(
             day_names["_Motorista Rota"] = day_names["Motorista"].astype("string").fillna("").map(
                 lambda value: _normalize_ascii(value).casefold().strip()
             )
+            day_names["_Ajudante Rota"] = day_names.get("Ajudante", "").astype("string").fillna("").map(
+                lambda value: _normalize_ascii(value).casefold().strip()
+            )
             matches = hotel_rows.merge(day_names, on="Data", how="inner")
             matches = matches.loc[
-                matches["_Motorista Rota"].ne("")
-                & (
-                    matches["_Motorista Rota"].eq(matches["_Motorista"])
-                    | matches["_Motorista Rota"].eq(matches["_Ajudante"])
+                (
+                    matches["_Motorista Rota"].ne("")
+                    & (
+                        matches["_Motorista Rota"].eq(matches["_Motorista"])
+                        | matches["_Motorista Rota"].eq(matches["_Ajudante"])
+                    )
+                )
+                | (
+                    matches["_Ajudante Rota"].ne("")
+                    & (
+                        matches["_Ajudante Rota"].eq(matches["_Motorista"])
+                        | matches["_Ajudante Rota"].eq(matches["_Ajudante"])
+                    )
                 )
             ].copy()
             if not matches.empty:
@@ -5267,7 +5370,7 @@ def data_rotas(params: dict | None = None) -> dict:
 
     route_ids = set(routes["Rota ID"].dropna().astype("string").tolist())
     filtered_deliveries = deliveries[deliveries["Rota ID"].astype("string").isin(route_ids)].copy()
-    route_context_columns = ["Rota ID", "Data", "Rota", "Carga", "PLACA", "Motorista", "Status"]
+    route_context_columns = ["Rota ID", "Data", "Rota", "Carga", "PLACA", "Motorista", "Ajudante", "Status"]
     delivery_details = filtered_deliveries.merge(
         routes[route_context_columns],
         on="Rota ID",
@@ -5277,6 +5380,7 @@ def data_rotas(params: dict | None = None) -> dict:
 
     metric_source = _route_metric_source(routes, filtered_deliveries)
     ranking_motoristas = _route_performance_ranking(metric_source, "Motorista")
+    ranking_colaboradores = _route_collaborator_ranking(metric_source)
     ranking_placas = _route_performance_ranking(metric_source, "PLACA")
     ranking_rotas = _route_performance_ranking(metric_source, "Rota", route_mode=True)
 
@@ -5400,7 +5504,7 @@ def data_rotas(params: dict | None = None) -> dict:
     alerts.sort(key=lambda row: (level_order.get(str(row.get("Nivel")), 9), str(row.get("Data") or "")), reverse=False)
 
     time_columns = [
-        "Rota ID", "Data", "Rota", "Carga", "PLACA", "Motorista", "Categoria", "Saida", "Retorno",
+        "Rota ID", "Data", "Rota", "Carga", "PLACA", "Motorista", "Ajudante", "Categoria", "Saida", "Retorno",
         "Tempo Viagem Horas", "Horas Trabalhadas", "Dias Rota", "KM Rodados", "Entregas", "Peso Carga",
         "_Entrega Hora", "_Ton Hora", "_Qualidade", "Jornadas",
     ]
@@ -5460,6 +5564,7 @@ def data_rotas(params: dict | None = None) -> dict:
         "rotas_detalhes": _route_records(routes.sort_values(["Data", "Rota"], ascending=[False, True])),
         "entregas_detalhes": _route_records(delivery_details),
         "ranking_motoristas": _route_records(ranking_motoristas),
+        "ranking_colaboradores": _route_records(ranking_colaboradores),
         "ranking_placas": _route_records(ranking_placas),
         "ranking_rotas": _route_records(ranking_rotas),
         "ranking_cidades": _route_records(city_ranking),

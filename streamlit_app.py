@@ -46,6 +46,7 @@ _backend_features_ready = all(
         "import_route_manifests",
         "auto_complete_freighter_routes",
         "update_route_operation",
+        "update_route_collaborators",
         "update_route_history_rows",
     )
 )
@@ -54,7 +55,7 @@ _backend_aluguel_period_ready = {"Inicio", "Fim"}.issubset(
 )
 _backend_aluguel_monthly_ready = getattr(backend, "BACKEND_BUILD_VERSION", "") == "aluguel-multiplicar-meses-v1"
 _backend_pedagio_chart_ready = getattr(backend, "PEDAGIO_CHART_VERSION", "") == "all-types-v1"
-_backend_routes_ready = getattr(backend, "ROUTES_BUILD_VERSION", "") == "rotas-fuel-per-km-v17"
+_backend_routes_ready = getattr(backend, "ROUTES_BUILD_VERSION", "") == "rotas-colaboradores-v18"
 if not _backend_features_ready or not _backend_aluguel_period_ready or not _backend_aluguel_monthly_ready or not _backend_pedagio_chart_ready or not _backend_routes_ready:
     backend = importlib.reload(backend)
 
@@ -65,7 +66,7 @@ MUTED = "#6B7280"
 CARD_BORDER = "#c2d2f3"
 LOGO_PATH = Path(__file__).parent / "static" / "logo-jr.png"
 CURRENT_YEAR = date.today().year
-APP_VERSION = "routes-map-forecast-answers-v19"
+APP_VERSION = "routes-colaboradores-image-v20"
 RANK_ROUTES_ENABLED = True
 ROUTE_CACHE_TTL_SECONDS = max(int(os.environ.get("JR_ROUTE_CACHE_TTL_SECONDS", "180") or 180), 30)
 DATA_EDITOR_PAGE_SIZE = 100
@@ -9225,6 +9226,226 @@ def _read_fuel_receipt_image(image_bytes: bytes) -> dict[str, object]:
     }
 
 
+@st.cache_data(show_spinner=False, max_entries=16)
+def _read_route_collaborator_image(image_bytes: bytes) -> dict[str, object]:
+    import numpy as np
+
+    image = ImageOps.exif_transpose(Image.open(BytesIO(image_bytes))).convert("RGB")
+    longest_side = max(image.size)
+    if longest_side < 2600:
+        ratio = min(2600 / max(longest_side, 1), 2.4)
+        image = image.resize((max(int(image.width * ratio), 1), max(int(image.height * ratio), 1)), Image.Resampling.LANCZOS)
+    elif longest_side > 3600:
+        ratio = 3600 / longest_side
+        image = image.resize((max(int(image.width * ratio), 1), max(int(image.height * ratio), 1)), Image.Resampling.LANCZOS)
+    prepared = ImageOps.autocontrast(image.convert("L"), cutoff=1).convert("RGB")
+    prepared = ImageEnhance.Contrast(prepared).enhance(1.2)
+    prepared = ImageEnhance.Sharpness(prepared).enhance(1.4)
+    result = _fuel_receipt_ocr_engine()(np.asarray(prepared))
+    raw_texts = getattr(result, "txts", None)
+    raw_boxes = getattr(result, "boxes", None)
+    raw_scores = getattr(result, "scores", None)
+    texts = [clean_text(value).strip() for value in ([] if raw_texts is None else raw_texts)]
+    boxes = [] if raw_boxes is None else list(raw_boxes)
+    scores = [float(value) for value in ([] if raw_scores is None else raw_scores)]
+    detections = []
+    for index, value in enumerate(texts):
+        if not value:
+            continue
+        box = boxes[index].tolist() if index < len(boxes) and hasattr(boxes[index], "tolist") else boxes[index] if index < len(boxes) else []
+        detections.append(
+            {
+                "text": value,
+                "box": box,
+                "score": scores[index] if index < len(scores) else 0.0,
+            }
+        )
+    return {
+        "text": "\n".join(item["text"] for item in detections),
+        "detections": detections,
+        "width": image.width,
+        "height": image.height,
+        "confidence": (sum(scores) / len(scores)) if scores else 0.0,
+        "line_count": len(detections),
+    }
+
+
+def _route_staff_date_from_text(raw_text: object) -> date:
+    plain = unicodedata.normalize("NFKD", clean_text(raw_text))
+    plain = "".join(character for character in plain if not unicodedata.combining(character)).upper()
+    months = {
+        "JANEIRO": 1, "FEVEREIRO": 2, "MARCO": 3, "ABRIL": 4, "MAIO": 5, "JUNHO": 6,
+        "JULHO": 7, "AGOSTO": 8, "SETEMBRO": 9, "OUTUBRO": 10, "NOVEMBRO": 11, "DEZEMBRO": 12,
+    }
+    pattern = re.compile(
+        r"(\d{1,2})\s+DE\s+(JANEIRO|FEVEREIRO|MARCO|ABRIL|MAIO|JUNHO|JULHO|AGOSTO|SETEMBRO|OUTUBRO|NOVEMBRO|DEZEMBRO)\s+DE\s+(\d{4})"
+    )
+    matches = list(pattern.finditer(plain))
+    if len(matches) < 2:
+        raise ValueError("Não foi possível identificar as duas datas do cabeçalho. Envie a imagem completa, incluindo CARREGAMENTOS e ROTAS.")
+    day_value, month_name, year_value = matches[1].groups()
+    return date(int(year_value), months[month_name], int(day_value))
+
+
+def _route_staff_plate(value: object) -> str:
+    plain = unicodedata.normalize("NFKD", clean_text(value)).encode("ascii", "ignore").decode("ascii").upper()
+    match = re.search(r"\b([A-Z]{3})\s*-?\s*([0-9][A-Z0-9][0-9]{2})\b", plain)
+    if not match:
+        return ""
+    normalized = backend._normalize_plate_value("".join(match.groups()))
+    return "" if pd.isna(normalized) else clean_text(normalized)
+
+
+def _route_staff_code(value: object) -> str:
+    plain = unicodedata.normalize("NFKD", clean_text(value)).encode("ascii", "ignore").decode("ascii").upper()
+    if "XXX" in plain:
+        return "XXX"
+    match = re.search(r"\b(\d{1,4})\b", plain)
+    return str(int(match.group(1))) if match else ""
+
+
+def _parse_route_collaborator_ocr(ocr_result: dict[str, object]) -> tuple[date, list[dict]]:
+    route_date = _route_staff_date_from_text(ocr_result.get("text"))
+    width = max(float(ocr_result.get("width") or 0), 1.0)
+    height = max(float(ocr_result.get("height") or 0), 1.0)
+    positioned: list[dict] = []
+    for item in ocr_result.get("detections") or []:
+        box = item.get("box") or []
+        if len(box) < 4:
+            continue
+        xs = [float(point[0]) for point in box if len(point) >= 2]
+        ys = [float(point[1]) for point in box if len(point) >= 2]
+        if not xs or not ys:
+            continue
+        positioned.append(
+            {
+                "text": clean_text(item.get("text")).strip(),
+                "x": sum(xs) / len(xs),
+                "y": sum(ys) / len(ys),
+            }
+        )
+    if not positioned:
+        raise ValueError("O texto foi lido, mas não foi possível reconhecer a posição das colunas da tabela.")
+
+    header_candidates = [
+        item["y"] for item in positioned
+        if any(token in _route_city_key(item["text"]) for token in ("N ROTA", "PLACAS", "MOTORISTA", "OBSS"))
+        and item["y"] < height * 0.35
+    ]
+    header_y = max(header_candidates) if header_candidates else height * 0.16
+    data_items = [item for item in positioned if item["y"] > header_y + height * 0.015]
+    row_tolerance = max(height * 0.014, 8.0)
+    grouped: list[list[dict]] = []
+    for item in sorted(data_items, key=lambda value: (value["y"], value["x"])):
+        if not grouped:
+            grouped.append([item])
+            continue
+        current_y = sum(value["y"] for value in grouped[-1]) / len(grouped[-1])
+        if abs(item["y"] - current_y) <= row_tolerance:
+            grouped[-1].append(item)
+        else:
+            grouped.append([item])
+
+    rows: list[dict] = []
+    for group in grouped:
+        cells: list[list[tuple[float, str]]] = [[] for _ in range(6)]
+        for item in group:
+            fraction = item["x"] / width
+            column = 0 if fraction < 0.08 else 1 if fraction < 0.22 else 2 if fraction < 0.385 else 3 if fraction < 0.665 else 4 if fraction < 0.865 else 5
+            cells[column].append((item["x"], item["text"]))
+        values = [" ".join(text for _, text in sorted(cell)).strip(" -|") for cell in cells]
+        route_code = _route_staff_code(values[0])
+        if not route_code:
+            continue
+        driver = clean_text(values[3]).strip(" -|").upper()
+        helper = clean_text(values[4]).strip(" -|").upper()
+        if not driver and not helper:
+            continue
+        rows.append(
+            {
+                "Data escala": route_date,
+                "Nº rota": route_code,
+                "PLACA lida": _route_staff_plate(values[1]),
+                "Rota lida": clean_text(values[2]).strip(" -|").upper(),
+                "Motorista": driver,
+                "Ajudante": helper,
+                "Observação lida": clean_text(values[5]).strip(" -|"),
+            }
+        )
+    if not rows:
+        raise ValueError("Nenhuma linha de rota com motorista ou ajudante foi reconhecida.")
+    return route_date, rows
+
+
+def _match_route_collaborators(rows: list[dict], routes: pd.DataFrame) -> list[dict]:
+    if routes.empty:
+        return [{**row, "Correspondência": "Não encontrada", "Rota ID": ""} for row in rows]
+    work = routes.copy()
+    date_columns = [column for column in ["Data", "Previsao", "Emissao", "Saida"] if column in work.columns]
+    work["_Datas"] = [
+        {pd.Timestamp(value).date() for value in (pd.to_datetime(row.get(column), errors="coerce") for column in date_columns) if pd.notna(value)}
+        for _, row in work.iterrows()
+    ]
+    work["_Codigo"] = [
+        _route_staff_code(row.get("Codigo Rota")) or _route_staff_code(row.get("Rota"))
+        for _, row in work.iterrows()
+    ]
+    work["_Placa"] = work.get("PLACA", pd.Series("", index=work.index)).map(_route_staff_plate)
+    work["_Rota normalizada"] = work.get("Rota", pd.Series("", index=work.index)).map(_route_city_key)
+
+    matched_rows: list[dict] = []
+    for row in rows:
+        target_date = row.get("Data escala")
+        candidates = work.loc[work["_Datas"].map(lambda values: target_date in values)].copy()
+        code = clean_text(row.get("Nº rota"))
+        plate = clean_text(row.get("PLACA lida"))
+        code_matches = candidates.loc[candidates["_Codigo"].eq(code)] if code and code != "XXX" else candidates.iloc[0:0]
+        if not code_matches.empty:
+            candidates = code_matches
+        if plate:
+            plate_matches = candidates.loc[candidates["_Placa"].eq(plate)]
+            candidates = plate_matches
+        route_name = _route_city_key(row.get("Rota lida"))
+        candidates["_Similaridade"] = candidates["_Rota normalizada"].map(
+            lambda value: SequenceMatcher(None, route_name, value).ratio() if route_name and value else 0.0
+        )
+        selected = None
+        if len(candidates) == 1 and ((code and code != "XXX" and candidates.iloc[0]["_Codigo"] == code) or (plate and candidates.iloc[0]["_Placa"] == plate)):
+            selected = candidates.iloc[0]
+        elif len(candidates) > 1 and route_name:
+            ordered = candidates.sort_values("_Similaridade", ascending=False)
+            best_score = float(ordered.iloc[0]["_Similaridade"])
+            next_score = float(ordered.iloc[1]["_Similaridade"]) if len(ordered) > 1 else 0.0
+            if best_score >= 0.55 and best_score - next_score >= 0.10:
+                selected = ordered.iloc[0]
+
+        if selected is None:
+            matched_rows.append(
+                {
+                    **row,
+                    "Correspondência": "Não encontrada" if candidates.empty else "Ambígua — conferir",
+                    "Rota encontrada": "",
+                    "Status atual": "",
+                    "Motorista atual": "",
+                    "Ajudante atual": "",
+                    "Rota ID": "",
+                }
+            )
+        else:
+            matched_rows.append(
+                {
+                    **row,
+                    "Correspondência": "Encontrada",
+                    "Rota encontrada": clean_text(selected.get("Rota")),
+                    "Status atual": clean_text(selected.get("Status")),
+                    "Motorista atual": clean_text(selected.get("Motorista")),
+                    "Ajudante atual": clean_text(selected.get("Ajudante")),
+                    "Rota ID": clean_text(selected.get("Rota ID")),
+                }
+            )
+    return matched_rows
+
+
 def _km_rows_from_sheet(df: pd.DataFrame) -> tuple[list[dict], list[str]]:
     header_map = {_normalize_sheet_header(column): column for column in df.columns}
     aliases = {
@@ -11559,6 +11780,127 @@ def _render_route_pdf_import(plate_map: dict[str, str]) -> None:
         st.rerun()
 
 
+@st.fragment
+def _render_route_collaborator_import() -> None:
+    with st.expander("Adicionar motorista e ajudante por imagem", expanded=False):
+        st.caption(
+            "Envie a imagem completa da escala. A data usada será sempre a segunda do cabeçalho, na linha ROTAS. "
+            "O sistema procura rotas já importadas nessa data e altera somente motorista e ajudante, sem mudar "
+            "status, horários ou KM. Rotas não encontradas são ignoradas."
+        )
+        if message := st.session_state.pop("route_staff_import_message", None):
+            st.success(message)
+        source = st.radio(
+            "Como deseja informar a escala?",
+            ["Enviar imagem", "Tirar foto agora"],
+            horizontal=True,
+            key="cad_route_staff_source_v1",
+        )
+        if source == "Tirar foto agora":
+            uploaded = st.camera_input("Fotografe a escala inteira", key="cad_route_staff_camera_v1")
+        else:
+            uploaded = st.file_uploader(
+                "Selecione a imagem da escala",
+                type=["jpg", "jpeg", "png", "webp"],
+                key="cad_route_staff_upload_v1",
+            )
+        if uploaded is None:
+            return
+
+        image_bytes = uploaded.getvalue()
+        image_hash = hashlib.sha256(image_bytes).hexdigest()
+        st.image(image_bytes, caption="Escala que será lida", width="stretch")
+        if st.button("Ler colaboradores da escala", type="primary", width="stretch", key="cad_route_staff_read_v1"):
+            try:
+                with st.spinner("Lendo a segunda data e conciliando as linhas com as rotas importadas..."):
+                    ocr_result = _read_route_collaborator_image(image_bytes)
+                    route_date, parsed_rows = _parse_route_collaborator_ocr(ocr_result)
+                    routes = backend.load_rotas()
+                    matches = _match_route_collaborators(parsed_rows, routes)
+                    st.session_state["cad_route_staff_result_v1"] = {
+                        "image_hash": image_hash,
+                        "date": route_date.isoformat(),
+                        "rows": matches,
+                        "confidence": float(ocr_result.get("confidence") or 0.0),
+                        "line_count": int(ocr_result.get("line_count") or 0),
+                    }
+            except Exception as exc:
+                st.error("Não foi possível ler essa escala. Confira se a imagem mostra as duas datas e toda a tabela.")
+                st.exception(exc)
+                return
+
+        result = st.session_state.get("cad_route_staff_result_v1") or {}
+        if result.get("image_hash") != image_hash:
+            return
+        rows = pd.DataFrame(result.get("rows") or [])
+        if rows.empty:
+            st.warning("Nenhuma linha de colaborador foi reconhecida.")
+            return
+        found_count = int(rows["Rota ID"].astype("string").fillna("").str.strip().ne("").sum())
+        missing_count = len(rows) - found_count
+        st.success(
+            f"Escala de {pd.to_datetime(result.get('date')).strftime('%d/%m/%Y')}: "
+            f"{found_count} rota(s) encontrada(s) e {missing_count} não encontrada(s)."
+        )
+        st.caption(
+            f"OCR: {int(result.get('line_count') or 0)} trecho(s) de texto, confiança média de "
+            f"{float(result.get('confidence') or 0.0) * 100:.1f}%. Confira os nomes antes de aplicar."
+        )
+        visible_columns = [
+            "Data escala", "Nº rota", "PLACA lida", "Rota lida", "Motorista", "Ajudante",
+            "Correspondência", "Rota encontrada", "Status atual", "Motorista atual", "Ajudante atual", "Rota ID",
+        ]
+        edited = st.data_editor(
+            rows[visible_columns],
+            width="stretch",
+            hide_index=True,
+            disabled=[column for column in visible_columns if column not in {"Motorista", "Ajudante"}],
+            column_config={
+                "Data escala": _date_col("Data de ROTAS"),
+                "Motorista": st.column_config.TextColumn("Motorista lido"),
+                "Ajudante": st.column_config.TextColumn("Ajudante lido"),
+                "Rota ID": st.column_config.TextColumn("ID encontrado"),
+            },
+            key=f"cad_route_staff_editor_{image_hash[:12]}",
+        )
+        if missing_count:
+            st.info(
+                f"{missing_count} linha(s) não serão alteradas porque não houve correspondência única pela data, "
+                "número/nome da rota e placa."
+            )
+        if st.button(
+            f"Aplicar colaboradores em {found_count} rota(s) encontrada(s)",
+            type="primary",
+            width="stretch",
+            disabled=found_count == 0,
+            key=f"cad_route_staff_apply_{image_hash[:12]}",
+        ):
+            payload = []
+            for _, row in edited.iterrows():
+                route_id = clean_text(row.get("Rota ID")).strip()
+                if not route_id:
+                    continue
+                payload.append(
+                    {
+                        "Rota ID": route_id,
+                        "Motorista": clean_text(row.get("Motorista")).strip().upper(),
+                        "Ajudante": clean_text(row.get("Ajudante")).strip().upper(),
+                    }
+                )
+            try:
+                saved = backend.update_route_collaborators(payload)
+            except Exception as exc:
+                st.error(f"Não foi possível atualizar os colaboradores no Neon: {exc}")
+                return
+            clear_cached_reads()
+            st.session_state.pop("cad_route_staff_result_v1", None)
+            st.session_state["route_staff_import_message"] = (
+                f"Colaboradores atualizados em {int(saved.get('updated', 0))} rota(s). "
+                f"{missing_count} linha(s) sem correspondência foram ignoradas."
+            )
+            st.rerun()
+
+
 def _route_row_datetime(row: pd.Series, column: str, fallback: datetime) -> datetime:
     value = pd.to_datetime(row.get(column), errors="coerce")
     if pd.isna(value):
@@ -11608,7 +11950,7 @@ def _render_route_completion(plate_map: dict[str, str]) -> None:
     st.caption(
         "Complete a saída real e o retorno. O KM é obrigatório para a frota própria. As rotas de freteiros são "
         "concluídas automaticamente, sem KM, usando 07:00–17:00 quando o PDF não informa horários. "
-        "Esses campos alimentam o cálculo de duração, dias e os rankings de motorista, placa e rota."
+        "Esses campos alimentam o cálculo de duração, dias e os rankings de colaboradores, placa e rota."
     )
     auto_complete_key = "route_freighters_auto_completed_v1"
     auto_result = {"updated": 0}
@@ -11723,6 +12065,11 @@ def _render_route_completion(plate_map: dict[str, str]) -> None:
                 "Motorista",
                 value=clean_text(row.get("Motorista")),
                 key=f"route_driver_{selected_id}",
+            )
+            helper = st.text_input(
+                "Ajudante",
+                value=clean_text(row.get("Ajudante")),
+                key=f"route_helper_{selected_id}",
             )
             selected_category = plate_map.get(plate, clean_text(row.get("Categoria") or "Transporte"))
             is_freighter = clean_text(selected_category).strip().lower() == "freteiro"
@@ -11876,6 +12223,7 @@ def _render_route_completion(plate_map: dict[str, str]) -> None:
                     km_rodados=km,
                     placa=plate,
                     motorista=driver,
+                    ajudante=helper,
                     observacao=observation,
                     jornadas=journey_payload,
                 )
@@ -12002,6 +12350,7 @@ def _render_route_history(plate_map: dict[str, str]) -> None:
         "PLACA",
         "Categoria",
         "Motorista",
+        "Ajudante",
         "Saida",
         "Retorno",
         "KM Rodados",
@@ -12009,6 +12358,7 @@ def _render_route_history(plate_map: dict[str, str]) -> None:
     ]
     history = routes[columns].copy()
     history["Observacao"] = history["Observacao"].astype("string").fillna("").replace("<NA>", "")
+    history["Ajudante"] = history["Ajudante"].astype("string").fillna("").replace("<NA>", "")
     latest_value = history["Última alteração"].max()
     history_token = hashlib.sha1(
         f"{len(history)}|{latest_value}|{APP_VERSION}".encode("utf-8")
@@ -12030,6 +12380,7 @@ def _render_route_history(plate_map: dict[str, str]) -> None:
             "PLACA": st.column_config.SelectboxColumn("Placa", options=plate_options, required=True),
             "Categoria": st.column_config.TextColumn("Categoria"),
             "Motorista": st.column_config.TextColumn("Motorista", required=True),
+            "Ajudante": st.column_config.TextColumn("Ajudante"),
             "Saida": _datetime_col("Saída"),
             "Retorno": _datetime_col("Retorno"),
             "KM Rodados": _number_col("KM rodados", format="%.1f"),
@@ -12044,7 +12395,7 @@ def _render_route_history(plate_map: dict[str, str]) -> None:
         width="stretch",
         key=f"route_history_save_{history_token}",
     ):
-        editable_columns = ["PLACA", "Motorista", "Saida", "Retorno", "KM Rodados", "Observacao"]
+        editable_columns = ["PLACA", "Motorista", "Ajudante", "Saida", "Retorno", "KM Rodados", "Observacao"]
         originals = {
             clean_text(row["Rota ID"]): row
             for _, row in history.iterrows()
@@ -12083,6 +12434,8 @@ def _render_route_history(plate_map: dict[str, str]) -> None:
 def _render_route_registry(plate_map: dict[str, str]) -> None:
     with st.container(border=True):
         _render_route_pdf_import(plate_map)
+    with st.container(border=True):
+        _render_route_collaborator_import()
     with st.container(border=True):
         _render_route_completion(plate_map)
     st.info("A pesquisa completa e os rankings ficam no dashboard Rotas, acessível pela página inicial.")
@@ -15591,6 +15944,7 @@ def _route_management_workbook(data_json: str) -> bytes:
         ("ENTREGAS", pd.DataFrame(payload.get("entregas_detalhes") or [])),
         ("CUSTOS", pd.DataFrame(costs.get("rotas") or [])),
         ("MOTORISTAS", pd.DataFrame(payload.get("ranking_motoristas") or [])),
+        ("COLABORADORES", pd.DataFrame(payload.get("ranking_colaboradores") or [])),
         ("PLACAS", pd.DataFrame(payload.get("ranking_placas") or [])),
         ("ALERTAS", pd.DataFrame(payload.get("alertas") or [])),
     ]
@@ -16839,8 +17193,13 @@ def render_rotas() -> None:
 
     elif section == "Rankings":
         _route_section_title("Rankings", "Ordenações transparentes com os filtros globais aplicados")
-        rank_driver, rank_plate, rank_route, rank_city = st.tabs(["Motoristas","Placas","Rotas","Cidades"])
+        rank_driver, rank_staff, rank_plate, rank_route, rank_city = st.tabs(["Motoristas","Colaboradores","Placas","Rotas","Cidades"])
         with rank_driver: _render_route_driver_ranking_table(data.get("ranking_motoristas") or [])
+        with rank_staff:
+            st.caption("Motoristas e ajudantes são avaliados pelas mesmas viagens em que participaram; a função aparece na tabela.")
+            _render_route_ranking_indicator_table(
+                data.get("ranking_colaboradores") or [], entity_column="Colaborador", entity_label="colaboradores"
+            )
         with rank_plate:
             _render_route_ranking_indicator_table(
                 data.get("ranking_placas") or [], entity_column="PLACA", entity_label="placas"

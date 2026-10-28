@@ -121,6 +121,71 @@ class RoutesDashboardTests(unittest.TestCase):
         self.assertIn("Muito alto", cities.iloc[0]["Indicador"])
         self.assertIn("Baixo", cities.iloc[1]["Indicador"])
 
+    def test_route_staff_image_uses_second_date_and_matches_existing_route(self):
+        def box(center_x, center_y, width=80, height=16):
+            return [
+                [center_x - width / 2, center_y - height / 2],
+                [center_x + width / 2, center_y - height / 2],
+                [center_x + width / 2, center_y + height / 2],
+                [center_x - width / 2, center_y + height / 2],
+            ]
+
+        texts = [
+            "CARREGAMENTOS: sexta-feira, 9 de outubro de 2026",
+            "ROTAS: terça-feira, 13 de outubro de 2026",
+            "Nº ROTA", "PLACAS", "MOTORISTA", "OBSS.",
+            "10", "HAM-3C53", "DIVINÓPOLIS", "RONALDO PEREIRA", "CAIQUE LACERDA DOS SANTOS",
+        ]
+        positions = [
+            (520, 25), (520, 55), (40, 95), (150, 95), (520, 95), (930, 95),
+            (40, 135), (150, 135), (300, 135), (520, 135), (760, 135),
+        ]
+        ocr = {
+            "text": "\n".join(texts),
+            "width": 1000,
+            "height": 400,
+            "detections": [
+                {"text": text, "box": box(x, y), "score": 0.99}
+                for text, (x, y) in zip(texts, positions)
+            ],
+        }
+        route_date, parsed = dashboard._parse_route_collaborator_ocr(ocr)
+        self.assertEqual(route_date, date(2026, 10, 13))
+        self.assertEqual(parsed[0]["Nº rota"], "10")
+        self.assertEqual(parsed[0]["PLACA lida"], "HAM3C53")
+        self.assertEqual(parsed[0]["Ajudante"], "CAIQUE LACERDA DOS SANTOS")
+
+        routes = pd.DataFrame(
+            [
+                {
+                    "Rota ID": "route-10", "Codigo Rota": "10", "Rota": "10 - DIVINOPOLIS",
+                    "PLACA": "HAM3C53", "Data": "2026-10-14", "Previsao": "2026-10-14",
+                    "Emissao": "2026-10-13", "Saida": None, "Status": "Concluída",
+                    "Motorista": "ANTIGO", "Ajudante": "",
+                }
+            ]
+        )
+        matched = dashboard._match_route_collaborators(parsed, routes)
+        self.assertEqual(matched[0]["Correspondência"], "Encontrada")
+        self.assertEqual(matched[0]["Rota ID"], "route-10")
+        self.assertEqual(matched[0]["Status atual"], "Concluída")
+
+    def test_collaborator_ranking_includes_driver_and_helper(self):
+        source = pd.DataFrame(
+            [
+                {
+                    "Rota ID": "r1", "Rota": "ROTA 1", "Motorista": "MOTORISTA A", "Ajudante": "AJUDANTE B",
+                    "Entregas": 10, "Peso Carga": 5000, "KM Rodados": 100, "Tempo Viagem Horas": 10,
+                    "Horas Trabalhadas": 8, "Dias Rota": 1, "_Qualidade": 100,
+                }
+            ]
+        )
+        ranking = backend._route_collaborator_ranking(source)
+        self.assertEqual(set(ranking["Colaborador"]), {"MOTORISTA A", "AJUDANTE B"})
+        roles = ranking.set_index("Colaborador")["Função"].to_dict()
+        self.assertEqual(roles["MOTORISTA A"], "Motorista")
+        self.assertEqual(roles["AJUDANTE B"], "Ajudante")
+
     def test_pending_routes_never_enter_completed_scope(self):
         routes = pd.DataFrame(
             [
