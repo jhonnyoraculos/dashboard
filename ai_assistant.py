@@ -20,6 +20,7 @@ except ImportError:  # The dashboard must remain available without the optional 
 
 LOGGER = logging.getLogger("jr_dashboard.ai")
 DEFAULT_MODEL = "openai/gpt-oss-120b"
+DEFAULT_FALLBACK_MODEL = "openai/gpt-oss-20b"
 ToolExecutor = Callable[[str, dict[str, Any]], Any]
 
 PAGE_CATALOG: dict[str, dict[str, Any]] = {
@@ -124,6 +125,7 @@ DETAIL_KEY_PARTS = {
 class AssistantConfig:
     api_key: str = ""
     model: str = DEFAULT_MODEL
+    fallback_model: str = DEFAULT_FALLBACK_MODEL
     timeout_seconds: float = 30.0
     max_output_tokens: int = 1_200
     max_tool_rounds: int = 3
@@ -138,8 +140,8 @@ class AssistantConfig:
         environment: Mapping[str, Any] | None = None,
         secrets: Mapping[str, Any] | None = None,
     ) -> AssistantConfig:
-        environment = environment or os.environ
-        secrets = secrets or {}
+        environment = os.environ if environment is None else environment
+        secrets = {} if secrets is None else secrets
 
         def value(name: str, default: Any) -> Any:
             candidate = environment.get(name)
@@ -148,6 +150,16 @@ class AssistantConfig:
                     candidate = secrets.get(name)
                 except (AttributeError, KeyError, TypeError):
                     candidate = None
+            if candidate in (None, "") and name.startswith("GROQ_"):
+                alias = name.removeprefix("GROQ_").lower()
+                for section_name in ("groq", "Groq", "GROQ"):
+                    try:
+                        section = secrets.get(section_name) or {}
+                        candidate = section.get(name) or section.get(alias)
+                    except (AttributeError, KeyError, TypeError):
+                        candidate = None
+                    if candidate not in (None, ""):
+                        break
             return default if candidate in (None, "") else candidate
 
         def integer(name: str, default: int, minimum: int, maximum: int) -> int:
@@ -167,6 +179,7 @@ class AssistantConfig:
         return cls(
             api_key=str(value("GROQ_API_KEY", "")).strip(),
             model=str(value("GROQ_MODEL", DEFAULT_MODEL)).strip() or DEFAULT_MODEL,
+            fallback_model=str(value("GROQ_FALLBACK_MODEL", DEFAULT_FALLBACK_MODEL)).strip(),
             timeout_seconds=number("GROQ_TIMEOUT_SECONDS", 30.0, 5.0, 90.0),
             max_output_tokens=integer("GROQ_MAX_OUTPUT_TOKENS", 1_200, 256, 4_096),
             max_tool_rounds=integer("GROQ_MAX_TOOL_ROUNDS", 3, 1, 5),
@@ -525,34 +538,64 @@ class GroqDashboardAssistant:
 
     def _call(self, messages: list[dict[str, Any]]) -> Any:
         last_error: Exception | None = None
-        for attempt in range(3):
-            try:
-                reserve_global_request(self.config)
-                return self.client.chat.completions.create(
-                    model=self.config.model,
-                    messages=messages,
-                    tools=TOOL_SCHEMAS,
-                    tool_choice="auto",
-                    max_completion_tokens=self.config.max_output_tokens,
-                )
-            except Exception as exc:  # noqa: BLE001 - SDK error classes vary by version.
-                last_error = exc
-                status = getattr(exc, "status_code", None)
-                LOGGER.warning("Groq request failed: status=%s type=%s", status, type(exc).__name__)
-                if status not in {429, 498, 500, 502, 503} or attempt >= 2:
-                    break
-                headers = getattr(getattr(exc, "response", None), "headers", {}) or {}
+        models = [self.config.model]
+        if self.config.fallback_model and self.config.fallback_model not in models:
+            models.append(self.config.fallback_model)
+        transient_statuses = {429, 498, 500, 502, 503}
+        for model_index, model in enumerate(models):
+            attempts = 3 if model_index == 0 else 2
+            for attempt in range(attempts):
                 try:
-                    retry_after = float(headers.get("retry-after", 1.5 * (attempt + 1)))
-                except (TypeError, ValueError):
-                    retry_after = 1.5 * (attempt + 1)
-                time.sleep(min(max(retry_after, 0.25), 8.0))
+                    reserve_global_request(self.config)
+                    response = self.client.chat.completions.create(
+                        model=model,
+                        messages=messages,
+                        tools=TOOL_SCHEMAS,
+                        tool_choice="auto",
+                        max_completion_tokens=self.config.max_output_tokens,
+                    )
+                    if model_index:
+                        LOGGER.info("Groq fallback model used: model=%s", model)
+                    return response
+                except Exception as exc:  # noqa: BLE001 - SDK error classes vary by version.
+                    last_error = exc
+                    status = getattr(exc, "status_code", None)
+                    response_headers = getattr(getattr(exc, "response", None), "headers", {}) or {}
+                    request_id = response_headers.get("x-request-id") or response_headers.get("request-id")
+                    LOGGER.warning(
+                        "Groq request failed: model=%s status=%s type=%s request_id=%s",
+                        model,
+                        status,
+                        type(exc).__name__,
+                        request_id,
+                    )
+                    if status not in transient_statuses or attempt >= attempts - 1:
+                        break
+                    try:
+                        retry_after = float(response_headers.get("retry-after", 1.5 * (attempt + 1)))
+                    except (TypeError, ValueError):
+                        retry_after = 1.5 * (attempt + 1)
+                    time.sleep(min(max(retry_after, 0.25), 8.0))
+            if getattr(last_error, "status_code", None) not in {498, 500, 502, 503}:
+                break
         status = getattr(last_error, "status_code", None)
+        if status == 400:
+            raise AssistantError("A Groq recusou o formato da solicitação. Tente uma pergunta mais curta.")
+        if status == 401:
+            raise AssistantError("A chave GROQ_API_KEY foi recusada. Atualize o Secret do Streamlit com uma chave ativa da Groq.")
+        if status == 403:
+            raise AssistantError("Esta chave não tem permissão para usar o modelo configurado no projeto da Groq.")
+        if status == 404:
+            raise AssistantError("O modelo configurado não foi encontrado na Groq. Confira GROQ_MODEL nos Secrets.")
+        if status == 413:
+            raise AssistantError("Os dados enviados ficaram grandes demais. Reduza os filtros ou limpe a conversa e tente novamente.")
+        if status == 422:
+            raise AssistantError("A Groq não conseguiu processar esta solicitação. Reformule a pergunta e tente novamente.")
         if status == 429:
             raise AssistantError("A Groq atingiu o limite temporário de uso. Aguarde alguns segundos e tente novamente.")
         if status in {498, 500, 502, 503}:
-            raise AssistantError("O serviço de IA está temporariamente indisponível. O dashboard continua funcionando normalmente.")
-        raise AssistantError("Não foi possível consultar a IA agora. Confira a configuração da Groq e tente novamente.")
+            raise AssistantError("Os modelos principal e de contingência da Groq estão temporariamente sem capacidade. Tente novamente em alguns segundos.")
+        raise AssistantError("O Streamlit não conseguiu se conectar à Groq agora. Tente novamente e, se persistir, consulte os logs do aplicativo.")
 
     @staticmethod
     def _assistant_message(message: Any) -> dict[str, Any]:
@@ -673,5 +716,5 @@ class GroqDashboardAssistant:
             prompt_tokens=prompt_tokens,
             completion_tokens=completion_tokens,
             tool_calls=tool_count,
-            model=self.config.model,
+            model=str(getattr(response, "model", None) or self.config.model),
         )

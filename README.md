@@ -41,6 +41,7 @@ Para ativar em producao, adicione estas chaves aos `Secrets` do Streamlit:
 ```toml
 GROQ_API_KEY = "gsk_..."
 GROQ_MODEL = "openai/gpt-oss-120b"
+GROQ_FALLBACK_MODEL = "openai/gpt-oss-20b"
 GROQ_MAX_OUTPUT_TOKENS = 1200
 GROQ_MAX_TOOL_ROUNDS = 3
 AI_SESSION_MESSAGE_LIMIT = 24
@@ -65,6 +66,8 @@ Recursos principais:
 - limites de mensagens, requisicoes, tokens, tamanho e rodadas de ferramentas;
 - cache de respostas repetidas limitado a sessao atual;
 - tratamento de indisponibilidade e limites HTTP 429 da Groq.
+- diagnóstico específico para chave, permissão, modelo e tamanho da solicitação;
+- contingência automática no modelo `openai/gpt-oss-20b` se o 120B estiver sem capacidade.
 
 4. Inicie o Streamlit:
    ```bash

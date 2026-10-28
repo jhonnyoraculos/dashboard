@@ -1,5 +1,6 @@
 import unittest
 from types import SimpleNamespace
+from unittest.mock import patch
 
 import ai_assistant as ai
 
@@ -12,6 +13,13 @@ def fake_response(content="", tool_calls=None, prompt_tokens=10, completion_toke
     )
 
 
+class FakeAPIError(RuntimeError):
+    def __init__(self, status_code):
+        super().__init__(f"status {status_code}")
+        self.status_code = status_code
+        self.response = SimpleNamespace(headers={})
+
+
 class FakeCompletions:
     def __init__(self, responses):
         self.responses = list(responses)
@@ -19,7 +27,10 @@ class FakeCompletions:
 
     def create(self, **kwargs):
         self.calls.append(kwargs)
-        return self.responses.pop(0)
+        response = self.responses.pop(0)
+        if isinstance(response, BaseException):
+            raise response
+        return response
 
 
 class FakeClient:
@@ -40,6 +51,15 @@ class AssistantTests(unittest.TestCase):
         self.assertEqual(config.api_key, "test-key")
         self.assertEqual(config.session_message_limit, 12)
         self.assertEqual(config.max_output_tokens, 900)
+        self.assertEqual(config.fallback_model, "openai/gpt-oss-20b")
+
+    def test_configuration_accepts_nested_streamlit_groq_section(self):
+        config = ai.AssistantConfig.from_sources(
+            environment={},
+            secrets={"groq": {"api_key": "nested-key", "model": "openai/gpt-oss-120b"}},
+        )
+        self.assertEqual(config.api_key, "nested-key")
+        self.assertEqual(config.model, "openai/gpt-oss-120b")
 
     def test_compact_data_removes_sensitive_and_detailed_fields(self):
         compact = ai.compact_data(
@@ -108,6 +128,41 @@ class AssistantTests(unittest.TestCase):
         self.assertFalse(assistant.available)
         with self.assertRaises(ai.AssistantError):
             assistant.answer("teste", history=[], page_context={}, tool_executor=lambda *_: {})
+
+    def test_transient_primary_failure_uses_fallback_model(self):
+        client = FakeClient(
+            [
+                FakeAPIError(503),
+                FakeAPIError(503),
+                FakeAPIError(503),
+                fake_response(content="Resposta pelo modelo de contingência."),
+            ]
+        )
+        config = ai.AssistantConfig(
+            api_key="test",
+            global_daily_request_limit=100_000,
+            global_daily_token_limit=10_000_000,
+        )
+        assistant = ai.GroqDashboardAssistant(config, client=client)
+
+        with patch("ai_assistant.time.sleep"):
+            result = assistant.answer("Teste", history=[], page_context={}, tool_executor=lambda *_: {})
+
+        models = [call["model"] for call in client.chat.completions.calls]
+        self.assertEqual(models[:3], ["openai/gpt-oss-120b"] * 3)
+        self.assertEqual(models[3], "openai/gpt-oss-20b")
+        self.assertIn("contingência", result.answer)
+
+    def test_authentication_error_is_actionable_and_has_no_fallback(self):
+        client = FakeClient([FakeAPIError(401)])
+        assistant = ai.GroqDashboardAssistant(
+            ai.AssistantConfig(api_key="test", global_daily_request_limit=100_000),
+            client=client,
+        )
+
+        with self.assertRaisesRegex(ai.AssistantError, "chave GROQ_API_KEY foi recusada"):
+            assistant.answer("Teste", history=[], page_context={}, tool_executor=lambda *_: {})
+        self.assertEqual(len(client.chat.completions.calls), 1)
 
     def test_tools_never_expose_sql_or_code_execution(self):
         names = {tool["function"]["name"] for tool in ai.TOOL_SCHEMAS}

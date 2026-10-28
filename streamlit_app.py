@@ -6,6 +6,7 @@ import hashlib
 import html
 import importlib
 import json
+import logging
 import math
 import os
 import re
@@ -77,7 +78,8 @@ MUTED = "#6B7280"
 CARD_BORDER = "#c2d2f3"
 LOGO_PATH = Path(__file__).parent / "static" / "logo-jr.png"
 CURRENT_YEAR = date.today().year
-APP_VERSION = "global-groq-assistant-v24"
+APP_VERSION = "global-groq-assistant-v25"
+LOGGER = logging.getLogger("jr_dashboard.streamlit")
 RANK_ROUTES_ENABLED = True
 ROUTE_CACHE_TTL_SECONDS = max(int(os.environ.get("JR_ROUTE_CACHE_TTL_SECONDS", "180") or 180), 30)
 DATA_EDITOR_PAGE_SIZE = 100
@@ -3591,6 +3593,7 @@ def render_ai_assistant(page: str) -> None:
                             result_answer = cached["answer"]
                             result_tokens = cached.get("tokens", 0)
                             result_tools = cached.get("tools", 0)
+                            result_model = cached.get("model", config.model)
                         else:
                             with st.spinner("Analisando dados reais do dashboard..."):
                                 result = assistant.answer(
@@ -3602,7 +3605,13 @@ def render_ai_assistant(page: str) -> None:
                             result_answer = result.answer
                             result_tokens = result.prompt_tokens + result.completion_tokens
                             result_tools = result.tool_calls
-                            cache[cache_key] = {"answer": result_answer, "tokens": result_tokens, "tools": result_tools}
+                            result_model = result.model
+                            cache[cache_key] = {
+                                "answer": result_answer,
+                                "tokens": result_tokens,
+                                "tools": result_tools,
+                                "model": result_model,
+                            }
                             if len(cache) > 20:
                                 cache.pop(next(iter(cache)))
                         history.append(
@@ -3612,6 +3621,7 @@ def render_ai_assistant(page: str) -> None:
                                 "page": page,
                                 "tokens": result_tokens,
                                 "tools": result_tools,
+                                "model": result_model,
                             }
                         )
                     except AssistantError as exc:
@@ -3627,7 +3637,11 @@ def render_ai_assistant(page: str) -> None:
                     with st.chat_message(item.get("role", "assistant"), avatar=avatar):
                         st.markdown(clean_text(item.get("content")))
                         if item.get("role") == "assistant" and item.get("tokens"):
-                            st.caption(f"{fmt_num(item.get('tokens'), 0)} tokens · {fmt_num(item.get('tools'), 0)} consulta(s) aos dados")
+                            model_label = clean_text(item.get("model") or config.model).split("/")[-1]
+                            st.caption(
+                                f"{fmt_num(item.get('tokens'), 0)} tokens · "
+                                f"{fmt_num(item.get('tools'), 0)} consulta(s) aos dados · {model_label}"
+                            )
 
                 usage = global_usage_snapshot()
                 st.caption(
@@ -17892,7 +17906,8 @@ def main() -> None:
     finally:
         try:
             render_ai_assistant(page)
-        except Exception:
+        except Exception as exc:
+            LOGGER.exception("Assistant UI failed: page=%s type=%s", page, type(exc).__name__)
             st.toast("Assistente de IA temporariamente indisponível. O dashboard continua normal.", icon="⚠️")
 
 
