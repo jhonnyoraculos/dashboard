@@ -78,7 +78,7 @@ MUTED = "#6B7280"
 CARD_BORDER = "#c2d2f3"
 LOGO_PATH = Path(__file__).parent / "static" / "logo-jr.png"
 CURRENT_YEAR = date.today().year
-APP_VERSION = "global-groq-assistant-v33"
+APP_VERSION = "global-groq-assistant-v34"
 LOGGER = logging.getLogger("jr_dashboard.streamlit")
 RANK_ROUTES_ENABLED = True
 ROUTE_CACHE_TTL_SECONDS = max(int(os.environ.get("JR_ROUTE_CACHE_TTL_SECONDS", "180") or 180), 30)
@@ -3317,9 +3317,8 @@ def _ai_page_context(page: str) -> dict[str, object]:
         context["comparar_periodo_anterior"] = bool(st.session_state.get("routes_compare_period", False))
     if dashboard:
         try:
-            context["dados_visiveis"] = dashboard_summary_payload(
-                dashboard, _ai_dashboard_payload(dashboard, filters)
-            )
+            payload = _ai_dashboard_payload(dashboard, filters)
+            context["dados_visiveis"] = _ai_global_dashboard_summary(dashboard, payload)
         except Exception:
             context["dados_visiveis"] = {"aviso": "Dados indisponíveis nesta execução."}
     focus = st.session_state.get("ai_focus_context")
@@ -3499,7 +3498,7 @@ def _ai_tool_executor(page: str, page_context: dict[str, object]):
             filters = _ai_sanitize_filters(dashboard, arguments.get("filters") or {})
             payload = _ai_dashboard_payload(dashboard, filters)
             if name == "get_dashboard_metrics":
-                return dashboard_summary_payload(dashboard, payload)
+                return _ai_global_dashboard_summary(dashboard, payload)
             series = clean_text(arguments.get("series")).strip()
             if series not in AI_ALLOWED_SERIES.get(dashboard, set()):
                 return {"erro": "Série não autorizada", "series_disponiveis": sorted(AI_ALLOWED_SERIES.get(dashboard, set()))}

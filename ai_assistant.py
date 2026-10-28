@@ -544,6 +544,28 @@ REGRAS OBRIGATÓRIAS:
 """
 
 
+def _compact_request_messages(messages: list[dict[str, Any]], *, aggressive: bool) -> list[dict[str, Any]]:
+    """Reduce request size while preserving roles and tool-call protocol."""
+    limits = {
+        "system": 4_500 if aggressive else 8_000,
+        "user": 900 if aggressive else 1_800,
+        "assistant": 700 if aggressive else 1_500,
+        "tool": 1_800 if aggressive else 3_500,
+    }
+    compacted: list[dict[str, Any]] = []
+    for message in messages:
+        item = dict(message)
+        role = str(item.get("role") or "user")
+        content = item.get("content")
+        if isinstance(content, str):
+            limit = limits.get(role, 1_000)
+            if len(content) > limit:
+                content = content[:limit].rstrip() + "\n[contexto reduzido automaticamente para caber na consulta]"
+            item["content"] = content
+        compacted.append(item)
+    return compacted
+
+
 class GroqDashboardAssistant:
     def __init__(self, config: AssistantConfig, *, client: Any = None):
         self.config = config
@@ -561,6 +583,13 @@ class GroqDashboardAssistant:
 
     def _call(self, messages: list[dict[str, Any]]) -> Any:
         last_error: Exception | None = None
+        message_chars = sum(len(str(message.get("content") or "")) for message in messages)
+        compaction_level = 1 if message_chars > 24_000 else 0
+        request_messages = (
+            _compact_request_messages(messages, aggressive=False)
+            if compaction_level
+            else messages
+        )
         models = [self.config.model]
         if self.config.fallback_model and self.config.fallback_model not in models:
             models.append(self.config.fallback_model)
@@ -572,7 +601,7 @@ class GroqDashboardAssistant:
                     reserve_global_request(self.config)
                     response = self.client.chat.completions.create(
                         model=model,
-                        messages=messages,
+                        messages=request_messages,
                         tools=TOOL_SCHEMAS,
                         tool_choice="auto",
                         max_completion_tokens=self.config.max_output_tokens,
@@ -592,6 +621,14 @@ class GroqDashboardAssistant:
                         type(exc).__name__,
                         request_id,
                     )
+                    if status == 413 and compaction_level < 2:
+                        compaction_level += 1
+                        request_messages = _compact_request_messages(
+                            request_messages,
+                            aggressive=compaction_level >= 2,
+                        )
+                        LOGGER.info("Groq payload compacted automatically: level=%s", compaction_level)
+                        continue
                     if status not in transient_statuses or attempt >= attempts - 1:
                         break
                     try:
@@ -611,7 +648,7 @@ class GroqDashboardAssistant:
         if status == 404:
             raise AssistantError("O modelo configurado não foi encontrado na Groq. Confira GROQ_MODEL nos Secrets.")
         if status == 413:
-            raise AssistantError("Os dados enviados ficaram grandes demais. Reduza os filtros ou limpe a conversa e tente novamente.")
+            raise AssistantError("Não foi possível reduzir os dados o suficiente para esta consulta. Tente uma pergunta mais específica.")
         if status == 422:
             raise AssistantError("A Groq não conseguiu processar esta solicitação. Reformule a pergunta e tente novamente.")
         if status == 429:

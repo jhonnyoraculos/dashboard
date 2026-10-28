@@ -189,6 +189,30 @@ class AssistantTests(unittest.TestCase):
             )
         )
 
+    def test_payload_too_large_is_compacted_and_retried_automatically(self):
+        client = FakeClient(
+            [
+                FakeAPIError(413),
+                fake_response(content="Resposta entregue após reduzir o contexto."),
+            ]
+        )
+        assistant = ai.GroqDashboardAssistant(
+            ai.AssistantConfig(api_key="test", global_daily_request_limit=100_000),
+            client=client,
+        )
+        history = [
+            {"role": "user" if index % 2 == 0 else "assistant", "content": "x" * 4_000}
+            for index in range(10)
+        ]
+
+        result = assistant.answer("Qual placa foi mais eficiente?", history=history, page_context={}, tool_executor=lambda *_: {})
+
+        self.assertIn("Resposta entregue", result.answer)
+        self.assertEqual(len(client.chat.completions.calls), 2)
+        first_size = sum(len(str(item.get("content") or "")) for item in client.chat.completions.calls[0]["messages"])
+        second_size = sum(len(str(item.get("content") or "")) for item in client.chat.completions.calls[1]["messages"])
+        self.assertLess(second_size, first_size)
+
     def test_tools_never_expose_sql_or_code_execution(self):
         names = {tool["function"]["name"] for tool in ai.TOOL_SCHEMAS}
         self.assertNotIn("execute_sql", names)
