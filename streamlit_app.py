@@ -78,7 +78,7 @@ MUTED = "#6B7280"
 CARD_BORDER = "#c2d2f3"
 LOGO_PATH = Path(__file__).parent / "static" / "logo-jr.png"
 CURRENT_YEAR = date.today().year
-APP_VERSION = "global-groq-assistant-v31"
+APP_VERSION = "global-groq-assistant-v32"
 LOGGER = logging.getLogger("jr_dashboard.streamlit")
 RANK_ROUTES_ENABLED = True
 ROUTE_CACHE_TTL_SECONDS = max(int(os.environ.get("JR_ROUTE_CACHE_TTL_SECONDS", "180") or 180), 30)
@@ -3658,17 +3658,19 @@ def _inject_ai_assistant_css() -> None:
         .ai-welcome{max-width:86%;background:#fff;border-radius:4px 14px 14px 14px;padding:10px 12px;color:#334155;font-size:12px;line-height:1.45;box-shadow:0 1px 2px rgba(15,23,42,.10)}
         [class*="st-key-ai_message_"]{max-width:86%;height:auto !important;overflow:visible !important;border-radius:13px !important;padding:7px 10px 6px !important;margin:0 0 8px !important;box-shadow:0 1px 2px rgba(15,23,42,.12);overflow-wrap:anywhere !important;word-break:break-word !important}
         [class*="st-key-ai_message_assistant_"]{max-width:94% !important;margin-right:auto !important;background:#fff !important;border-top-left-radius:4px !important}
+        [class*="st-key-ai_message_loading_"]{max-width:70% !important;margin-right:auto !important;background:#fff !important;border-top-left-radius:4px !important}
         [class*="st-key-ai_message_user_"]{margin-left:auto !important;background:#D9FDD3 !important;border-top-right-radius:4px !important}
         [class*="st-key-ai_message_error_"]{margin-right:auto !important;background:#FFF1F2 !important;border-left:3px solid #BE1E2D !important}
         [class*="st-key-ai_message_"] p{max-width:100% !important;font-size:12px !important;line-height:1.48 !important;margin:0 0 4px !important;color:#172554 !important;overflow-wrap:anywhere !important;word-break:break-word !important}[class*="st-key-ai_message_"] ul,[class*="st-key-ai_message_"] ol{max-width:100% !important;font-size:12px !important;padding-left:19px !important;margin:4px 0 !important;overflow-wrap:anywhere !important}[class*="st-key-ai_message_"] table,[class*="st-key-ai_message_"] pre{display:block !important;max-width:100% !important;overflow-x:auto !important}
         [class*="st-key-ai_message_"] h1,[class*="st-key-ai_message_"] h2,[class*="st-key-ai_message_"] h3,[class*="st-key-ai_message_"] h4{font-size:14px !important;line-height:1.35 !important;margin:4px 0 7px !important;color:#172554 !important;overflow-wrap:anywhere !important}[class*="st-key-ai_message_"] code{font-family:inherit !important;font-size:11px !important;line-height:1.4 !important;white-space:normal !important;overflow-wrap:anywhere !important;background:#F1F5F9 !important;color:#172554 !important;padding:1px 3px !important;border-radius:4px !important}
         .ai-message-meta{display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:3px;font-size:9px;color:#64748B}.ai-message-meta strong{font-size:10px;color:#075E54}.ai-message-meta span{white-space:nowrap}
+        .ai-typing{display:flex;align-items:center;gap:5px;height:22px;color:#64748B;font-size:10px}.ai-typing-dots{display:inline-flex;gap:3px}.ai-typing-dots i{width:6px;height:6px;border-radius:50%;background:#128C7E;animation:aiTyping 1.2s infinite ease-in-out}.ai-typing-dots i:nth-child(2){animation-delay:.16s}.ai-typing-dots i:nth-child(3){animation-delay:.32s}@keyframes aiTyping{0%,60%,100%{opacity:.28;transform:translateY(0)}30%{opacity:1;transform:translateY(-3px)}}
         .ai-message-tech{display:block;max-width:100%;margin-top:4px;padding-top:3px;border-top:1px solid rgba(148,163,184,.18);font-size:8px;line-height:1.25;color:#94A3B8;text-align:right;overflow-wrap:anywhere}
         .st-key-ai_quick_replies{flex:0 0 auto !important;margin:0}.st-key-ai_quick_replies [data-testid="stPills"]{gap:5px !important;flex-wrap:wrap !important}.st-key-ai_quick_replies button{min-height:30px !important;border-radius:999px !important;border:1px solid rgba(7,94,84,.25) !important;background:rgba(255,255,255,.84) !important;color:#075E54 !important;-webkit-text-fill-color:#075E54 !important;font-size:10px !important;font-weight:700 !important;white-space:normal !important;text-align:left !important}.st-key-ai_quick_replies button:hover{background:#E7F8F2 !important;border-color:#128C7E !important}
-        .st-key-ai_chat_panel [data-testid="stForm"]{flex:0 0 auto !important;border:0 !important;border-radius:14px !important;background:#F0F2F5 !important;padding:7px !important;margin:0 !important}.st-key-ai_chat_panel [data-testid="stForm"] [data-testid="stHorizontalBlock"]{align-items:flex-end !important;gap:7px !important}.st-key-ai_chat_panel [data-testid="stForm"] textarea{min-height:72px !important;max-height:170px !important;border-radius:16px !important;background:#fff !important;border:1px solid #E2E8F0 !important;padding:11px 14px !important;font-size:12px !important;line-height:1.4 !important;resize:vertical !important}.st-key-ai_chat_panel [data-testid="stForm"] button{width:48px !important;min-width:48px !important;height:48px !important;min-height:48px !important;border-radius:50% !important;padding:0 !important;margin-bottom:4px !important;background:#128C7E !important;border-color:#128C7E !important;color:#fff !important;-webkit-text-fill-color:#fff !important;font-size:18px !important;box-shadow:0 5px 12px rgba(18,140,126,.25) !important}.st-key-ai_chat_panel [data-testid="InputInstructions"]{display:none !important}
+        .st-key-ai_chat_panel [data-testid="stForm"]{flex:0 0 auto !important;border:0 !important;border-radius:14px !important;background:#F0F2F5 !important;padding:7px !important;margin:0 !important}.st-key-ai_chat_panel [data-testid="stForm"] [data-testid="stHorizontalBlock"]{align-items:flex-end !important;gap:7px !important}.st-key-ai_chat_panel [data-testid="stForm"] textarea{min-height:100px !important;max-height:220px !important;border-radius:16px !important;background:#fff !important;border:1px solid #E2E8F0 !important;padding:11px 14px !important;font-size:12px !important;line-height:1.4 !important;resize:vertical !important}.st-key-ai_chat_panel [data-testid="stForm"] button{width:50px !important;min-width:50px !important;height:50px !important;min-height:50px !important;border-radius:50% !important;padding:0 !important;margin-bottom:4px !important;background:#128C7E !important;border-color:#128C7E !important;color:#fff !important;-webkit-text-fill-color:#fff !important;font-size:18px !important;box-shadow:0 5px 12px rgba(18,140,126,.25) !important}.st-key-ai_chat_panel [data-testid="InputInstructions"]{display:none !important}
         .st-key-ai_usage_footer [data-testid="stCaptionContainer"] p{text-align:center !important;color:#64748B !important;font-size:9px !important;margin:3px 0 0 !important}.ai-resize-hint{display:block;text-align:center;color:#94A3B8;font-size:8px;margin-top:2px}
         [class*="st-key-ai_chart_action_"] button {min-height:34px !important;border-radius:10px !important;color:#1C2D6B !important;font-weight:700 !important}
-        @media(max-width:640px){.st-key-ai_assistant_shell{top:70px !important;right:10px !important;bottom:auto !important}.st-key-ai_assistant_shell [data-testid="stPopover"] > button{min-height:44px !important;padding:0 13px !important;font-size:11px !important}div[data-testid="stPopoverBody"]:has(.st-key-ai_chat_panel){width:calc(100vw - 16px) !important;min-width:calc(100vw - 16px) !important;max-width:calc(100vw - 16px) !important;height:calc(100vh - 105px) !important;max-height:calc(100vh - 105px) !important;resize:vertical !important}.ai-panel-head .ai-page{max-width:125px}.st-key-ai_conversation_slot{flex-basis:calc(100vh - 430px) !important;height:calc(100vh - 430px) !important;min-height:160px !important}div[data-testid="stPopoverBody"]:has(.ai-panel-expanded) .st-key-ai_conversation_slot{flex-basis:calc(100vh - 380px) !important;height:calc(100vh - 380px) !important}.st-key-ai_chat_panel [data-testid="stForm"] textarea{min-height:64px !important}}
+        @media(max-width:640px){.st-key-ai_assistant_shell{top:70px !important;right:10px !important;bottom:auto !important}.st-key-ai_assistant_shell [data-testid="stPopover"] > button{min-height:44px !important;padding:0 13px !important;font-size:11px !important}div[data-testid="stPopoverBody"]:has(.st-key-ai_chat_panel){width:calc(100vw - 16px) !important;min-width:calc(100vw - 16px) !important;max-width:calc(100vw - 16px) !important;height:calc(100vh - 105px) !important;max-height:calc(100vh - 105px) !important;resize:vertical !important}.ai-panel-head .ai-page{max-width:125px}.st-key-ai_conversation_slot{flex-basis:calc(100vh - 465px) !important;height:calc(100vh - 465px) !important;min-height:150px !important}div[data-testid="stPopoverBody"]:has(.ai-panel-expanded) .st-key-ai_conversation_slot{flex-basis:calc(100vh - 415px) !important;height:calc(100vh - 415px) !important}.st-key-ai_chat_panel [data-testid="stForm"] textarea{min-height:88px !important}}
         </style>
         """,
         unsafe_allow_html=True,
@@ -3711,7 +3713,7 @@ def _render_ai_conversation(history: list[dict[str, object]], config: AssistantC
             )
         for index, item in enumerate(history[-20:]):
             role = "user" if item.get("role") == "user" else "assistant"
-            bubble_role = "error" if item.get("error") else role
+            bubble_role = "loading" if item.get("loading") else ("error" if item.get("error") else role)
             label = "Você" if role == "user" else "Assistente JR"
             sent_at = clean_text(item.get("time") or "")
             with st.container(key=f"ai_message_{bubble_role}_{index}"):
@@ -3719,7 +3721,14 @@ def _render_ai_conversation(history: list[dict[str, object]], config: AssistantC
                     f'<div class="ai-message-meta"><strong>{h(label)}</strong><span>{h(sent_at)}</span></div>',
                     unsafe_allow_html=True,
                 )
-                st.markdown(_normalize_ai_markdown(item.get("content")))
+                if item.get("loading"):
+                    st.markdown(
+                        '<div class="ai-typing"><span>Digitando</span><span class="ai-typing-dots">'
+                        "<i></i><i></i><i></i></span></div>",
+                        unsafe_allow_html=True,
+                    )
+                else:
+                    st.markdown(_normalize_ai_markdown(item.get("content")))
                 if role == "assistant" and item.get("tokens"):
                     model_label = clean_text(item.get("model") or config.model).split("/")[-1]
                     st.markdown(
@@ -3806,7 +3815,7 @@ def render_ai_assistant(page: str) -> None:
                         question = st.text_area(
                             "Mensagem",
                             placeholder="Digite sua pergunta com detalhes...",
-                            height=76,
+                            height=104,
                             disabled=not assistant.available,
                             label_visibility="collapsed",
                         )
@@ -3827,19 +3836,6 @@ def render_ai_assistant(page: str) -> None:
                     pending_question = None
 
                 if pending_question:
-                    page_context = _ai_page_context(page)
-                    if _ai_is_general_question(pending_question):
-                        with st.spinner("Consultando todas as áreas do site..."):
-                            page_context["escopo_pergunta"] = "site_inteiro"
-                            page_context["dados_site_inteiro"] = _ai_site_wide_overview(page_context)
-                    cache = st.session_state.setdefault("ai_response_cache", {})
-                    cache_source = json.dumps(
-                        {"pergunta": pending_question, "contexto": page_context},
-                        ensure_ascii=False,
-                        sort_keys=True,
-                        default=str,
-                    )
-                    cache_key = hashlib.sha256(cache_source.encode()).hexdigest()
                     history_before = list(history)
                     message_time = datetime.now(BR_TZ).strftime("%H:%M")
                     history.append(
@@ -3850,6 +3846,31 @@ def render_ai_assistant(page: str) -> None:
                             "time": message_time,
                         }
                     )
+                    loading_preview = [
+                        *history,
+                        {
+                            "role": "assistant",
+                            "content": "Digitando...",
+                            "page": page,
+                            "loading": True,
+                            "time": datetime.now(BR_TZ).strftime("%H:%M"),
+                        },
+                    ]
+                    with conversation_slot.container():
+                        _render_ai_conversation(loading_preview, config)
+
+                    page_context = _ai_page_context(page)
+                    if _ai_is_general_question(pending_question):
+                        page_context["escopo_pergunta"] = "site_inteiro"
+                        page_context["dados_site_inteiro"] = _ai_site_wide_overview(page_context)
+                    cache = st.session_state.setdefault("ai_response_cache", {})
+                    cache_source = json.dumps(
+                        {"pergunta": pending_question, "contexto": page_context},
+                        ensure_ascii=False,
+                        sort_keys=True,
+                        default=str,
+                    )
+                    cache_key = hashlib.sha256(cache_source.encode()).hexdigest()
                     try:
                         cached = cache.get(cache_key)
                         if cached:
@@ -3858,13 +3879,12 @@ def render_ai_assistant(page: str) -> None:
                             result_tools = cached.get("tools", 0)
                             result_model = cached.get("model", config.model)
                         else:
-                            with st.spinner("Analisando dados reais do dashboard..."):
-                                result = assistant.answer(
-                                    clean_text(pending_question),
-                                    history=history_before,
-                                    page_context=page_context,
-                                    tool_executor=_ai_tool_executor(page, page_context),
-                                )
+                            result = assistant.answer(
+                                clean_text(pending_question),
+                                history=history_before,
+                                page_context=page_context,
+                                tool_executor=_ai_tool_executor(page, page_context),
+                            )
                             result_answer = result.answer
                             result_tokens = result.prompt_tokens + result.completion_tokens
                             result_tools = result.tool_calls
