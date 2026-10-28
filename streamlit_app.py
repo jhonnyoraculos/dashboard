@@ -78,7 +78,7 @@ MUTED = "#6B7280"
 CARD_BORDER = "#c2d2f3"
 LOGO_PATH = Path(__file__).parent / "static" / "logo-jr.png"
 CURRENT_YEAR = date.today().year
-APP_VERSION = "global-groq-assistant-v26"
+APP_VERSION = "global-groq-assistant-v27"
 LOGGER = logging.getLogger("jr_dashboard.streamlit")
 RANK_ROUTES_ENABLED = True
 ROUTE_CACHE_TTL_SECONDS = max(int(os.environ.get("JR_ROUTE_CACHE_TTL_SECONDS", "180") or 180), 30)
@@ -3483,8 +3483,15 @@ def _inject_ai_assistant_css() -> None:
           border:1px solid rgba(7,94,84,.22) !important; padding:0 !important;
           background:#EFEAE2 !important;
           box-shadow:0 26px 70px rgba(15,23,42,.28) !important;
+          resize:both !important; direction:rtl !important;
+          min-width:min(360px,calc(100vw - 24px)) !important; min-height:430px !important;
+          max-width:calc(100vw - 28px) !important;
         }
-        .st-key-ai_chat_panel {color:#172554 !important;padding:0 12px 10px !important;}
+        div[data-testid="stPopoverBody"]:has(.ai-panel-expanded) {
+          width:min(760px,calc(100vw - 32px)) !important;
+          max-height:calc(100vh - 112px) !important;
+        }
+        .st-key-ai_chat_panel {color:#172554 !important;padding:0 12px 10px !important;direction:ltr !important;}
         .ai-panel-head {
           display:flex;align-items:center;justify-content:space-between;gap:10px;
           margin:0 -12px 10px;padding:13px 14px;background:linear-gradient(135deg,#075E54,#128C7E);
@@ -3496,18 +3503,19 @@ def _inject_ai_assistant_css() -> None:
         .st-key-ai_header_actions{margin:2px 0 8px}.st-key-ai_header_actions button{min-height:34px !important;border-radius:10px !important;border:1px solid rgba(7,94,84,.18) !important;background:rgba(255,255,255,.86) !important;color:#075E54 !important;-webkit-text-fill-color:#075E54 !important;font-size:11px !important;font-weight:800 !important;box-shadow:none !important}.st-key-ai_header_actions button:hover{background:#fff !important;border-color:#128C7E !important}
         .st-key-ai_conversation{background:#E8E2D9 !important;border-radius:14px !important;padding:12px 10px !important;margin:4px 0 8px !important;box-shadow:inset 0 1px 5px rgba(15,23,42,.06)}
         .ai-welcome{max-width:86%;background:#fff;border-radius:4px 14px 14px 14px;padding:10px 12px;color:#334155;font-size:12px;line-height:1.45;box-shadow:0 1px 2px rgba(15,23,42,.10)}
-        [class*="st-key-ai_message_"]{max-width:86%;border-radius:13px !important;padding:7px 10px 5px !important;margin:0 0 8px !important;box-shadow:0 1px 2px rgba(15,23,42,.12)}
+        [class*="st-key-ai_message_"]{max-width:86%;height:auto !important;overflow:visible !important;border-radius:13px !important;padding:7px 10px 6px !important;margin:0 0 8px !important;box-shadow:0 1px 2px rgba(15,23,42,.12);overflow-wrap:anywhere !important;word-break:break-word !important}
         [class*="st-key-ai_message_assistant_"]{margin-right:auto !important;background:#fff !important;border-top-left-radius:4px !important}
         [class*="st-key-ai_message_user_"]{margin-left:auto !important;background:#D9FDD3 !important;border-top-right-radius:4px !important}
         [class*="st-key-ai_message_error_"]{margin-right:auto !important;background:#FFF1F2 !important;border-left:3px solid #BE1E2D !important}
-        [class*="st-key-ai_message_"] p{font-size:12px !important;line-height:1.48 !important;margin:0 0 4px !important;color:#172554 !important}[class*="st-key-ai_message_"] ul,[class*="st-key-ai_message_"] ol{font-size:12px !important;padding-left:19px !important;margin:4px 0 !important}
+        [class*="st-key-ai_message_"] p{max-width:100% !important;font-size:12px !important;line-height:1.48 !important;margin:0 0 4px !important;color:#172554 !important;overflow-wrap:anywhere !important;word-break:break-word !important}[class*="st-key-ai_message_"] ul,[class*="st-key-ai_message_"] ol{max-width:100% !important;font-size:12px !important;padding-left:19px !important;margin:4px 0 !important;overflow-wrap:anywhere !important}[class*="st-key-ai_message_"] table,[class*="st-key-ai_message_"] pre{display:block !important;max-width:100% !important;overflow-x:auto !important}
         .ai-message-meta{display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:3px;font-size:9px;color:#64748B}.ai-message-meta strong{font-size:10px;color:#075E54}.ai-message-meta span{white-space:nowrap}
-        [class*="st-key-ai_message_"] [data-testid="stCaptionContainer"]{margin-top:2px !important}[class*="st-key-ai_message_"] [data-testid="stCaptionContainer"] p{font-size:8px !important;color:#94A3B8 !important;text-align:right !important}
+        .ai-message-tech{display:block;max-width:100%;margin-top:4px;padding-top:3px;border-top:1px solid rgba(148,163,184,.18);font-size:8px;line-height:1.25;color:#94A3B8;text-align:right;overflow-wrap:anywhere}
         .st-key-ai_quick_replies{margin:3px 0 8px}.st-key-ai_quick_replies [data-testid="stPills"]{gap:5px !important}.st-key-ai_quick_replies button{min-height:30px !important;border-radius:999px !important;border:1px solid rgba(7,94,84,.25) !important;background:rgba(255,255,255,.84) !important;color:#075E54 !important;-webkit-text-fill-color:#075E54 !important;font-size:10px !important;font-weight:700 !important;white-space:normal !important;text-align:left !important}.st-key-ai_quick_replies button:hover{background:#E7F8F2 !important;border-color:#128C7E !important}
         .st-key-ai_chat_panel [data-testid="stForm"]{border:0 !important;border-radius:14px !important;background:#F0F2F5 !important;padding:7px !important;margin-top:5px !important}.st-key-ai_chat_panel [data-testid="stForm"] [data-testid="stHorizontalBlock"]{align-items:center !important;gap:7px !important}.st-key-ai_chat_panel [data-testid="stForm"] input{min-height:42px !important;border-radius:999px !important;background:#fff !important;border:1px solid #E2E8F0 !important;padding:0 15px !important;font-size:12px !important}.st-key-ai_chat_panel [data-testid="stForm"] button{width:42px !important;min-width:42px !important;height:42px !important;min-height:42px !important;border-radius:50% !important;padding:0 !important;background:#128C7E !important;border-color:#128C7E !important;color:#fff !important;-webkit-text-fill-color:#fff !important;font-size:17px !important;box-shadow:0 5px 12px rgba(18,140,126,.25) !important}
-        .st-key-ai_usage_footer [data-testid="stCaptionContainer"] p{text-align:center !important;color:#64748B !important;font-size:9px !important;margin:3px 0 0 !important}
+        .st-key-ai_usage_footer [data-testid="stCaptionContainer"] p{text-align:center !important;color:#64748B !important;font-size:9px !important;margin:3px 0 0 !important}.ai-resize-hint{display:block;text-align:center;color:#94A3B8;font-size:8px;margin-top:2px}
+        div[data-testid="stPopoverBody"]:has(.ai-panel-expanded) .st-key-ai_conversation{height:min(520px,calc(100vh - 335px)) !important}
         [class*="st-key-ai_chart_action_"] button {min-height:34px !important;border-radius:10px !important;color:#1C2D6B !important;font-weight:700 !important}
-        @media(max-width:640px){.st-key-ai_assistant_shell{top:70px !important;right:10px !important;bottom:auto !important}.st-key-ai_assistant_shell [data-testid="stPopover"] > button{min-height:44px !important;padding:0 13px !important;font-size:11px !important}div[data-testid="stPopoverBody"]:has(.st-key-ai_chat_panel){width:calc(100vw - 16px) !important;max-height:calc(100vh - 125px) !important}.ai-panel-head .ai-page{max-width:145px}.st-key-ai_conversation{height:280px !important}}
+        @media(max-width:640px){.st-key-ai_assistant_shell{top:70px !important;right:10px !important;bottom:auto !important}.st-key-ai_assistant_shell [data-testid="stPopover"] > button{min-height:44px !important;padding:0 13px !important;font-size:11px !important}div[data-testid="stPopoverBody"]:has(.st-key-ai_chat_panel){width:calc(100vw - 16px) !important;min-width:calc(100vw - 16px) !important;max-width:calc(100vw - 16px) !important;max-height:calc(100vh - 125px) !important;resize:vertical !important}.ai-panel-head .ai-page{max-width:125px}.st-key-ai_conversation{height:280px !important}div[data-testid="stPopoverBody"]:has(.ai-panel-expanded) .st-key-ai_conversation{height:min(420px,calc(100vh - 335px)) !important}}
         </style>
         """,
         unsafe_allow_html=True,
@@ -3542,9 +3550,10 @@ def _render_ai_conversation(history: list[dict[str, object]], config: AssistantC
                 st.markdown(clean_text(item.get("content")))
                 if role == "assistant" and item.get("tokens"):
                     model_label = clean_text(item.get("model") or config.model).split("/")[-1]
-                    st.caption(
-                        f"{fmt_num(item.get('tokens'), 0)} tokens · "
-                        f"{fmt_num(item.get('tools'), 0)} consulta(s) · {model_label}"
+                    st.markdown(
+                        f'<span class="ai-message-tech">{fmt_num(item.get("tokens"), 0)} tokens · '
+                        f'{fmt_num(item.get("tools"), 0)} consulta(s) · {h(model_label)}</span>',
+                        unsafe_allow_html=True,
                     )
 
 
@@ -3563,17 +3572,19 @@ def render_ai_assistant(page: str) -> None:
     with st.container(key="ai_assistant_shell"):
         with st.popover("✦ Assistente IA", use_container_width=False):
             with st.container(key="ai_chat_panel"):
+                panel_expanded = bool(st.session_state.get("ai_panel_expanded", False))
+                expanded_class = " ai-panel-expanded" if panel_expanded else ""
                 status_class = "" if assistant.available else " offline"
                 status_text = "Online" if assistant.available else "Configuração pendente"
                 st.markdown(
-                    '<div class="ai-panel-head"><div class="ai-head-person"><span class="ai-avatar">JR</span>'
+                    f'<div class="ai-panel-head{expanded_class}"><div class="ai-head-person"><span class="ai-avatar">JR</span>'
                     f'<div class="ai-head-copy"><strong>Assistente JR</strong><span class="ai-page">{h(PAGE_CATALOG[page]["label"])}</span></div></div>'
                     f'<span class="ai-status{status_class}"><i class="ai-dot"></i>{h(status_text)}</span></div>',
                     unsafe_allow_html=True,
                 )
 
                 with st.container(key="ai_header_actions"):
-                    action_cols = st.columns(2)
+                    action_cols = st.columns([1, 1, 0.34])
                     with action_cols[0]:
                         if st.button("✦ Resumir página", key="ai_summarize_page", width="stretch", disabled=not assistant.available):
                             pending_question = "Faça um resumo executivo desta página, destacando os números, tendências e pontos de atenção comprovados pelos dados."
@@ -3582,6 +3593,12 @@ def render_ai_assistant(page: str) -> None:
                             st.session_state[history_key] = []
                             st.session_state.pop("ai_response_cache", None)
                             st.session_state.pop("ai_focus_context", None)
+                            st.rerun()
+                    with action_cols[2]:
+                        resize_label = "↙" if panel_expanded else "⛶"
+                        resize_help = "Voltar ao tamanho normal" if panel_expanded else "Ampliar conversa"
+                        if st.button(resize_label, key="ai_toggle_panel_size", width="stretch", help=resize_help):
+                            st.session_state["ai_panel_expanded"] = not panel_expanded
                             st.rerun()
 
                 pending_action = st.session_state.get("ai_pending_filter_action")
@@ -3733,6 +3750,10 @@ def render_ai_assistant(page: str) -> None:
                     st.caption(
                         f"Sessão: {user_messages}/{config.session_message_limit} · "
                         f"Hoje: {fmt_num(usage.get('requests'), 0)} requisições"
+                    )
+                    st.markdown(
+                        '<span class="ai-resize-hint">↙ Arraste o canto inferior esquerdo para redimensionar</span>',
+                        unsafe_allow_html=True,
                     )
 
 
