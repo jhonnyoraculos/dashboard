@@ -196,6 +196,8 @@ class AssistantTests(unittest.TestCase):
         self.assertIn("get_dashboard_metrics", names)
         self.assertIn("get_site_wide_overview", names)
         self.assertEqual(ai.normalize_page("ranking"), "frota")
+        self.assertIn("até 250 palavras", ai.SYSTEM_PROMPT)
+        self.assertIn("no máximo cinco tópicos", ai.SYSTEM_PROMPT)
 
 
 if __name__ == "__main__":

@@ -127,7 +127,7 @@ class AssistantConfig:
     model: str = DEFAULT_MODEL
     fallback_model: str = DEFAULT_FALLBACK_MODEL
     timeout_seconds: float = 30.0
-    max_output_tokens: int = 1_200
+    max_output_tokens: int = 800
     max_tool_rounds: int = 3
     max_continuations: int = 2
     session_message_limit: int = 24
@@ -182,7 +182,7 @@ class AssistantConfig:
             model=str(value("GROQ_MODEL", DEFAULT_MODEL)).strip() or DEFAULT_MODEL,
             fallback_model=str(value("GROQ_FALLBACK_MODEL", DEFAULT_FALLBACK_MODEL)).strip(),
             timeout_seconds=number("GROQ_TIMEOUT_SECONDS", 30.0, 5.0, 90.0),
-            max_output_tokens=integer("GROQ_MAX_OUTPUT_TOKENS", 1_200, 256, 4_096),
+            max_output_tokens=integer("GROQ_MAX_OUTPUT_TOKENS", 800, 256, 4_096),
             max_tool_rounds=integer("GROQ_MAX_TOOL_ROUNDS", 3, 1, 5),
             max_continuations=integer("GROQ_MAX_CONTINUATIONS", 2, 0, 3),
             session_message_limit=integer("AI_SESSION_MESSAGE_LIMIT", 24, 4, 100),
@@ -531,7 +531,11 @@ REGRAS OBRIGATÓRIAS:
 - Não execute escrita, exclusão ou alteração de registros. Filtros devem ser preparados para confirmação.
 - Explique fórmulas e cálculos quando comparar valores.
 - Use Markdown, listas e tabelas pequenas quando melhorarem a leitura.
-- Entregue primeiro a conclusão e depois os cálculos essenciais. Seja conciso: normalmente até 600 palavras.
+- Seja resumido por padrão: responda normalmente em até 250 palavras.
+- Comece com uma conclusão de uma ou duas frases e use no máximo cinco tópicos curtos.
+- Mostre somente os números e cálculos indispensáveis para sustentar a conclusão.
+- Não repita a pergunta, não descreva todo o processo e não inclua metodologia detalhada, premissas extensas ou próximos passos, salvo quando o usuário pedir.
+- Se uma resposta puder ser dada em poucas linhas, não crie seções adicionais.
 - Na interface de conversa, não use tabelas Markdown nem caracteres de tabela (`|`). Para séries mensais, use uma lista curta com no máximo 12 itens e sempre finalize a explicação.
 - Use Markdown convencional com linhas em branco entre títulos, parágrafos e listas. Nunca emende marcadores `**`, fórmulas ou seções na mesma linha.
 - Não use títulos Markdown de nível 1 ou 2; use no máximo títulos com ### para não ocupar toda a conversa.

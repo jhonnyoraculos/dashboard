@@ -42,7 +42,7 @@ Para ativar em producao, adicione estas chaves aos `Secrets` do Streamlit:
 GROQ_API_KEY = "gsk_..."
 GROQ_MODEL = "openai/gpt-oss-120b"
 GROQ_FALLBACK_MODEL = "openai/gpt-oss-20b"
-GROQ_MAX_OUTPUT_TOKENS = 1200
+GROQ_MAX_OUTPUT_TOKENS = 800
 GROQ_MAX_TOOL_ROUNDS = 3
 GROQ_MAX_CONTINUATIONS = 2
 AI_SESSION_MESSAGE_LIMIT = 24
