@@ -78,7 +78,7 @@ MUTED = "#6B7280"
 CARD_BORDER = "#c2d2f3"
 LOGO_PATH = Path(__file__).parent / "static" / "logo-jr.png"
 CURRENT_YEAR = date.today().year
-APP_VERSION = "global-groq-assistant-v25"
+APP_VERSION = "global-groq-assistant-v26"
 LOGGER = logging.getLogger("jr_dashboard.streamlit")
 RANK_ROUTES_ENABLED = True
 ROUTE_CACHE_TTL_SECONDS = max(int(os.environ.get("JR_ROUTE_CACHE_TTL_SECONDS", "180") or 180), 30)
@@ -3467,39 +3467,85 @@ def _inject_ai_assistant_css() -> None:
         }
         .st-key-ai_assistant_shell [data-testid="stPopover"] {pointer-events:auto !important;}
         .st-key-ai_assistant_shell [data-testid="stPopover"] > button {
-          min-height:52px !important; padding:0 20px !important; border-radius:999px !important;
+          min-height:50px !important; padding:0 18px !important; border-radius:999px !important;
           color:#fff !important; -webkit-text-fill-color:#fff !important; font-weight:800 !important;
-          border:1px solid rgba(255,255,255,.50) !important;
-          background:linear-gradient(135deg,rgba(28,45,107,.96),rgba(37,99,235,.91)) !important;
-          box-shadow:0 18px 45px rgba(28,45,107,.32),inset 0 1px rgba(255,255,255,.35) !important;
+          border:1px solid rgba(255,255,255,.55) !important;
+          background:linear-gradient(135deg,#075E54,#128C7E) !important;
+          box-shadow:0 16px 38px rgba(7,94,84,.30),inset 0 1px rgba(255,255,255,.30) !important;
           backdrop-filter:blur(20px) saturate(160%) !important;
         }
         .st-key-ai_assistant_shell [data-testid="stPopover"] > button:hover {
-          transform:translateY(-2px); box-shadow:0 22px 52px rgba(28,45,107,.40) !important;
+          transform:translateY(-2px); box-shadow:0 20px 48px rgba(7,94,84,.38) !important;
         }
         div[data-testid="stPopoverBody"]:has(.st-key-ai_chat_panel) {
-          width:min(470px,calc(100vw - 26px)) !important; max-height:min(720px,calc(100vh - 155px)) !important;
-          overflow-y:auto !important; border-radius:24px !important;
-          border:1px solid rgba(255,255,255,.75) !important;
-          background:rgba(248,250,252,.88) !important;
-          box-shadow:0 28px 80px rgba(15,23,42,.28) !important;
-          backdrop-filter:blur(28px) saturate(170%) !important;
+          width:min(440px,calc(100vw - 24px)) !important; max-height:min(760px,calc(100vh - 148px)) !important;
+          overflow-y:auto !important; overflow-x:hidden !important; border-radius:20px !important;
+          border:1px solid rgba(7,94,84,.22) !important; padding:0 !important;
+          background:#EFEAE2 !important;
+          box-shadow:0 26px 70px rgba(15,23,42,.28) !important;
         }
-        .st-key-ai_chat_panel { color:#172554 !important; }
-        .st-key-ai_chat_panel [data-testid="stChatMessage"] {
-          background:rgba(255,255,255,.72); border:1px solid rgba(194,210,243,.8);
-          border-radius:16px; padding:4px 10px; margin:8px 0;
+        .st-key-ai_chat_panel {color:#172554 !important;padding:0 12px 10px !important;}
+        .ai-panel-head {
+          display:flex;align-items:center;justify-content:space-between;gap:10px;
+          margin:0 -12px 10px;padding:13px 14px;background:linear-gradient(135deg,#075E54,#128C7E);
+          box-shadow:0 5px 16px rgba(7,94,84,.18)
         }
-        .ai-panel-head {display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:8px}
-        .ai-panel-head strong {font-size:17px;color:#172554}.ai-panel-head span {font-size:11px;color:#64748B}
-        .ai-status {display:inline-flex;align-items:center;gap:6px;padding:5px 9px;border-radius:999px;background:#DCFCE7;color:#166534;font-size:11px;font-weight:800}
-        .ai-status.offline {background:#FEF3C7;color:#92400E}.ai-dot{width:7px;height:7px;border-radius:50%;background:currentColor}
+        .ai-head-person{display:flex;align-items:center;gap:10px;min-width:0}.ai-avatar{width:38px;height:38px;border-radius:50%;display:grid;place-items:center;background:#fff;color:#075E54;font-size:14px;font-weight:900;box-shadow:0 2px 8px rgba(0,0,0,.18)}
+        .ai-head-copy{min-width:0}.ai-panel-head strong{display:block;font-size:15px;line-height:1.2;color:#fff}.ai-panel-head .ai-page{display:block;margin-top:2px;font-size:10px;color:rgba(255,255,255,.78);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:185px}
+        .ai-status{display:inline-flex;align-items:center;gap:5px;padding:5px 8px;border-radius:999px;background:rgba(255,255,255,.16);color:#fff;font-size:9px;font-weight:800;white-space:nowrap}.ai-status.offline{background:#FEF3C7;color:#92400E}.ai-dot{width:6px;height:6px;border-radius:50%;background:currentColor}
+        .st-key-ai_header_actions{margin:2px 0 8px}.st-key-ai_header_actions button{min-height:34px !important;border-radius:10px !important;border:1px solid rgba(7,94,84,.18) !important;background:rgba(255,255,255,.86) !important;color:#075E54 !important;-webkit-text-fill-color:#075E54 !important;font-size:11px !important;font-weight:800 !important;box-shadow:none !important}.st-key-ai_header_actions button:hover{background:#fff !important;border-color:#128C7E !important}
+        .st-key-ai_conversation{background:#E8E2D9 !important;border-radius:14px !important;padding:12px 10px !important;margin:4px 0 8px !important;box-shadow:inset 0 1px 5px rgba(15,23,42,.06)}
+        .ai-welcome{max-width:86%;background:#fff;border-radius:4px 14px 14px 14px;padding:10px 12px;color:#334155;font-size:12px;line-height:1.45;box-shadow:0 1px 2px rgba(15,23,42,.10)}
+        [class*="st-key-ai_message_"]{max-width:86%;border-radius:13px !important;padding:7px 10px 5px !important;margin:0 0 8px !important;box-shadow:0 1px 2px rgba(15,23,42,.12)}
+        [class*="st-key-ai_message_assistant_"]{margin-right:auto !important;background:#fff !important;border-top-left-radius:4px !important}
+        [class*="st-key-ai_message_user_"]{margin-left:auto !important;background:#D9FDD3 !important;border-top-right-radius:4px !important}
+        [class*="st-key-ai_message_error_"]{margin-right:auto !important;background:#FFF1F2 !important;border-left:3px solid #BE1E2D !important}
+        [class*="st-key-ai_message_"] p{font-size:12px !important;line-height:1.48 !important;margin:0 0 4px !important;color:#172554 !important}[class*="st-key-ai_message_"] ul,[class*="st-key-ai_message_"] ol{font-size:12px !important;padding-left:19px !important;margin:4px 0 !important}
+        .ai-message-meta{display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:3px;font-size:9px;color:#64748B}.ai-message-meta strong{font-size:10px;color:#075E54}.ai-message-meta span{white-space:nowrap}
+        [class*="st-key-ai_message_"] [data-testid="stCaptionContainer"]{margin-top:2px !important}[class*="st-key-ai_message_"] [data-testid="stCaptionContainer"] p{font-size:8px !important;color:#94A3B8 !important;text-align:right !important}
+        .st-key-ai_quick_replies{margin:3px 0 8px}.st-key-ai_quick_replies [data-testid="stPills"]{gap:5px !important}.st-key-ai_quick_replies button{min-height:30px !important;border-radius:999px !important;border:1px solid rgba(7,94,84,.25) !important;background:rgba(255,255,255,.84) !important;color:#075E54 !important;-webkit-text-fill-color:#075E54 !important;font-size:10px !important;font-weight:700 !important;white-space:normal !important;text-align:left !important}.st-key-ai_quick_replies button:hover{background:#E7F8F2 !important;border-color:#128C7E !important}
+        .st-key-ai_chat_panel [data-testid="stForm"]{border:0 !important;border-radius:14px !important;background:#F0F2F5 !important;padding:7px !important;margin-top:5px !important}.st-key-ai_chat_panel [data-testid="stForm"] [data-testid="stHorizontalBlock"]{align-items:center !important;gap:7px !important}.st-key-ai_chat_panel [data-testid="stForm"] input{min-height:42px !important;border-radius:999px !important;background:#fff !important;border:1px solid #E2E8F0 !important;padding:0 15px !important;font-size:12px !important}.st-key-ai_chat_panel [data-testid="stForm"] button{width:42px !important;min-width:42px !important;height:42px !important;min-height:42px !important;border-radius:50% !important;padding:0 !important;background:#128C7E !important;border-color:#128C7E !important;color:#fff !important;-webkit-text-fill-color:#fff !important;font-size:17px !important;box-shadow:0 5px 12px rgba(18,140,126,.25) !important}
+        .st-key-ai_usage_footer [data-testid="stCaptionContainer"] p{text-align:center !important;color:#64748B !important;font-size:9px !important;margin:3px 0 0 !important}
         [class*="st-key-ai_chart_action_"] button {min-height:34px !important;border-radius:10px !important;color:#1C2D6B !important;font-weight:700 !important}
-        @media(max-width:640px){.st-key-ai_assistant_shell{top:70px !important;right:12px !important;bottom:auto !important}.st-key-ai_assistant_shell [data-testid="stPopover"] > button{min-height:48px !important;padding:0 15px !important}div[data-testid="stPopoverBody"]:has(.st-key-ai_chat_panel){max-height:calc(100vh - 135px) !important}}
+        @media(max-width:640px){.st-key-ai_assistant_shell{top:70px !important;right:10px !important;bottom:auto !important}.st-key-ai_assistant_shell [data-testid="stPopover"] > button{min-height:44px !important;padding:0 13px !important;font-size:11px !important}div[data-testid="stPopoverBody"]:has(.st-key-ai_chat_panel){width:calc(100vw - 16px) !important;max-height:calc(100vh - 125px) !important}.ai-panel-head .ai-page{max-width:145px}.st-key-ai_conversation{height:280px !important}}
         </style>
         """,
         unsafe_allow_html=True,
     )
+
+
+def _queue_ai_suggestion(state_key: str) -> None:
+    suggestion = clean_text(st.session_state.get(state_key)).strip()
+    if suggestion:
+        st.session_state["ai_pending_question"] = suggestion
+    st.session_state[state_key] = None
+
+
+def _render_ai_conversation(history: list[dict[str, object]], config: AssistantConfig) -> None:
+    with st.container(key="ai_conversation", height=320, border=False, autoscroll=True):
+        if not history:
+            st.markdown(
+                '<div class="ai-welcome"><strong>Olá! Sou o Assistente JR.</strong><br>'
+                "Pergunte sobre custos, rotas, motoristas, veículos ou qualquer indicador desta página.</div>",
+                unsafe_allow_html=True,
+            )
+        for index, item in enumerate(history[-20:]):
+            role = "user" if item.get("role") == "user" else "assistant"
+            bubble_role = "error" if item.get("error") else role
+            label = "Você" if role == "user" else "Assistente JR"
+            sent_at = clean_text(item.get("time") or "")
+            with st.container(key=f"ai_message_{bubble_role}_{index}"):
+                st.markdown(
+                    f'<div class="ai-message-meta"><strong>{h(label)}</strong><span>{h(sent_at)}</span></div>',
+                    unsafe_allow_html=True,
+                )
+                st.markdown(clean_text(item.get("content")))
+                if role == "assistant" and item.get("tokens"):
+                    model_label = clean_text(item.get("model") or config.model).split("/")[-1]
+                    st.caption(
+                        f"{fmt_num(item.get('tokens'), 0)} tokens · "
+                        f"{fmt_num(item.get('tools'), 0)} consulta(s) · {model_label}"
+                    )
 
 
 def render_ai_assistant(page: str) -> None:
@@ -3518,23 +3564,25 @@ def render_ai_assistant(page: str) -> None:
         with st.popover("✦ Assistente IA", use_container_width=False):
             with st.container(key="ai_chat_panel"):
                 status_class = "" if assistant.available else " offline"
-                status_text = "Groq conectada" if assistant.available else "Configuração pendente"
+                status_text = "Online" if assistant.available else "Configuração pendente"
                 st.markdown(
-                    f'<div class="ai-panel-head"><div><strong>Assistente JR</strong><br><span>{h(PAGE_CATALOG[page]["label"])}</span></div>'
+                    '<div class="ai-panel-head"><div class="ai-head-person"><span class="ai-avatar">JR</span>'
+                    f'<div class="ai-head-copy"><strong>Assistente JR</strong><span class="ai-page">{h(PAGE_CATALOG[page]["label"])}</span></div></div>'
                     f'<span class="ai-status{status_class}"><i class="ai-dot"></i>{h(status_text)}</span></div>',
                     unsafe_allow_html=True,
                 )
 
-                action_cols = st.columns(2)
-                with action_cols[0]:
-                    if st.button("Resumir esta página", key="ai_summarize_page", width="stretch", disabled=not assistant.available):
-                        pending_question = "Faça um resumo executivo desta página, destacando os números, tendências e pontos de atenção comprovados pelos dados."
-                with action_cols[1]:
-                    if st.button("Limpar conversa", key="ai_clear_history", width="stretch"):
-                        st.session_state[history_key] = []
-                        st.session_state.pop("ai_response_cache", None)
-                        st.session_state.pop("ai_focus_context", None)
-                        st.rerun()
+                with st.container(key="ai_header_actions"):
+                    action_cols = st.columns(2)
+                    with action_cols[0]:
+                        if st.button("✦ Resumir página", key="ai_summarize_page", width="stretch", disabled=not assistant.available):
+                            pending_question = "Faça um resumo executivo desta página, destacando os números, tendências e pontos de atenção comprovados pelos dados."
+                    with action_cols[1]:
+                        if st.button("⌫ Limpar conversa", key="ai_clear_history", width="stretch"):
+                            st.session_state[history_key] = []
+                            st.session_state.pop("ai_response_cache", None)
+                            st.session_state.pop("ai_focus_context", None)
+                            st.rerun()
 
                 pending_action = st.session_state.get("ai_pending_filter_action")
                 if isinstance(pending_action, dict):
@@ -3548,25 +3596,38 @@ def render_ai_assistant(page: str) -> None:
                             st.session_state.pop("ai_pending_filter_action", None)
                             st.rerun()
 
-                suggestion_cols = st.columns(3)
-                for index, suggestion in enumerate(_ai_suggestions(page)):
-                    with suggestion_cols[index]:
-                        if st.button(suggestion, key=f"ai_suggestion_{page}_{index}", width="stretch", disabled=not assistant.available):
-                            pending_question = suggestion
+                conversation_slot = st.empty()
+
+                suggestion_key = f"ai_quick_suggestion_{page}"
+                with st.container(key="ai_quick_replies"):
+                    st.pills(
+                        "Perguntas rápidas",
+                        _ai_suggestions(page),
+                        key=suggestion_key,
+                        on_change=_queue_ai_suggestion,
+                        args=(suggestion_key,),
+                        disabled=not assistant.available,
+                        label_visibility="collapsed",
+                        width="stretch",
+                    )
 
                 with st.form("ai_assistant_question_form", clear_on_submit=True):
-                    question = st.text_area(
-                        "Pergunte sobre os dados",
-                        placeholder="Ex.: quais indicadores merecem atenção?",
-                        height=82,
-                        disabled=not assistant.available,
-                    )
-                    submitted = st.form_submit_button(
-                        "Enviar pergunta",
-                        type="primary",
-                        width="stretch",
-                        disabled=not assistant.available,
-                    )
+                    composer_cols = st.columns([8, 1], gap="small", vertical_alignment="center")
+                    with composer_cols[0]:
+                        question = st.text_input(
+                            "Mensagem",
+                            placeholder="Digite uma pergunta...",
+                            disabled=not assistant.available,
+                            label_visibility="collapsed",
+                        )
+                    with composer_cols[1]:
+                        submitted = st.form_submit_button(
+                            "➤",
+                            type="primary",
+                            width="stretch",
+                            disabled=not assistant.available,
+                            help="Enviar mensagem",
+                        )
                 if submitted:
                     pending_question = question
 
@@ -3586,7 +3647,15 @@ def render_ai_assistant(page: str) -> None:
                     )
                     cache_key = hashlib.sha256(cache_source.encode()).hexdigest()
                     history_before = list(history)
-                    history.append({"role": "user", "content": clean_text(pending_question), "page": page})
+                    message_time = datetime.now(BR_TZ).strftime("%H:%M")
+                    history.append(
+                        {
+                            "role": "user",
+                            "content": clean_text(pending_question),
+                            "page": page,
+                            "time": message_time,
+                        }
+                    )
                     try:
                         cached = cache.get(cache_key)
                         if cached:
@@ -3622,32 +3691,49 @@ def render_ai_assistant(page: str) -> None:
                                 "tokens": result_tokens,
                                 "tools": result_tools,
                                 "model": result_model,
+                                "time": datetime.now(BR_TZ).strftime("%H:%M"),
                             }
                         )
                     except AssistantError as exc:
-                        history.append({"role": "assistant", "content": f"⚠️ {exc}", "page": page, "error": True})
+                        history.append(
+                            {
+                                "role": "assistant",
+                                "content": f"⚠️ {exc}",
+                                "page": page,
+                                "error": True,
+                                "time": datetime.now(BR_TZ).strftime("%H:%M"),
+                            }
+                        )
+                    except Exception as exc:
+                        LOGGER.exception("Assistant response processing failed: page=%s type=%s", page, type(exc).__name__)
+                        history.append(
+                            {
+                                "role": "assistant",
+                                "content": (
+                                    "⚠️ Recebi a solicitação, mas não consegui montar a resposta. "
+                                    "Tente novamente; se persistir, o detalhe técnico ficou registrado nos logs."
+                                ),
+                                "page": page,
+                                "error": True,
+                                "time": datetime.now(BR_TZ).strftime("%H:%M"),
+                            }
+                        )
                     finally:
                         st.session_state.pop("ai_focus_context", None)
 
                 if not assistant.available:
                     st.warning("Adicione `GROQ_API_KEY` aos Secrets do Streamlit para ativar a IA. Nenhuma chave é enviada ao navegador.")
 
-                for item in history[-14:]:
-                    avatar = "🧑" if item.get("role") == "user" else "✦"
-                    with st.chat_message(item.get("role", "assistant"), avatar=avatar):
-                        st.markdown(clean_text(item.get("content")))
-                        if item.get("role") == "assistant" and item.get("tokens"):
-                            model_label = clean_text(item.get("model") or config.model).split("/")[-1]
-                            st.caption(
-                                f"{fmt_num(item.get('tokens'), 0)} tokens · "
-                                f"{fmt_num(item.get('tools'), 0)} consulta(s) aos dados · {model_label}"
-                            )
+                with conversation_slot.container():
+                    _render_ai_conversation(history, config)
 
+                user_messages = sum(1 for item in history if item.get("role") == "user")
                 usage = global_usage_snapshot()
-                st.caption(
-                    f"Sessão: {user_messages}/{config.session_message_limit} perguntas · "
-                    f"Uso global hoje: {fmt_num(usage.get('requests'), 0)} requisições"
-                )
+                with st.container(key="ai_usage_footer"):
+                    st.caption(
+                        f"Sessão: {user_messages}/{config.session_message_limit} · "
+                        f"Hoje: {fmt_num(usage.get('requests'), 0)} requisições"
+                    )
 
 
 def fmt_brl(value: object, *, compact_threshold: float = 1000.0) -> str:
