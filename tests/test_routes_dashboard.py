@@ -255,14 +255,17 @@ class RoutesDashboardTests(unittest.TestCase):
             {
                 "ranking_cidades": [
                     {"Cidade": "Divinópolis - MG", "Rotas": 3, "Entregas": 12, "Peso kg": 5000, "Valor Notas": 9000},
+                    {"Cidade": "Uberlândia - MG", "Rotas": 2, "Entregas": 5, "Peso kg": 1000, "Valor Notas": 2500},
                     {"Cidade": "Cidade sem cadastro", "Rotas": 1, "Entregas": 2, "Peso kg": 200, "Valor Notas": 500},
                 ]
             }
         )
         mapped = cities.set_index("Cidade")["Localizada"].to_dict()
         self.assertTrue(mapped["Divinópolis - MG"])
+        self.assertTrue(mapped["Uberlândia - MG"])
         self.assertFalse(mapped["Cidade sem cadastro"])
-        self.assertEqual(float(cities["Entregas"].sum()), 14.0)
+        self.assertEqual(float(cities["Entregas"].sum()), 19.0)
+        self.assertTrue(dashboard.MAP_PLOTLY_CONFIG["scrollZoom"])
 
     def test_weekly_forecast_and_cost_explanation_use_completed_weeks(self):
         weeks = pd.date_range("2026-09-14", periods=6, freq="7D")

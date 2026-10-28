@@ -66,7 +66,7 @@ MUTED = "#6B7280"
 CARD_BORDER = "#c2d2f3"
 LOGO_PATH = Path(__file__).parent / "static" / "logo-jr.png"
 CURRENT_YEAR = date.today().year
-APP_VERSION = "routes-days-map-compat-v21"
+APP_VERSION = "routes-map-geocoding-v22"
 RANK_ROUTES_ENABLED = True
 ROUTE_CACHE_TTL_SECONDS = max(int(os.environ.get("JR_ROUTE_CACHE_TTL_SECONDS", "180") or 180), 30)
 DATA_EDITOR_PAGE_SIZE = 100
@@ -113,6 +113,12 @@ CITIES_COORDINATES = {
     "SETE LAGOAS": (-19.4658, -44.2467),
     "VARGINHA": (-21.5513, -45.4308),
 }
+BRAZIL_STATE_CODES = {
+    "AC", "AL", "AP", "AM", "BA", "CE", "DF", "ES", "GO", "MA", "MT", "MS", "MG",
+    "PA", "PB", "PR", "PE", "PI", "RJ", "RN", "RS", "RO", "RR", "SC", "SP", "SE", "TO",
+}
+CITY_COORDINATES_CATALOG_PATH = Path(__file__).parent / "static" / "municipios_brasil_coordinates.json"
+_CITY_COORDINATE_CATALOG: tuple[dict[str, tuple[float, float]], dict[str, tuple[float, float]]] | None = None
 CATEGORY_OPTIONS = ["Transporte", "Freteiro", "Empilhadeira", "Estoque", "Vex", "Equipamento"]
 CADASTRO_TABS = ["Placas", "Rotas", "Empilhadeiras", "Combustível", "KM mensal", "Manutenção", "Pneus", "Hotéis", "Peso", "Velocidade", "Pedágio/Extras", "Aluguel de veículos"]
 PEDAGIO_TIPO_OPTIONS = ["Pedágio", "Extras", "Táxi", "IPVA", "Seguro", "Licenciamento", "DPVAT", "Outros"]
@@ -156,6 +162,7 @@ PLOTLY_CONFIG = {
     },
     "modeBarButtonsToRemove": ["lasso2d", "select2d"],
 }
+MAP_PLOTLY_CONFIG = {**PLOTLY_CONFIG, "scrollZoom": True}
 
 MONTH_NAMES = [
     "Janeiro",
@@ -15799,8 +15806,57 @@ def _route_city_key(value: object) -> str:
     normalized = unicodedata.normalize("NFKD", clean_text(value))
     normalized = "".join(character for character in normalized if not unicodedata.combining(character))
     normalized = re.sub(r"[^A-Za-z0-9 ]+", " ", normalized).upper()
-    normalized = re.sub(r"\s+(MG|RJ|SP|ES|GO)$", "", normalized)
+    normalized = re.sub(rf"\s+({'|'.join(sorted(BRAZIL_STATE_CODES))})$", "", normalized)
     return re.sub(r"\s+", " ", normalized).strip()
+
+
+def _route_city_state(value: object) -> str:
+    normalized = unicodedata.normalize("NFKD", clean_text(value))
+    normalized = "".join(character for character in normalized if not unicodedata.combining(character))
+    normalized = re.sub(r"[^A-Za-z0-9 ]+", " ", normalized).upper().strip()
+    match = re.search(rf"(?:^|\s)({'|'.join(sorted(BRAZIL_STATE_CODES))})$", normalized)
+    return match.group(1) if match else ""
+
+
+def _route_city_coordinate_catalog() -> tuple[
+    dict[str, tuple[float, float]], dict[str, tuple[float, float]]
+]:
+    global _CITY_COORDINATE_CATALOG
+    if _CITY_COORDINATE_CATALOG is not None:
+        return _CITY_COORDINATE_CATALOG
+
+    exact: dict[str, tuple[float, float]] = {}
+    preferred: dict[str, tuple[float, float]] = {}
+    preferred_priority: dict[str, int] = {}
+    state_priority = {state: index for index, state in enumerate(("MG", "RJ", "SP", "ES", "GO"))}
+    try:
+        payload = json.loads(CITY_COORDINATES_CATALOG_PATH.read_text(encoding="utf-8"))
+    except (OSError, ValueError, TypeError):
+        payload = {}
+    for compound_key, coordinate in (payload.get("coordinates") or {}).items():
+        try:
+            name, state = compound_key.rsplit("|", 1)
+            point = (float(coordinate[0]), float(coordinate[1]))
+        except (AttributeError, IndexError, TypeError, ValueError):
+            continue
+        exact[compound_key] = point
+        priority = state_priority.get(state, 100)
+        if name not in preferred or priority < preferred_priority[name]:
+            preferred[name] = point
+            preferred_priority[name] = priority
+    _CITY_COORDINATE_CATALOG = exact, preferred
+    return _CITY_COORDINATE_CATALOG
+
+
+def _route_city_coordinate(value: object) -> tuple[float, float] | None:
+    city_key = _route_city_key(value)
+    if city_key in CITIES_COORDINATES:
+        return CITIES_COORDINATES[city_key]
+    exact, preferred = _route_city_coordinate_catalog()
+    state = _route_city_state(value)
+    if state and f"{city_key}|{state}" in exact:
+        return exact[f"{city_key}|{state}"]
+    return preferred.get(city_key)
 
 
 def _route_city_map_frame(data: dict) -> pd.DataFrame:
@@ -15811,8 +15867,9 @@ def _route_city_map_frame(data: dict) -> pd.DataFrame:
     for column in ["Rotas", "Entregas", "Peso kg", "Valor Notas"]:
         source = cities[column] if column in cities.columns else pd.Series(0.0, index=cities.index)
         cities[column] = pd.to_numeric(source, errors="coerce").fillna(0.0)
-    cities["_Cidade chave"] = cities.get("Cidade", pd.Series("", index=cities.index)).map(_route_city_key)
-    cities["_Coordenada"] = cities["_Cidade chave"].map(CITIES_COORDINATES)
+    cities["_Coordenada"] = cities.get("Cidade", pd.Series("", index=cities.index)).map(
+        _route_city_coordinate
+    )
     cities["Latitude"] = cities["_Coordenada"].map(lambda value: value[0] if isinstance(value, tuple) else pd.NA)
     cities["Longitude"] = cities["_Coordenada"].map(lambda value: value[1] if isinstance(value, tuple) else pd.NA)
     cities["Localizada"] = cities["Latitude"].notna() & cities["Longitude"].notna()
@@ -16664,9 +16721,10 @@ def _render_route_operational_map(data: dict) -> None:
         height=610,
         paper_bgcolor="rgba(0,0,0,0)",
     )
-    st.plotly_chart(fig, width="stretch", config=PLOTLY_CONFIG, key="routes_operational_map_v1")
+    st.plotly_chart(fig, width="stretch", config=MAP_PLOTLY_CONFIG, key="routes_operational_map_v2")
     st.caption(
-        "As bolhas usam coordenadas do centro do município apenas para posicionamento. "
+        "Use a roda do mouse sobre o mapa para aproximar ou afastar. As cidades são pesquisadas "
+        "automaticamente no catálogo brasileiro de municípios e posicionadas pelo centro geográfico. "
         "Entregas, rotas, peso e valores são os dados reais filtrados do dashboard."
     )
     if not missing.empty:
