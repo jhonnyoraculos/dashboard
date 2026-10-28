@@ -169,6 +169,7 @@ class AssistantTests(unittest.TestCase):
         self.assertNotIn("execute_sql", names)
         self.assertNotIn("execute_python", names)
         self.assertIn("get_dashboard_metrics", names)
+        self.assertIn("get_site_wide_overview", names)
         self.assertEqual(ai.normalize_page("ranking"), "frota")
 
 

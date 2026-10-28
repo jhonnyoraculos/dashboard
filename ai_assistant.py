@@ -380,6 +380,17 @@ TOOL_SCHEMAS = [
     {
         "type": "function",
         "function": {
+            "name": "get_site_wide_overview",
+            "description": (
+                "Consulta de uma vez os KPIs agregados de todas as áreas autorizadas do site. "
+                "Deve ser usada para perguntas gerais, desempenho global, visão da empresa ou comparação entre áreas."
+            ),
+            "parameters": {"type": "object", "properties": {}, "additionalProperties": False},
+        },
+    },
+    {
+        "type": "function",
+        "function": {
             "name": "get_dashboard_metrics",
             "description": "Consulta KPIs e agregações reais de um dashboard autorizado.",
             "parameters": {
@@ -507,6 +518,8 @@ Responda em português brasileiro, de forma profissional, objetiva e clara.
 
 REGRAS OBRIGATÓRIAS:
 - Use ferramentas para toda afirmação quantitativa. Nunca invente números.
+- Quando a pergunta for geral, sobre o site inteiro, toda a operação ou comparação entre áreas, use get_site_wide_overview e não peça ao usuário para escolher um dashboard.
+- Em perguntas gerais, combine os dados das áreas disponíveis e informe claramente quais áreas ou métricas não possuem dados.
 - Diferencie fato, cálculo, estimativa, correlação e possível causa.
 - Quando os dados não sustentarem uma causa, diga isso e indique o que seria necessário verificar.
 - Considere somente dados retornados pelas ferramentas e os filtros ativos.
@@ -638,7 +651,7 @@ class GroqDashboardAssistant:
         if len(question) > 4_000:
             raise AssistantError("A pergunta está muito longa. Resuma-a em até 4.000 caracteres.")
 
-        safe_context = compact_data(page_context, max_depth=5, max_items=20, max_string=400)
+        safe_context = compact_data(page_context, max_depth=7, max_items=24, max_string=400)
         messages: list[dict[str, Any]] = [
             {"role": "system", "content": SYSTEM_PROMPT},
             {
@@ -690,7 +703,7 @@ class GroqDashboardAssistant:
                         raise TypeError("arguments must be an object")
                     result = tool_executor(tool_call.function.name, arguments)
                     content = json.dumps(
-                        compact_data(result, max_depth=5, max_items=20, max_string=400),
+                        compact_data(result, max_depth=7, max_items=24, max_string=400),
                         ensure_ascii=False,
                         default=str,
                     )

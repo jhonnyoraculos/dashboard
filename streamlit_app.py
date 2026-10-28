@@ -78,7 +78,7 @@ MUTED = "#6B7280"
 CARD_BORDER = "#c2d2f3"
 LOGO_PATH = Path(__file__).parent / "static" / "logo-jr.png"
 CURRENT_YEAR = date.today().year
-APP_VERSION = "global-groq-assistant-v27"
+APP_VERSION = "global-groq-assistant-v28"
 LOGGER = logging.getLogger("jr_dashboard.streamlit")
 RANK_ROUTES_ENABLED = True
 ROUTE_CACHE_TTL_SECONDS = max(int(os.environ.get("JR_ROUTE_CACHE_TTL_SECONDS", "180") or 180), 30)
@@ -3211,6 +3211,19 @@ AI_ALLOWED_SERIES = {
     "rotas": {"evolucao_mensal", "ranking_motoristas", "ranking_colaboradores", "ranking_placas", "ranking_rotas", "ranking_cidades", "alertas"},
 }
 
+AI_SITE_DASHBOARDS = (
+    "overview",
+    "combustivel",
+    "manutencao",
+    "hoteis",
+    "pedagio",
+    "vex",
+    "alertas",
+    "velocidade",
+    "frota",
+    "rotas",
+)
+
 AI_FILTER_STATE_KEYS = {
     "combustivel": {"ano": "comb_ano", "mes": "comb_mes", "categoria": "comb_categoria", "placa": "comb_placa", "posto": "comb_posto", "combustivel": "comb_combustivel"},
     "manutencao": {"ano": "manu_ano", "mes": "manu_mes", "placa": "manu_placa", "oficina": "manu_oficina", "segmento": "manu_segmento"},
@@ -3315,6 +3328,139 @@ def _ai_page_context(page: str) -> dict[str, object]:
     return compact_data(context, max_depth=6, max_items=25)
 
 
+def _ai_is_general_question(question: object) -> bool:
+    normalized = unicodedata.normalize("NFKD", clean_text(question)).encode("ascii", "ignore").decode().casefold()
+    if any(marker in normalized for marker in ("desta pagina", "nesta pagina", "pagina atual", "deste grafico", "neste grafico")):
+        return False
+    markers = (
+        "geral",
+        "site inteiro",
+        "todo o site",
+        "todos os dashboards",
+        "todas as areas",
+        "operacao inteira",
+        "empresa inteira",
+        "visao completa",
+        "desempenho da empresa",
+        "desempenho da operacao",
+        "panorama da empresa",
+    )
+    return any(marker in normalized for marker in markers)
+
+
+def _ai_cross_dashboard_filters(page_context: dict[str, object], dashboard: str) -> dict[str, object]:
+    current = page_context.get("filtros_ativos")
+    current_filters = dict(current) if isinstance(current, dict) else {}
+    if dashboard == "rotas":
+        if current_filters.get("data_inicio") and current_filters.get("data_fim"):
+            return _ai_sanitize_filters(dashboard, current_filters)
+        try:
+            year = int(current_filters.get("ano"))
+        except (TypeError, ValueError):
+            return {}
+        raw_months = current_filters.get("mes")
+        month_values = raw_months if isinstance(raw_months, list) else [raw_months]
+        months = sorted(
+            {
+                parsed[1]
+                for value in month_values
+                if value not in (None, "", "Todos")
+                for parsed in [parse_month_key(value, year)]
+                if parsed and parsed[0] == year
+            }
+        )
+        first_month, last_month = (months[0], months[-1]) if months else (1, 12)
+        return {
+            "data_inicio": date(year, first_month, 1).isoformat(),
+            "data_fim": date(year, last_month, calendar.monthrange(year, last_month)[1]).isoformat(),
+        }
+
+    filters: dict[str, object] = {}
+    if current_filters.get("ano") not in (None, "", "Todos"):
+        filters["ano"] = current_filters["ano"]
+    if current_filters.get("mes") not in (None, "", "Todos", ["Todos"]):
+        filters["mes"] = current_filters["mes"]
+    if not filters.get("ano") and current_filters.get("data_inicio") and current_filters.get("data_fim"):
+        start = pd.to_datetime(current_filters["data_inicio"], errors="coerce")
+        end = pd.to_datetime(current_filters["data_fim"], errors="coerce")
+        if pd.notna(start) and pd.notna(end) and int(start.year) == int(end.year):
+            filters["ano"] = int(start.year)
+            filters["mes"] = list(range(int(start.month), int(end.month) + 1))
+    return _ai_sanitize_filters(dashboard, filters)
+
+
+def _ai_global_dashboard_summary(dashboard: str, payload: dict[str, object]) -> dict[str, object]:
+    summary = dashboard_summary_payload(dashboard, payload)
+    metrics = summary.get("metricas")
+    result: dict[str, object] = {
+        "metricas": dict(list(metrics.items())[:24]) if isinstance(metrics, dict) else {},
+    }
+    costs = summary.get("custos")
+    if isinstance(costs, dict):
+        result["custos"] = {
+            key: value
+            for key, value in costs.items()
+            if isinstance(value, (int, float)) or value is None
+        }
+        if isinstance(costs.get("mensal"), list):
+            result["custos"]["mensal"] = costs["mensal"][-12:]
+    for key in (
+        "ranking_placas",
+        "ranking_motoristas",
+        "ranking_colaboradores",
+        "ranking_rotas",
+        "ranking_cidades",
+        "gasto_por_placa",
+        "gasto_por_oficina",
+        "gasto_por_cidade",
+        "gasto_por_posto",
+    ):
+        value = summary.get(key)
+        if isinstance(value, list):
+            result[key] = value[:3]
+        elif isinstance(value, dict):
+            result[key] = compact_data(value, max_depth=4, max_items=5, max_string=160)
+    for key in ("custo_mensal", "valor_mensal", "mensal_total", "km_mensal", "litros_mensal", "evolucao_mensal"):
+        value = summary.get(key)
+        if value is not None:
+            result[key] = compact_data(value, max_depth=4, max_items=12, max_string=160)
+    alerts = summary.get("alertas")
+    if isinstance(alerts, list):
+        result["alertas"] = {"quantidade": len(alerts), "amostra": alerts[:3]}
+    elif alerts is not None:
+        result["alertas"] = compact_data(alerts, max_depth=4, max_items=6, max_string=160)
+    return compact_data(result, max_depth=6, max_items=24, max_string=200)
+
+
+def _ai_site_wide_overview(page_context: dict[str, object]) -> dict[str, object]:
+    dashboards: dict[str, object] = {}
+    unavailable: list[str] = []
+    labels = {
+        meta.get("dashboard"): {"nome": meta["label"], "finalidade": meta["purpose"]}
+        for meta in PAGE_CATALOG.values()
+        if meta.get("dashboard")
+    }
+    for dashboard in AI_SITE_DASHBOARDS:
+        filters = _ai_cross_dashboard_filters(page_context, dashboard)
+        try:
+            payload = _ai_dashboard_payload(dashboard, filters)
+            dashboards[dashboard] = {
+                **labels.get(dashboard, {}),
+                "filtros": filters,
+                "dados": _ai_global_dashboard_summary(dashboard, payload),
+            }
+        except Exception as exc:
+            LOGGER.warning("AI global dashboard unavailable: dashboard=%s type=%s", dashboard, type(exc).__name__)
+            unavailable.append(dashboard)
+    return {
+        "escopo": "site_inteiro",
+        "orientacao": "Cruze os KPIs das áreas disponíveis; não limite a resposta à página aberta.",
+        "dashboards_consultados": list(dashboards),
+        "dashboards_indisponiveis": unavailable,
+        "areas": dashboards,
+    }
+
+
 def _ai_compare_metrics(first: dict, second: dict) -> dict[str, object]:
     metrics_a = numeric_metrics(first)
     metrics_b = numeric_metrics(second)
@@ -3345,6 +3491,9 @@ def _ai_tool_executor(page: str, page_context: dict[str, object]):
                 {"pagina": key, "nome": item["label"], "finalidade": item["purpose"]}
                 for key, item in PAGE_CATALOG.items()
             ]
+        if name == "get_site_wide_overview":
+            existing = page_context.get("dados_site_inteiro")
+            return existing if isinstance(existing, dict) else _ai_site_wide_overview(page_context)
         if name in {"get_dashboard_metrics", "get_chart_data", "get_historical_data"}:
             dashboard = clean_text(arguments.get("dashboard")).strip().lower()
             filters = _ai_sanitize_filters(dashboard, arguments.get("filters") or {})
@@ -3655,6 +3804,10 @@ def render_ai_assistant(page: str) -> None:
 
                 if pending_question:
                     page_context = _ai_page_context(page)
+                    if _ai_is_general_question(pending_question):
+                        with st.spinner("Consultando todas as áreas do site..."):
+                            page_context["escopo_pergunta"] = "site_inteiro"
+                            page_context["dados_site_inteiro"] = _ai_site_wide_overview(page_context)
                     cache = st.session_state.setdefault("ai_response_cache", {})
                     cache_source = json.dumps(
                         {"pergunta": pending_question, "contexto": page_context},

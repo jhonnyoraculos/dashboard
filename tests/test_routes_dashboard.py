@@ -54,6 +54,34 @@ def sample_payload() -> dict:
 
 
 class RoutesDashboardTests(unittest.TestCase):
+    def test_ai_general_question_uses_every_dashboard_with_shared_period(self):
+        self.assertTrue(dashboard._ai_is_general_question("Como está o desempenho geral de custo sobre ganho?"))
+        self.assertTrue(dashboard._ai_is_general_question("Mostre o site inteiro"))
+        self.assertFalse(dashboard._ai_is_general_question("Qual placa gastou mais combustível?"))
+        self.assertFalse(dashboard._ai_is_general_question("Faça uma análise geral desta página"))
+
+        context = {"filtros_ativos": {"data_inicio": "2026-10-01", "data_fim": "2026-10-27"}}
+        with patch.object(
+            dashboard,
+            "_ai_dashboard_payload",
+            side_effect=lambda name, filters: {"total": 10, "filtro_recebido": filters},
+        ) as payload:
+            overview = dashboard._ai_site_wide_overview(context)
+
+        self.assertEqual(overview["escopo"], "site_inteiro")
+        self.assertEqual(set(overview["dashboards_consultados"]), set(dashboard.AI_SITE_DASHBOARDS))
+        self.assertEqual(payload.call_count, len(dashboard.AI_SITE_DASHBOARDS))
+        self.assertEqual(overview["areas"]["combustivel"]["filtros"], {"ano": 2026, "mes": [10]})
+        self.assertEqual(
+            overview["areas"]["rotas"]["filtros"],
+            {"data_inicio": "2026-10-01", "data_fim": "2026-10-27"},
+        )
+
+        compact_routes = dashboard._ai_global_dashboard_summary("rotas", sample_payload())
+        self.assertEqual(compact_routes["custos"]["total_custo"], 8_500)
+        self.assertEqual(compact_routes["custos"]["total_ganho"], 11_000)
+        self.assertNotIn("rotas", compact_routes["custos"])
+
     def test_ai_chart_context_is_structured_and_filters_are_whitelisted(self):
         figure = dashboard.go.Figure(dashboard.go.Bar(x=["jan", "fev"], y=[10, 15], name="Custo"))
         snapshot = dashboard._ai_chart_snapshot("Custo mensal", figure)
