@@ -78,7 +78,7 @@ MUTED = "#6B7280"
 CARD_BORDER = "#c2d2f3"
 LOGO_PATH = Path(__file__).parent / "static" / "logo-jr.png"
 CURRENT_YEAR = date.today().year
-APP_VERSION = "global-groq-assistant-v34"
+APP_VERSION = "global-groq-assistant-v35"
 LOGGER = logging.getLogger("jr_dashboard.streamlit")
 RANK_ROUTES_ENABLED = True
 ROUTE_CACHE_TTL_SECONDS = max(int(os.environ.get("JR_ROUTE_CACHE_TTL_SECONDS", "180") or 180), 30)
@@ -3637,7 +3637,7 @@ def _inject_ai_assistant_css() -> None:
         }
         div[data-testid="stPopoverBody"]:has(.ai-panel-expanded) {
           width:min(760px,calc(100vw - 32px)) !important;
-          height:calc(100vh - 105px) !important;max-height:calc(100vh - 105px) !important;
+          height:calc(100vh - 55px) !important;max-height:calc(100vh - 55px) !important;
         }
         div[data-testid="stPopoverBody"]:has(.st-key-ai_chat_panel)>div{height:100% !important}
         .st-key-ai_chat_panel{height:100% !important;min-height:0 !important;box-sizing:border-box !important;color:#172554 !important;padding:0 12px 8px !important;direction:ltr !important}
@@ -3651,9 +3651,9 @@ def _inject_ai_assistant_css() -> None:
         .ai-head-copy{min-width:0}.ai-panel-head strong{display:block;font-size:15px;line-height:1.2;color:#fff}.ai-panel-head .ai-page{display:block;margin-top:2px;font-size:10px;color:rgba(255,255,255,.78);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:185px}
         .ai-status{display:inline-flex;align-items:center;gap:5px;padding:5px 8px;border-radius:999px;background:rgba(255,255,255,.16);color:#fff;font-size:9px;font-weight:800;white-space:nowrap}.ai-status.offline{background:#FEF3C7;color:#92400E}.ai-dot{width:6px;height:6px;border-radius:50%;background:currentColor}
         .st-key-ai_header_actions{margin:2px 0 8px}.st-key-ai_header_actions button{min-height:34px !important;border-radius:10px !important;border:1px solid rgba(7,94,84,.18) !important;background:rgba(255,255,255,.86) !important;color:#075E54 !important;-webkit-text-fill-color:#075E54 !important;font-size:11px !important;font-weight:800 !important;box-shadow:none !important}.st-key-ai_header_actions button:hover{background:#fff !important;border-color:#128C7E !important}
-        .st-key-ai_conversation_slot{flex:0 0 clamp(210px,calc(100vh - 365px),300px) !important;height:clamp(210px,calc(100vh - 365px),300px) !important;min-height:210px !important;overflow:hidden !important}.st-key-ai_conversation_slot>div,.st-key-ai_conversation_slot [data-testid="stVerticalBlock"]{height:100% !important;min-height:0 !important}
-        div[data-testid="stPopoverBody"]:has(.ai-panel-expanded) .st-key-ai_conversation_slot{flex:0 0 clamp(300px,calc(100vh - 325px),650px) !important;height:clamp(300px,calc(100vh - 325px),650px) !important}
-        .st-key-ai_conversation{height:100% !important;min-height:205px !important;background:#E8E2D9 !important;border-radius:14px !important;padding:12px 10px !important;margin:0 !important;box-shadow:inset 0 1px 5px rgba(15,23,42,.06)}
+        .st-key-ai_conversation_slot{flex:0 0 auto !important;height:auto !important;min-height:0 !important;overflow:visible !important}.st-key-ai_conversation_slot>div,.st-key-ai_conversation_slot [data-testid="stVerticalBlock"]{height:auto !important;min-height:0 !important}
+        .st-key-ai_conversation{height:clamp(230px,calc(100vh - 400px),320px) !important;min-height:230px !important;background:#E8E2D9 !important;border-radius:14px !important;padding:12px 10px !important;margin:0 !important;box-shadow:inset 0 1px 5px rgba(15,23,42,.06)}
+        div[data-testid="stPopoverBody"]:has(.ai-panel-expanded) .st-key-ai_conversation{height:clamp(340px,calc(100vh - 280px),680px) !important;min-height:340px !important}
         .ai-welcome{max-width:86%;background:#fff;border-radius:4px 14px 14px 14px;padding:10px 12px;color:#334155;font-size:12px;line-height:1.45;box-shadow:0 1px 2px rgba(15,23,42,.10)}
         [class*="st-key-ai_message_"]{max-width:86%;height:auto !important;overflow:visible !important;border-radius:13px !important;padding:7px 10px 6px !important;margin:0 0 8px !important;box-shadow:0 1px 2px rgba(15,23,42,.12);overflow-wrap:anywhere !important;word-break:break-word !important}
         [class*="st-key-ai_message_assistant_"]{max-width:94% !important;margin-right:auto !important;background:#fff !important;border-top-left-radius:4px !important}
@@ -3669,7 +3669,7 @@ def _inject_ai_assistant_css() -> None:
         .st-key-ai_chat_panel [data-testid="stForm"]{flex:0 0 auto !important;border:0 !important;border-radius:14px !important;background:#F0F2F5 !important;padding:7px !important;margin:0 !important}.st-key-ai_chat_panel [data-testid="stForm"] [data-testid="stHorizontalBlock"]{align-items:flex-end !important;gap:7px !important}.st-key-ai_chat_panel [data-testid="stForm"] textarea{min-height:100px !important;max-height:220px !important;border-radius:16px !important;background:#fff !important;border:1px solid #E2E8F0 !important;padding:11px 14px !important;font-size:12px !important;line-height:1.4 !important;resize:vertical !important}.st-key-ai_chat_panel [data-testid="stForm"] button{width:50px !important;min-width:50px !important;height:50px !important;min-height:50px !important;border-radius:50% !important;padding:0 !important;margin-bottom:4px !important;background:#128C7E !important;border-color:#128C7E !important;color:#fff !important;-webkit-text-fill-color:#fff !important;font-size:18px !important;box-shadow:0 5px 12px rgba(18,140,126,.25) !important}.st-key-ai_chat_panel [data-testid="InputInstructions"]{display:none !important}
         .st-key-ai_usage_footer [data-testid="stCaptionContainer"] p{text-align:center !important;color:#64748B !important;font-size:9px !important;margin:3px 0 0 !important}.ai-resize-hint{display:block;text-align:center;color:#94A3B8;font-size:8px;margin-top:2px}
         [class*="st-key-ai_chart_action_"] button {min-height:34px !important;border-radius:10px !important;color:#1C2D6B !important;font-weight:700 !important}
-        @media(max-width:640px){.st-key-ai_assistant_shell{top:70px !important;right:10px !important;bottom:auto !important}.st-key-ai_assistant_shell [data-testid="stPopover"] > button{min-height:44px !important;padding:0 13px !important;font-size:11px !important}div[data-testid="stPopoverBody"]:has(.st-key-ai_chat_panel){width:calc(100vw - 16px) !important;min-width:calc(100vw - 16px) !important;max-width:calc(100vw - 16px) !important;height:calc(100vh - 105px) !important;max-height:calc(100vh - 105px) !important;resize:vertical !important}.ai-panel-head .ai-page{max-width:125px}.st-key-ai_conversation_slot{flex-basis:calc(100vh - 465px) !important;height:calc(100vh - 465px) !important;min-height:150px !important}div[data-testid="stPopoverBody"]:has(.ai-panel-expanded) .st-key-ai_conversation_slot{flex-basis:calc(100vh - 415px) !important;height:calc(100vh - 415px) !important}.st-key-ai_chat_panel [data-testid="stForm"] textarea{min-height:88px !important}}
+        @media(max-width:640px){.st-key-ai_assistant_shell{top:70px !important;right:10px !important;bottom:auto !important}.st-key-ai_assistant_shell [data-testid="stPopover"] > button{min-height:44px !important;padding:0 13px !important;font-size:11px !important}div[data-testid="stPopoverBody"]:has(.st-key-ai_chat_panel){width:calc(100vw - 16px) !important;min-width:calc(100vw - 16px) !important;max-width:calc(100vw - 16px) !important;height:calc(100vh - 75px) !important;max-height:calc(100vh - 75px) !important;resize:vertical !important}.ai-panel-head .ai-page{max-width:125px}.st-key-ai_conversation{height:clamp(230px,calc(100vh - 390px),310px) !important;min-height:230px !important}div[data-testid="stPopoverBody"]:has(.ai-panel-expanded) .st-key-ai_conversation{height:clamp(340px,calc(100vh - 275px),620px) !important;min-height:340px !important}.st-key-ai_chat_panel [data-testid="stForm"] textarea{min-height:88px !important}}
         </style>
         """,
         unsafe_allow_html=True,
@@ -3796,17 +3796,18 @@ def render_ai_assistant(page: str) -> None:
                     conversation_slot = st.empty()
 
                 suggestion_key = f"ai_quick_suggestion_{page}"
-                with st.container(key="ai_quick_replies"):
-                    st.pills(
-                        "Perguntas rápidas",
-                        _ai_suggestions(page),
-                        key=suggestion_key,
-                        on_change=_queue_ai_suggestion,
-                        args=(suggestion_key,),
-                        disabled=not assistant.available,
-                        label_visibility="collapsed",
-                        width="stretch",
-                    )
+                if not history:
+                    with st.container(key="ai_quick_replies"):
+                        st.pills(
+                            "Perguntas rápidas",
+                            _ai_suggestions(page),
+                            key=suggestion_key,
+                            on_change=_queue_ai_suggestion,
+                            args=(suggestion_key,),
+                            disabled=not assistant.available,
+                            label_visibility="collapsed",
+                            width="stretch",
+                        )
 
                 with st.form("ai_assistant_question_form", clear_on_submit=True):
                     composer_cols = st.columns([8, 1], gap="small", vertical_alignment="center")
