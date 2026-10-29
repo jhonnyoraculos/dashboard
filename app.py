@@ -60,7 +60,7 @@ DB_TABLES = {
 }
 DB_METADATA_TABLE = "dashboard_metadata"
 BACKEND_BUILD_VERSION = "aluguel-multiplicar-meses-v1"
-ROUTES_BUILD_VERSION = "rotas-colaboradores-v24"
+ROUTES_BUILD_VERSION = "rotas-colaboradores-v25"
 PEDAGIO_CHART_VERSION = "all-types-v1"
 USE_LEGACY_ROUTE_HOTEL_ALLOCATION = False
 BACKUP_METADATA_KEY = "backup.last_downloaded_at"
@@ -2821,10 +2821,7 @@ def merge_route_names_bulk(source_names: Iterable[str], canonical_name: str) -> 
     from sqlalchemy import text
 
     aliases = _route_aliases()
-    target = _canonical_route_name(target, aliases)
     source_keys = {_route_name_key(source) for source in sources}
-    if _route_name_key(target) in source_keys:
-        raise ValueError("A rota correta resolve para uma das rotas que serão removidas.")
     for source_key in source_keys:
         for alias, value in list(aliases.items()):
             if _route_name_key(value) == source_key:

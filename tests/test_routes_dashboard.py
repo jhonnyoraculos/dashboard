@@ -559,6 +559,47 @@ class RoutesDashboardTests(unittest.TestCase):
             "10 - DIVINOPOLIS FERRAGENS",
         )
 
+    def test_route_merge_allows_correction_that_differs_only_by_accent(self):
+        class Result:
+            rowcount = 1
+
+        class Connection:
+            def execute(self, statement, params=None):
+                return Result()
+
+        class BeginContext:
+            def __enter__(self):
+                return Connection()
+
+            def __exit__(self, exc_type, exc, traceback):
+                return False
+
+        class Engine:
+            def begin(self):
+                return BeginContext()
+
+        with (
+            patch.object(backend, "_db_engine", return_value=Engine()),
+            patch.object(backend, "_ensure_dataset_table"),
+            patch.object(backend, "_write_metadata") as write_metadata,
+            patch.object(backend, "_clear_dataset_cache"),
+            patch.object(backend, "_route_aliases", return_value={}),
+        ):
+            result = backend.merge_route_names_bulk(
+                ["D+0,5 DIVINOPOLIS"], "D+0,5 DIVINÓPOLIS"
+            )
+
+        self.assertEqual(result["canonical"], "D+0,5 DIVINÓPOLIS")
+        alias_call = next(
+            call for call in write_metadata.call_args_list
+            if call.args[1] == backend.ROUTE_ALIASES_METADATA_KEY
+        )
+        saved_aliases = alias_call.args[2]
+        self.assertEqual(
+            saved_aliases[backend._route_name_key("D+0,5 DIVINOPOLIS")],
+            "D+0,5 DIVINÓPOLIS",
+        )
+
     def test_future_route_import_uses_saved_canonical_name(self):
         aliases = {backend._route_name_key("ROTA ANTIGA"): "ROTA CORRETA"}
         with patch.object(backend, "_route_aliases", return_value=aliases):
