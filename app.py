@@ -59,9 +59,10 @@ DB_TABLES = {
 }
 DB_METADATA_TABLE = "dashboard_metadata"
 BACKEND_BUILD_VERSION = "aluguel-multiplicar-meses-v1"
-ROUTES_BUILD_VERSION = "rotas-colaboradores-v18"
+ROUTES_BUILD_VERSION = "rotas-colaboradores-v19"
 PEDAGIO_CHART_VERSION = "all-types-v1"
 BACKUP_METADATA_KEY = "backup.last_downloaded_at"
+COLLABORATOR_ALIASES_METADATA_KEY = "routes.collaborator_aliases"
 _DB_ENGINE = None
 _METADATA_CACHE_SECONDS = float(os.environ.get("JR_METADATA_CACHE_SECONDS", "30") or 30)
 _METADATA_CACHE = {"loaded": False, "loaded_at": 0.0, "values": {}, "lock": threading.Lock()}
@@ -414,6 +415,50 @@ def _update_metadata_cache(key: str, value) -> None:
 
 def _db_metadata(key: str, default=None):
     return _metadata_table_values().get(key, default)
+
+
+def _collaborator_name_key(value: object) -> str:
+    try:
+        if pd.isna(value):
+            value = ""
+    except (TypeError, ValueError):
+        pass
+    plain = unicodedata.normalize("NFKD", str(value or ""))
+    plain = "".join(character for character in plain if not unicodedata.combining(character))
+    return re.sub(r"\s+", " ", plain).strip().casefold()
+
+
+def _collaborator_aliases() -> dict[str, str]:
+    raw = _db_metadata(COLLABORATOR_ALIASES_METADATA_KEY, {})
+    if not isinstance(raw, dict):
+        return {}
+    return {
+        _collaborator_name_key(alias): re.sub(r"\s+", " ", str(canonical or "")).strip().upper()
+        for alias, canonical in raw.items()
+        if _collaborator_name_key(alias) and str(canonical or "").strip()
+    }
+
+
+def _canonical_collaborator_name(value: object, aliases: dict[str, str] | None = None) -> str:
+    try:
+        if pd.isna(value):
+            value = ""
+    except (TypeError, ValueError):
+        pass
+    name = re.sub(r"\s+", " ", str(value or "")).strip().upper()
+    if not name:
+        return ""
+    alias_map = _collaborator_aliases() if aliases is None else aliases
+    visited: set[str] = set()
+    while True:
+        key = _collaborator_name_key(name)
+        if not key or key in visited or key not in alias_map:
+            return name
+        visited.add(key)
+        replacement = re.sub(r"\s+", " ", str(alias_map[key] or "")).strip().upper()
+        if not replacement:
+            return name
+        name = replacement
 
 
 def _db_version(dataset: str):
@@ -810,6 +855,9 @@ def _prepare_insert_row(dataset: str, row: dict) -> dict:
         prepared["Combustivel"] = _normalize_combustivel_value(prepared["Combustivel"])
     if "Categoria" in prepared:
         prepared["Categoria"] = _normalize_category_value(prepared["Categoria"])
+    for collaborator_column in ("Motorista", "Ajudante"):
+        if collaborator_column in prepared and prepared.get(collaborator_column):
+            prepared[collaborator_column] = _canonical_collaborator_name(prepared[collaborator_column])
     if dataset == "aluguel_veiculos":
         prepared["Categoria"] = "Vex"
     if "Diaria" in prepared:
@@ -2255,10 +2303,10 @@ def update_route_operation(
     plate_value = _normalize_plate_value(placa)
     if not _is_plate_or_asset_identifier(plate_value):
         raise ValueError("Informe uma placa valida.")
-    driver_value = str(motorista or "").strip()
+    driver_value = _canonical_collaborator_name(motorista)
     if not driver_value:
         raise ValueError("Informe o motorista.")
-    helper_value = str(ajudante or "").strip() or None
+    helper_value = _canonical_collaborator_name(ajudante) or None
 
     from sqlalchemy import text
 
@@ -2437,10 +2485,10 @@ def update_route_history_rows(rows: list[dict]) -> dict:
             plate_value = _normalize_plate_value(row.get("PLACA"))
             if not _is_plate_or_asset_identifier(plate_value):
                 raise ValueError(f"Placa invalida na rota {route_id}.")
-            driver_value = str(row.get("Motorista") or "").strip()
+            driver_value = _canonical_collaborator_name(row.get("Motorista"))
             if not driver_value:
                 raise ValueError(f"Informe o motorista da rota {route_id}.")
-            helper_value = str(row.get("Ajudante") or "").strip() or None
+            helper_value = _canonical_collaborator_name(row.get("Ajudante")) or None
 
             saida_dt = optional_datetime(row.get("Saida"), "Saida")
             retorno_dt = optional_datetime(row.get("Retorno"), "Retorno")
@@ -2556,8 +2604,8 @@ def update_route_collaborators(rows: list[dict]) -> dict:
             route_id = str(row.get("Rota ID") or "").strip()
             if not route_id or route_id in updated_ids:
                 continue
-            driver = str(row.get("Motorista") or "").strip() or None
-            helper = str(row.get("Ajudante") or "").strip() or None
+            driver = _canonical_collaborator_name(row.get("Motorista")) or None
+            helper = _canonical_collaborator_name(row.get("Ajudante")) or None
             if not driver and not helper:
                 continue
             result = conn.execute(
@@ -2586,6 +2634,103 @@ def update_route_collaborators(rows: list[dict]) -> dict:
     if updated_ids:
         _clear_dataset_cache("rotas")
     return {"updated": len(updated_ids), "route_ids": updated_ids, "version": version}
+
+
+def merge_collaborator_names(source_name: str, canonical_name: str) -> dict:
+    """Substitui um nome duplicado e memoriza o nome canônico para novas entradas."""
+    source = re.sub(r"\s+", " ", str(source_name or "")).strip().upper()
+    target = re.sub(r"\s+", " ", str(canonical_name or "")).strip().upper()
+    if not source or not target:
+        raise ValueError("Selecione o nome duplicado e o nome correto.")
+    if source.casefold() == target.casefold():
+        raise ValueError("O nome duplicado e o nome correto devem ser diferentes.")
+
+    from sqlalchemy import text
+
+    aliases = _collaborator_aliases()
+    target = _canonical_collaborator_name(target, aliases)
+    source_key = _collaborator_name_key(source)
+    for alias, value in list(aliases.items()):
+        if _collaborator_name_key(value) == source_key:
+            aliases[alias] = target
+    aliases[source_key] = target
+
+    version = datetime.now(timezone.utc).isoformat()
+    changes: dict[str, int] = {}
+    specifications = {
+        "rotas": ("Motorista", "Ajudante"),
+        "hoteis": ("Motorista", "Ajudante"),
+        "velocidade": ("Motorista",),
+    }
+    with _db_engine().begin() as conn:
+        for dataset, columns in specifications.items():
+            _ensure_dataset_table(conn, dataset)
+            table = _quote_identifier(DB_TABLES[dataset])
+            dataset_total = 0
+            for column in columns:
+                updated_at_sql = ', "Atualizado Em" = :updated_at' if dataset in {"rotas", "hoteis"} else ""
+                update_params = {"source": source, "target": target}
+                if updated_at_sql:
+                    update_params["updated_at"] = datetime.now(timezone.utc)
+                result = conn.execute(
+                    text(
+                        f"UPDATE {table} SET {_quote_identifier(column)} = :target{updated_at_sql} "
+                        f"WHERE UPPER(BTRIM(COALESCE({_quote_identifier(column)}, ''))) = "
+                        "UPPER(BTRIM(:source))"
+                    ),
+                    update_params,
+                )
+                changed = max(int(result.rowcount or 0), 0)
+                changes[f"{dataset}.{column}"] = changed
+                dataset_total += changed
+            if dataset_total:
+                _write_metadata(conn, f"{dataset}.version", version)
+        _write_metadata(conn, COLLABORATOR_ALIASES_METADATA_KEY, aliases)
+        _write_metadata(conn, "import.version", version)
+
+    for dataset in specifications:
+        _clear_dataset_cache(dataset)
+    return {
+        "source": source,
+        "canonical": target,
+        "updated_fields": sum(changes.values()),
+        "changes": changes,
+        "version": version,
+    }
+
+
+def collaborator_name_summary() -> list[dict]:
+    """Lista nomes usados e a quantidade de ocorrências nos cadastros relacionados."""
+    counts: dict[str, Counter] = defaultdict(Counter)
+    sources = (
+        (load_rotas(), (("Motorista", "Rotas como motorista"), ("Ajudante", "Rotas como ajudante"))),
+        (load_hoteis(), (("Motorista", "Hotéis como motorista"), ("Ajudante", "Hotéis como ajudante"))),
+        (load_velocidade(), (("Motorista", "Registros de velocidade"),)),
+    )
+    for frame, columns in sources:
+        if frame is None or frame.empty:
+            continue
+        for column, label in columns:
+            if column not in frame.columns:
+                continue
+            for raw_name in frame[column].astype("string").fillna(""):
+                name = re.sub(r"\s+", " ", str(raw_name or "")).strip().upper()
+                if name and name != "<NA>":
+                    counts[name][label] += 1
+
+    rows: list[dict] = []
+    for name, values in counts.items():
+        row = {
+            "Nome": name,
+            "Rotas como motorista": int(values["Rotas como motorista"]),
+            "Rotas como ajudante": int(values["Rotas como ajudante"]),
+            "Hotéis como motorista": int(values["Hotéis como motorista"]),
+            "Hotéis como ajudante": int(values["Hotéis como ajudante"]),
+            "Registros de velocidade": int(values["Registros de velocidade"]),
+        }
+        row["Total de ocorrências"] = sum(value for key, value in row.items() if key != "Nome")
+        rows.append(row)
+    return sorted(rows, key=lambda row: (-int(row["Total de ocorrências"]), str(row["Nome"])))
 
 
 def _normalize_ascii(value):

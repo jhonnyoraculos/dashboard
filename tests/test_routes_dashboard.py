@@ -373,6 +373,95 @@ class RoutesDashboardTests(unittest.TestCase):
         self.assertEqual(driver_monthly.iloc[0]["Rotas"], 2)
         self.assertEqual(driver_monthly.iloc[0]["Peso transportado (t)"], 11.0)
 
+    def test_collaborator_alias_resolves_variants_and_chains(self):
+        aliases = {
+            backend._collaborator_name_key("JOSE DA SILVA"): "JOSÉ DA SILVA",
+            backend._collaborator_name_key("ZE DA SILVA"): "JOSE DA SILVA",
+        }
+
+        self.assertEqual(
+            backend._canonical_collaborator_name("  ze   da silva ", aliases),
+            "JOSÉ DA SILVA",
+        )
+        self.assertEqual(
+            backend._canonical_collaborator_name("JOSÉ DA SILVA", aliases),
+            "JOSÉ DA SILVA",
+        )
+
+        with patch.object(backend, "_collaborator_aliases", return_value=aliases):
+            prepared = backend._prepare_insert_row(
+                "rotas",
+                {"Rota ID": "r1", "Motorista": "ZE DA SILVA", "Ajudante": "JOSE DA SILVA"},
+            )
+        self.assertEqual(prepared["Motorista"], "JOSÉ DA SILVA")
+        self.assertEqual(prepared["Ajudante"], "JOSÉ DA SILVA")
+
+    def test_collaborator_name_summary_counts_all_related_sources(self):
+        routes = pd.DataFrame(
+            [
+                {"Motorista": "NOME A", "Ajudante": "NOME B"},
+                {"Motorista": "NOME A", "Ajudante": ""},
+            ]
+        )
+        hotels = pd.DataFrame([{"Motorista": "NOME A", "Ajudante": "NOME B"}])
+        speed = pd.DataFrame([{"Motorista": "NOME A"}])
+
+        with (
+            patch.object(backend, "load_rotas", return_value=routes),
+            patch.object(backend, "load_hoteis", return_value=hotels),
+            patch.object(backend, "load_velocidade", return_value=speed),
+        ):
+            summary = pd.DataFrame(backend.collaborator_name_summary()).set_index("Nome")
+
+        self.assertEqual(summary.loc["NOME A", "Rotas como motorista"], 2)
+        self.assertEqual(summary.loc["NOME A", "Hotéis como motorista"], 1)
+        self.assertEqual(summary.loc["NOME A", "Registros de velocidade"], 1)
+        self.assertEqual(summary.loc["NOME A", "Total de ocorrências"], 4)
+        self.assertEqual(summary.loc["NOME B", "Total de ocorrências"], 2)
+
+    def test_merge_collaborator_names_updates_all_name_fields_and_saves_alias(self):
+        executed = []
+
+        class Result:
+            rowcount = 1
+
+        class Connection:
+            def execute(self, statement, params=None):
+                executed.append((str(statement), params or {}))
+                return Result()
+
+        class BeginContext:
+            def __enter__(self):
+                return Connection()
+
+            def __exit__(self, exc_type, exc, traceback):
+                return False
+
+        class Engine:
+            def begin(self):
+                return BeginContext()
+
+        with (
+            patch.object(backend, "_db_engine", return_value=Engine()),
+            patch.object(backend, "_ensure_dataset_table"),
+            patch.object(backend, "_write_metadata") as write_metadata,
+            patch.object(backend, "_clear_dataset_cache"),
+            patch.object(backend, "_collaborator_aliases", return_value={}),
+        ):
+            result = backend.merge_collaborator_names("NOME DUPLICADO", "NOME CORRETO")
+
+        update_statements = [statement for statement, _ in executed if statement.lstrip().upper().startswith("UPDATE")]
+        self.assertEqual(len(update_statements), 5)
+        self.assertEqual(result["updated_fields"], 5)
+        self.assertEqual(result["canonical"], "NOME CORRETO")
+        alias_calls = [
+            call for call in write_metadata.call_args_list
+            if call.args[1] == backend.COLLABORATOR_ALIASES_METADATA_KEY
+        ]
+        self.assertEqual(len(alias_calls), 1)
+        saved_aliases = alias_calls[0].args[2]
+        self.assertEqual(saved_aliases[backend._collaborator_name_key("NOME DUPLICADO")], "NOME CORRETO")
+
     def test_pending_routes_never_enter_completed_scope(self):
         routes = pd.DataFrame(
             [
