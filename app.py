@@ -60,7 +60,7 @@ DB_TABLES = {
 }
 DB_METADATA_TABLE = "dashboard_metadata"
 BACKEND_BUILD_VERSION = "aluguel-multiplicar-meses-v1"
-ROUTES_BUILD_VERSION = "rotas-colaboradores-v23"
+ROUTES_BUILD_VERSION = "rotas-colaboradores-v24"
 PEDAGIO_CHART_VERSION = "all-types-v1"
 USE_LEGACY_ROUTE_HOTEL_ALLOCATION = False
 BACKUP_METADATA_KEY = "backup.last_downloaded_at"
@@ -2870,10 +2870,18 @@ def merge_route_names_bulk(source_names: Iterable[str], canonical_name: str) -> 
 
 
 def route_name_summary() -> list[dict]:
-    """Lista descrições de rota e suas ocorrências nos cadastros relacionados."""
+    """Lista somente descrições presentes em rotas concluídas e suas ocorrências."""
     counts: dict[str, Counter] = defaultdict(Counter)
+    completed_routes = _completed_route_rows(load_rotas())
+    if completed_routes.empty or "Rota" not in completed_routes.columns:
+        return []
+    completed_names = {
+        re.sub(r"\s+", " ", str(value or "")).strip().upper()
+        for value in completed_routes["Rota"].astype("string").fillna("")
+        if re.sub(r"\s+", " ", str(value or "")).strip().upper() not in {"", "<NA>"}
+    }
     sources = (
-        (load_rotas(), "Rotas importadas"),
+        (completed_routes, "Rotas concluídas"),
         (load_peso(), "Registros de peso"),
         (load_rodagem_rota(), "Registros de KM"),
         (load_velocidade(), "Registros de velocidade"),
@@ -2883,14 +2891,14 @@ def route_name_summary() -> list[dict]:
             continue
         for raw_name in frame["Rota"].astype("string").fillna(""):
             name = re.sub(r"\s+", " ", str(raw_name or "")).strip().upper()
-            if name and name != "<NA>":
+            if name in completed_names:
                 counts[name][label] += 1
 
     rows: list[dict] = []
     for name, values in counts.items():
         row = {
             "Rota": name,
-            "Rotas importadas": int(values["Rotas importadas"]),
+            "Rotas concluídas": int(values["Rotas concluídas"]),
             "Registros de peso": int(values["Registros de peso"]),
             "Registros de KM": int(values["Registros de KM"]),
             "Registros de velocidade": int(values["Registros de velocidade"]),

@@ -145,7 +145,9 @@ categoria e pesquisa.
 Em Rankings, as abas de unificacao permitem consolidar varios nomes de
 colaboradores ou varias descricoes de rota em um cadastro correto. A troca de
 rota atualiza rotas importadas, peso, KM e velocidade e fica registrada como
-alias para corrigir automaticamente as proximas importacoes.
+alias para corrigir automaticamente as proximas importacoes. A lista de nomes
+disponiveis para unificacao considera apenas rotas concluidas; pendentes nao
+aparecem como opcoes.
 
 O custo operacional atribuido usa o custo historico real de combustivel por KM
 de cada placa ate a data atual. O combustivel de uma rota e esse valor em R$/KM

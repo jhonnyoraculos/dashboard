@@ -565,6 +565,32 @@ class RoutesDashboardTests(unittest.TestCase):
             prepared = backend._prepare_insert_row("rotas", {"Rota": "Rota Antiga"})
         self.assertEqual(prepared["Rota"], "ROTA CORRETA")
 
+    def test_route_name_summary_only_lists_completed_routes(self):
+        routes = pd.DataFrame(
+            [
+                {"Rota": "ROTA CONCLUIDA", "Status": "Concluída"},
+                {"Rota": "ROTA PENDENTE", "Status": "Pendente"},
+            ]
+        )
+        peso = pd.DataFrame(
+            [
+                {"Rota": "ROTA CONCLUIDA"},
+                {"Rota": "ROTA PENDENTE"},
+            ]
+        )
+        empty = pd.DataFrame(columns=["Rota"])
+        with (
+            patch.object(backend, "load_rotas", return_value=routes),
+            patch.object(backend, "load_peso", return_value=peso),
+            patch.object(backend, "load_rodagem_rota", return_value=empty),
+            patch.object(backend, "load_velocidade", return_value=empty),
+        ):
+            summary = backend.route_name_summary()
+
+        self.assertEqual([row["Rota"] for row in summary], ["ROTA CONCLUIDA"])
+        self.assertEqual(summary[0]["Rotas concluídas"], 1)
+        self.assertEqual(summary[0]["Registros de peso"], 1)
+
     def test_hotel_is_linked_to_specific_route_by_day_and_either_role(self):
         hotels = pd.DataFrame(
             [

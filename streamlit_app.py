@@ -69,7 +69,7 @@ _backend_aluguel_period_ready = {"Inicio", "Fim"}.issubset(
 )
 _backend_aluguel_monthly_ready = getattr(backend, "BACKEND_BUILD_VERSION", "") == "aluguel-multiplicar-meses-v1"
 _backend_pedagio_chart_ready = getattr(backend, "PEDAGIO_CHART_VERSION", "") == "all-types-v1"
-_backend_routes_ready = getattr(backend, "ROUTES_BUILD_VERSION", "") == "rotas-colaboradores-v23"
+_backend_routes_ready = getattr(backend, "ROUTES_BUILD_VERSION", "") == "rotas-colaboradores-v24"
 if not _backend_features_ready or not _backend_aluguel_period_ready or not _backend_aluguel_monthly_ready or not _backend_pedagio_chart_ready or not _backend_routes_ready:
     backend = importlib.reload(backend)
 
@@ -80,7 +80,7 @@ MUTED = "#6B7280"
 CARD_BORDER = "#c2d2f3"
 LOGO_PATH = Path(__file__).parent / "static" / "logo-jr.png"
 CURRENT_YEAR = date.today().year
-APP_VERSION = "global-groq-assistant-v44"
+APP_VERSION = "global-groq-assistant-v45"
 LOGGER = logging.getLogger("jr_dashboard.streamlit")
 RANK_ROUTES_ENABLED = True
 ROUTE_CACHE_TTL_SECONDS = max(int(os.environ.get("JR_ROUTE_CACHE_TTL_SECONDS", "180") or 180), 30)
@@ -18544,7 +18544,8 @@ def render_rotas() -> None:
             st.caption(
                 "Troque uma ou várias descrições incorretas pela rota correta. A alteração alcança as rotas "
                 "importadas e os registros de peso, KM e velocidade. As próximas importações também usarão "
-                "automaticamente a descrição correta."
+                "automaticamente a descrição correta. A lista mostra somente rotas concluídas; pendentes não "
+                "aparecem como opções."
             )
             if message := st.session_state.pop("route_name_merge_message", None):
                 st.success(message)
