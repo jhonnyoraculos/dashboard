@@ -60,7 +60,7 @@ DB_TABLES = {
 }
 DB_METADATA_TABLE = "dashboard_metadata"
 BACKEND_BUILD_VERSION = "aluguel-multiplicar-meses-v1"
-ROUTES_BUILD_VERSION = "rotas-colaboradores-v21"
+ROUTES_BUILD_VERSION = "rotas-colaboradores-v22"
 PEDAGIO_CHART_VERSION = "all-types-v1"
 USE_LEGACY_ROUTE_HOTEL_ALLOCATION = False
 BACKUP_METADATA_KEY = "backup.last_downloaded_at"
@@ -5202,6 +5202,12 @@ def _route_text_value(value: object) -> str:
     return str(value or "").strip()
 
 
+def _collaborator_first_two_name_key(value: object) -> str:
+    """Chave conservadora para reconhecer abreviações pelo primeiro e segundo nome."""
+    tokens = re.findall(r"[a-z0-9]+", _collaborator_name_key(value))
+    return " ".join(tokens[:2]) if len(tokens) >= 2 else ""
+
+
 def _legacy_route_hotel_allocations(
     hotels: pd.DataFrame,
     route_days: pd.DataFrame,
@@ -5290,6 +5296,12 @@ def _route_hotel_allocations_by_person_day(
     days["_Ajudante"] = route_helper.astype("string").fillna("").map(
         _collaborator_name_key
     )
+    days["_Motorista Curto"] = route_driver.astype("string").fillna("").map(
+        _collaborator_first_two_name_key
+    )
+    days["_Ajudante Curto"] = route_helper.astype("string").fillna("").map(
+        _collaborator_first_two_name_key
+    )
     route_stats = days.groupby("Rota ID")["Data"].agg(["nunique", "max"]).rename(
         columns={"nunique": "_Dias Rota", "max": "_Ultimo Dia"}
     )
@@ -5331,54 +5343,92 @@ def _route_hotel_allocations_by_person_day(
             continue
 
         candidates = days.loc[days["Data"].eq(hotel.get("Data"))].copy()
-        scored: list[tuple[tuple[int, int, int, int], str, pd.Series, list[str]]] = []
+        short_to_full: dict[str, set[str]] = defaultdict(set)
+        for _, candidate in candidates.iterrows():
+            for role in ("Motorista", "Ajudante"):
+                short_key = str(candidate.get(f"_{role} Curto") or "")
+                full_key = str(candidate.get(f"_{role}") or "")
+                if short_key and full_key:
+                    short_to_full[short_key].add(full_key)
+
+        scored: list[tuple[tuple[int, int, int, int, int], str, pd.Series, list[str], bool]] = []
         for _, route in candidates.iterrows():
             route_people = {
                 "Motorista": str(route.get("_Motorista") or ""),
                 "Ajudante": str(route.get("_Ajudante") or ""),
             }
-            hotel_keys = set(hotel_people.values())
-            route_keys = {value for value in route_people.values() if value}
-            overlap = hotel_keys & route_keys
-            if not overlap:
+            route_short_people = {
+                "Motorista": str(route.get("_Motorista Curto") or ""),
+                "Ajudante": str(route.get("_Ajudante Curto") or ""),
+            }
+            matched_people: set[str] = set()
+            exact_people: set[str] = set()
+            same_role = 0
+            inferred_match = False
+            found_names: set[str] = set()
+            for hotel_role, hotel_person in hotel_people.items():
+                exact_roles = [
+                    route_role for route_role, route_person in route_people.items()
+                    if hotel_person and hotel_person == route_person
+                ]
+                hotel_short = _collaborator_first_two_name_key(hotel.get(hotel_role))
+                inferred_roles = [
+                    route_role for route_role, route_short in route_short_people.items()
+                    if hotel_short
+                    and hotel_short == route_short
+                    and len(short_to_full.get(hotel_short, set())) == 1
+                ]
+                matched_roles = exact_roles or inferred_roles
+                if not matched_roles:
+                    continue
+                selected_role = hotel_role if hotel_role in matched_roles else matched_roles[0]
+                matched_people.add(hotel_person)
+                if exact_roles:
+                    exact_people.add(hotel_person)
+                else:
+                    inferred_match = True
+                if selected_role == hotel_role:
+                    same_role += 1
+                found_name = _route_text_value(route.get(selected_role))
+                if found_name:
+                    found_names.add(found_name)
+            if not matched_people:
                 continue
-            same_role = sum(
-                1 for role, person in hotel_people.items()
-                if person and person == route_people.get(role)
-            )
-            found_names = sorted(
-                {
-                    _route_text_value(hotel.get(role))
-                    for role, person in hotel_people.items()
-                    if person in overlap
-                },
-                key=str.casefold,
-            )
             route_days_count = int(route.get("_Dias Rota") or 1)
             has_next_day = int(pd.notna(route.get("_Ultimo Dia")) and hotel.get("Data") < route.get("_Ultimo Dia"))
-            score = (len(overlap), same_role, has_next_day, route_days_count)
-            scored.append((score, _route_text_value(route.get("Rota ID")), route, found_names))
+            score = (len(matched_people), len(exact_people), same_role, has_next_day, route_days_count)
+            scored.append(
+                (
+                    score,
+                    _route_text_value(route.get("Rota ID")),
+                    route,
+                    sorted(found_names, key=str.casefold),
+                    inferred_match,
+                )
+            )
 
         if not scored:
             audit.append(
                 {
                     **base_audit,
                     "Rota ID": "", "Rota": "", "PLACA": "", "Nome encontrado": "",
-                    "Critério": "Nenhuma rota no mesmo dia com motorista ou ajudante correspondente",
+                    "Critério": "Nenhuma rota no mesmo dia com nome completo ou dois primeiros nomes identificáveis",
                     "Candidatas": 0, "Status": "Sem vínculo",
                 }
             )
             continue
 
         scored.sort(key=lambda item: (tuple(-value for value in item[0]), item[1]))
-        best_score, _, selected, found_names = scored[0]
+        best_score, _, selected, found_names, inferred_match = scored[0]
         candidate_count = len(scored)
         if best_score[0] >= 2:
             criterion = "Data + dupla encontrada na rota"
-        elif best_score[1] >= 1:
+        elif best_score[2] >= 1:
             criterion = "Data + colaborador encontrado na mesma função"
         else:
             criterion = "Data + colaborador encontrado como motorista ou ajudante"
+        if inferred_match:
+            criterion += "; nome completo concluído pelos dois primeiros nomes"
         if candidate_count > 1:
             criterion += "; escolhida a melhor correspondência, priorizando rota com pernoite/mais dias"
 

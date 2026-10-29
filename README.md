@@ -149,7 +149,9 @@ proximidade de posto, cidade ou horario. Manutencao e pedagio/extras sao
 rateados entre rotas da mesma placa e dia; hospedagem usa motorista e data;
 salarios usam os dias operacionais; freteiros usam a diaria cadastrada. A
 hospedagem e vinculada a uma unica rota pela data e pelo nome encontrado como
-motorista ou ajudante; em caso de mais de uma candidata, a dupla completa, a
+motorista ou ajudante. Quando o nome completo nao coincide, os dois primeiros
+nomes podem identificar o colaborador, desde que apontem para uma unica pessoa
+nas rotas daquele dia; em caso de mais de uma candidata, a dupla completa, a
 mesma funcao e a rota com pernoite/mais dias recebem prioridade. O rateio
 anterior entre todas as rotas compativeis continua preservado no codigo, mas
 fica desativado. O

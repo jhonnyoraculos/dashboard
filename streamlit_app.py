@@ -69,7 +69,7 @@ _backend_aluguel_period_ready = {"Inicio", "Fim"}.issubset(
 )
 _backend_aluguel_monthly_ready = getattr(backend, "BACKEND_BUILD_VERSION", "") == "aluguel-multiplicar-meses-v1"
 _backend_pedagio_chart_ready = getattr(backend, "PEDAGIO_CHART_VERSION", "") == "all-types-v1"
-_backend_routes_ready = getattr(backend, "ROUTES_BUILD_VERSION", "") == "rotas-colaboradores-v21"
+_backend_routes_ready = getattr(backend, "ROUTES_BUILD_VERSION", "") == "rotas-colaboradores-v22"
 if not _backend_features_ready or not _backend_aluguel_period_ready or not _backend_aluguel_monthly_ready or not _backend_pedagio_chart_ready or not _backend_routes_ready:
     backend = importlib.reload(backend)
 
@@ -80,7 +80,7 @@ MUTED = "#6B7280"
 CARD_BORDER = "#c2d2f3"
 LOGO_PATH = Path(__file__).parent / "static" / "logo-jr.png"
 CURRENT_YEAR = date.today().year
-APP_VERSION = "global-groq-assistant-v41"
+APP_VERSION = "global-groq-assistant-v42"
 LOGGER = logging.getLogger("jr_dashboard.streamlit")
 RANK_ROUTES_ENABLED = True
 ROUTE_CACHE_TTL_SECONDS = max(int(os.environ.get("JR_ROUTE_CACHE_TTL_SECONDS", "180") or 180), 30)
@@ -18209,9 +18209,10 @@ def render_rotas() -> None:
         with st.expander("Como as hospedagens foram vinculadas às rotas", expanded=not hotel_links.empty):
             st.write(
                 "Cada registro de hotel é comparado com as rotas ativas no mesmo dia. O sistema procura o nome "
-                "informado no hotel tanto no motorista quanto no ajudante da rota e atribui o valor integral a uma "
-                "única rota específica. Quando há mais de uma candidata, prioriza a dupla completa, a mesma função "
-                "e a rota com pernoite ou maior duração."
+                "informado no hotel tanto no motorista quanto no ajudante da rota. Primeiro compara o nome completo; "
+                "se necessário, usa os dois primeiros nomes quando eles identificam uma única pessoa naquele dia. "
+                "O valor integral é atribuído a uma única rota específica. Quando há mais de uma candidata, prioriza "
+                "a dupla completa, a mesma função e a rota com pernoite ou maior duração."
             )
             st.caption(
                 "O método anterior, que dividia a hospedagem entre todas as rotas compatíveis, permanece preservado "

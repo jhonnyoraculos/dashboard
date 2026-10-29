@@ -534,6 +534,50 @@ class RoutesDashboardTests(unittest.TestCase):
         self.assertEqual(audit[0]["Nome encontrado"], "PESSOA X")
         self.assertIn("motorista ou ajudante", audit[0]["Critério"])
 
+    def test_hotel_can_identify_unique_collaborator_by_first_two_names(self):
+        hotels = pd.DataFrame(
+            [{"Data": "2026-10-13", "Valor": 220.0, "Motorista": "RONALDO PEREIRA", "Ajudante": ""}]
+        )
+        route_days = pd.DataFrame(
+            [
+                {
+                    "Rota ID": "r1", "Data": "2026-10-13", "Rota": "ROTA 10", "PLACA": "AAA1A11",
+                    "Motorista": "OUTRA PESSOA", "Ajudante": "RONALDO PEREIRA CORDEIRO",
+                    "Categoria": "Transporte",
+                }
+            ]
+        )
+
+        allocations, audit = backend._route_hotel_allocations_by_person_day(hotels, route_days)
+
+        self.assertEqual(len(allocations), 1)
+        self.assertEqual(allocations.iloc[0]["Rota ID"], "r1")
+        self.assertEqual(audit[0]["Nome encontrado"], "RONALDO PEREIRA CORDEIRO")
+        self.assertIn("dois primeiros nomes", audit[0]["Critério"])
+
+    def test_hotel_does_not_guess_when_first_two_names_are_ambiguous(self):
+        hotels = pd.DataFrame(
+            [{"Data": "2026-10-13", "Valor": 220.0, "Motorista": "JOAO SILVA", "Ajudante": ""}]
+        )
+        route_days = pd.DataFrame(
+            [
+                {
+                    "Rota ID": "r1", "Data": "2026-10-13", "Rota": "ROTA 10", "PLACA": "AAA1A11",
+                    "Motorista": "JOAO SILVA SANTOS", "Ajudante": "", "Categoria": "Transporte",
+                },
+                {
+                    "Rota ID": "r2", "Data": "2026-10-13", "Rota": "ROTA 20", "PLACA": "BBB1B11",
+                    "Motorista": "JOAO SILVA SOUZA", "Ajudante": "", "Categoria": "Transporte",
+                },
+            ]
+        )
+
+        allocations, audit = backend._route_hotel_allocations_by_person_day(hotels, route_days)
+
+        self.assertTrue(allocations.empty)
+        self.assertEqual(audit[0]["Status"], "Sem vínculo")
+        self.assertIn("dois primeiros nomes", audit[0]["Critério"])
+
     def test_hotel_prefers_multiday_route_and_legacy_method_remains_available(self):
         hotels = pd.DataFrame(
             [{"Data": "2026-10-13", "Valor": 240.0, "Motorista": "MOTORISTA A", "Ajudante": ""}]
