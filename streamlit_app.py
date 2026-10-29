@@ -80,7 +80,7 @@ MUTED = "#6B7280"
 CARD_BORDER = "#c2d2f3"
 LOGO_PATH = Path(__file__).parent / "static" / "logo-jr.png"
 CURRENT_YEAR = date.today().year
-APP_VERSION = "global-groq-assistant-v38"
+APP_VERSION = "global-groq-assistant-v39"
 LOGGER = logging.getLogger("jr_dashboard.streamlit")
 RANK_ROUTES_ENABLED = True
 ROUTE_CACHE_TTL_SECONDS = max(int(os.environ.get("JR_ROUTE_CACHE_TTL_SECONDS", "180") or 180), 30)
@@ -16509,6 +16509,31 @@ def _inject_routes_platform_css(dark_mode: bool) -> None:
         .stApp [data-testid="stDateInput"] input {{
           background:var(--routes-surface) !important; color:var(--routes-text) !important;
           -webkit-text-fill-color:var(--routes-text) !important; border-color:var(--routes-border) !important;
+        }}
+        .stApp .st-key-routes_persistent_nav [data-testid="stSelectbox"] div[data-baseweb="select"] > div {{
+          min-height:44px !important;
+          background:#FFFFFF !important;
+          border:1px solid #B8C8EA !important;
+          box-shadow:0 5px 16px rgba(4,15,48,.18) !important;
+        }}
+        .stApp .st-key-routes_persistent_nav [data-testid="stSelectbox"] div[data-baseweb="select"] > div *,
+        .stApp .st-key-routes_persistent_nav [data-testid="stSelectbox"] div[data-baseweb="select"] span {{
+          color:#172554 !important;
+          -webkit-text-fill-color:#172554 !important;
+          opacity:1 !important;
+          font-weight:750 !important;
+          font-size:13px !important;
+        }}
+        .stApp .st-key-routes_persistent_nav [data-testid="stSelectbox"] div[data-baseweb="select"] svg {{
+          color:#1C2D6B !important;
+          fill:#1C2D6B !important;
+          opacity:1 !important;
+        }}
+        div[data-baseweb="popover"] li[role="option"] *,
+        div[data-baseweb="menu"] li[role="option"] * {{
+          color:#172554 !important;
+          -webkit-text-fill-color:#172554 !important;
+          opacity:1 !important;
         }}
         @media (max-width:1200px) {{ .routes-kpi-grid {{ grid-template-columns:repeat(3,1fr); }} }}
         @media (max-width:760px) {{
