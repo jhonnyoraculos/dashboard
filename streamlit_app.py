@@ -10107,6 +10107,24 @@ def _route_staff_code(value: object) -> str:
     return str(int(match.group(1))) if match else ""
 
 
+def _route_staff_person_name(value: object) -> str:
+    """Mantém somente o nome quando o OCR invade a coluna de observação."""
+    name = re.sub(r"\s+", " ", clean_text(value)).strip(" -|").upper()
+    if not name:
+        return ""
+    # Na escala, a coluna seguinte começa com textos como "ROTA 2 DIAS" ou
+    # "ROTA 1 DIA (BATE E VOLTA)". Em imagens, o OCR pode unir esse texto ao
+    # ajudante porque as duas caixas ficam muito próximas.
+    observation = re.search(
+        r"\s+ROTA\s*[:\-]?\s*(?:\d+|UM|DOIS|TRES|TR[EÊ]S)\b",
+        name,
+        flags=re.IGNORECASE,
+    )
+    if observation:
+        name = name[:observation.start()].rstrip(" -|")
+    return name
+
+
 def _parse_route_collaborator_ocr(ocr_result: dict[str, object]) -> tuple[date, list[dict]]:
     route_date = _route_staff_date_from_text(ocr_result.get("text"))
     width = max(float(ocr_result.get("width") or 0), 1.0)
@@ -10160,8 +10178,8 @@ def _parse_route_collaborator_ocr(ocr_result: dict[str, object]) -> tuple[date, 
         route_code = _route_staff_code(values[0])
         if not route_code:
             continue
-        driver = clean_text(values[3]).strip(" -|").upper()
-        helper = clean_text(values[4]).strip(" -|").upper()
+        driver = _route_staff_person_name(values[3])
+        helper = _route_staff_person_name(values[4])
         if not driver and not helper:
             continue
         rows.append(
@@ -12639,6 +12657,9 @@ def _render_route_collaborator_import() -> None:
         if rows.empty:
             st.warning("Nenhuma linha de colaborador foi reconhecida.")
             return
+        for person_column in ("Motorista", "Ajudante"):
+            if person_column in rows.columns:
+                rows[person_column] = rows[person_column].map(_route_staff_person_name)
         found_count = int(rows["Rota ID"].astype("string").fillna("").str.strip().ne("").sum())
         missing_count = len(rows) - found_count
         st.success(
@@ -12664,7 +12685,7 @@ def _render_route_collaborator_import() -> None:
                 "Ajudante": st.column_config.TextColumn("Ajudante lido"),
                 "Rota ID": st.column_config.TextColumn("ID encontrado"),
             },
-            key=f"cad_route_staff_editor_{image_hash[:12]}",
+            key=f"cad_route_staff_editor_v2_{image_hash[:12]}",
         )
         if missing_count:
             st.info(
@@ -12686,8 +12707,8 @@ def _render_route_collaborator_import() -> None:
                 payload.append(
                     {
                         "Rota ID": route_id,
-                        "Motorista": clean_text(row.get("Motorista")).strip().upper(),
-                        "Ajudante": clean_text(row.get("Ajudante")).strip().upper(),
+                        "Motorista": _route_staff_person_name(row.get("Motorista")),
+                        "Ajudante": _route_staff_person_name(row.get("Ajudante")),
                     }
                 )
             try:

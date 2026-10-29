@@ -237,6 +237,41 @@ class RoutesDashboardTests(unittest.TestCase):
         self.assertEqual(matched[0]["Rota ID"], "route-10")
         self.assertEqual(matched[0]["Status atual"], "Concluída")
 
+    def test_route_staff_image_removes_observation_joined_to_helper_name(self):
+        def box(center_x, center_y, width=80, height=16):
+            return [
+                [center_x - width / 2, center_y - height / 2],
+                [center_x + width / 2, center_y - height / 2],
+                [center_x + width / 2, center_y + height / 2],
+                [center_x - width / 2, center_y + height / 2],
+            ]
+
+        texts = [
+            "CARREGAMENTOS: sexta-feira, 9 de outubro de 2026",
+            "ROTAS: terça-feira, 13 de outubro de 2026",
+            "Nº ROTA", "PLACAS", "MOTORISTA", "OBSS.",
+            "30", "NYC6H24", "ITAGUARA 2", "RICARDO DE OLIVEIRA",
+            "GABRIEL ENRIQUE DE SOUZA CARVALHO ROTA 2 DIAS",
+        ]
+        positions = [
+            (520, 25), (520, 55), (40, 95), (150, 95), (520, 95), (930, 95),
+            (40, 135), (150, 135), (300, 135), (520, 135), (760, 135),
+        ]
+        ocr = {
+            "text": "\n".join(texts),
+            "width": 1000,
+            "height": 400,
+            "detections": [
+                {"text": text, "box": box(x, y), "score": 0.99}
+                for text, (x, y) in zip(texts, positions)
+            ],
+        }
+
+        _, parsed = dashboard._parse_route_collaborator_ocr(ocr)
+
+        self.assertEqual(parsed[0]["Motorista"], "RICARDO DE OLIVEIRA")
+        self.assertEqual(parsed[0]["Ajudante"], "GABRIEL ENRIQUE DE SOUZA CARVALHO")
+
     def test_collaborator_ranking_includes_driver_and_helper(self):
         source = pd.DataFrame(
             [
