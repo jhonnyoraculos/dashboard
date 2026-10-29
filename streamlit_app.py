@@ -78,7 +78,7 @@ MUTED = "#6B7280"
 CARD_BORDER = "#c2d2f3"
 LOGO_PATH = Path(__file__).parent / "static" / "logo-jr.png"
 CURRENT_YEAR = date.today().year
-APP_VERSION = "global-groq-assistant-v35"
+APP_VERSION = "global-groq-assistant-v36"
 LOGGER = logging.getLogger("jr_dashboard.streamlit")
 RANK_ROUTES_ENABLED = True
 ROUTE_CACHE_TTL_SECONDS = max(int(os.environ.get("JR_ROUTE_CACHE_TTL_SECONDS", "180") or 180), 30)
@@ -18138,6 +18138,31 @@ def render_rotas() -> None:
         with rank_driver: _render_route_driver_ranking_table(data.get("ranking_motoristas") or [])
         with rank_staff:
             st.caption("Motoristas e ajudantes são avaliados pelas mesmas viagens em que participaram; a função aparece na tabela.")
+            staff_hours_alerts = pd.DataFrame(data.get("alertas_jornada_colaboradores") or [])
+            if staff_hours_alerts.empty:
+                st.success("Nenhum colaborador com jornada positiva abaixo de 9 horas por dia nos filtros selecionados.")
+            else:
+                affected_people = int(staff_hours_alerts["Colaborador"].nunique())
+                st.error(
+                    f"Jornada abaixo de 9 horas: {len(staff_hours_alerts)} ocorrência(s) envolvendo "
+                    f"{affected_people} colaborador(es)."
+                )
+                with st.expander("Ver colaboradores, dias e rotas com menos de 9 horas", expanded=True):
+                    st.caption(
+                        "As horas são totalizadas por colaborador e por dia. Horários sobrepostos em rotas do mesmo "
+                        "dia são contados uma única vez. Dias sem horário informado não geram alerta."
+                    )
+                    st.dataframe(
+                        staff_hours_alerts,
+                        width="stretch",
+                        hide_index=True,
+                        column_config={
+                            "Data": _date_col(),
+                            "Horas cumpridas": st.column_config.NumberColumn("Horas cumpridas", format="%.2f h"),
+                            "Horas faltantes": st.column_config.NumberColumn("Faltaram para 9 h", format="%.2f h"),
+                            "Quantidade de rotas": st.column_config.NumberColumn("Nº de rotas", format="%d"),
+                        },
+                    )
             _render_route_ranking_indicator_table(
                 data.get("ranking_colaboradores") or [], entity_column="Colaborador", entity_label="colaboradores"
             )

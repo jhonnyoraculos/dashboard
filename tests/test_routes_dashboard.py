@@ -288,6 +288,56 @@ class RoutesDashboardTests(unittest.TestCase):
         self.assertEqual(roles["MOTORISTA A"], "Motorista")
         self.assertEqual(roles["AJUDANTE B"], "Ajudante")
 
+    def test_collaborator_daily_alerts_sum_day_and_do_not_duplicate_overlapping_routes(self):
+        source = pd.DataFrame(
+            [
+                {
+                    "Rota ID": "r1", "Data": "2026-10-13", "Rota": "ROTA 10", "Carga": "1001",
+                    "PLACA": "AAA1A11", "Motorista": "MOTORISTA A", "Ajudante": "AJUDANTE B",
+                    "Saida": "2026-10-13 07:00", "Retorno": "2026-10-13 15:00",
+                    "Horas Trabalhadas": 8,
+                },
+                {
+                    "Rota ID": "r2", "Data": "2026-10-13", "Rota": "ROTA 11", "Carga": "1002",
+                    "PLACA": "AAA1A11", "Motorista": "MOTORISTA A", "Ajudante": "AJUDANTE B",
+                    "Saida": "2026-10-13 07:00", "Retorno": "2026-10-13 15:00",
+                    "Horas Trabalhadas": 8,
+                },
+            ]
+        )
+
+        alerts = backend._route_collaborator_daily_alerts(source)
+
+        self.assertEqual(set(alerts["Colaborador"]), {"MOTORISTA A", "AJUDANTE B"})
+        self.assertTrue(alerts["Horas cumpridas"].eq(8.0).all())
+        self.assertTrue(alerts["Horas faltantes"].eq(1.0).all())
+        self.assertTrue(alerts["Quantidade de rotas"].eq(2).all())
+        self.assertTrue(alerts["Rotas"].str.contains("ROTA 10").all())
+        self.assertTrue(alerts["Rotas"].str.contains("ROTA 11").all())
+
+    def test_collaborator_daily_alerts_use_each_multiday_journey(self):
+        journeys = json.dumps(
+            [
+                {"saida": "2026-10-13T07:00:00", "parada": "2026-10-13T17:00:00"},
+                {"saida": "2026-10-14T08:00:00", "parada": "2026-10-14T16:00:00"},
+            ]
+        )
+        source = pd.DataFrame(
+            [
+                {
+                    "Rota ID": "r1", "Data": "2026-10-13", "Rota": "ROTA 10", "Carga": "1001",
+                    "PLACA": "AAA1A11", "Motorista": "MOTORISTA A", "Ajudante": "",
+                    "Jornadas": journeys, "Horas Trabalhadas": 18,
+                }
+            ]
+        )
+
+        alerts = backend._route_collaborator_daily_alerts(source)
+
+        self.assertEqual(len(alerts), 1)
+        self.assertEqual(pd.to_datetime(alerts.iloc[0]["Data"]).date(), date(2026, 10, 14))
+        self.assertEqual(alerts.iloc[0]["Horas cumpridas"], 8.0)
+
     def test_pending_routes_never_enter_completed_scope(self):
         routes = pd.DataFrame(
             [

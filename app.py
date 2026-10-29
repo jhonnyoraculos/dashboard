@@ -4888,6 +4888,117 @@ def _route_collaborator_ranking(source: pd.DataFrame) -> pd.DataFrame:
     return ranking
 
 
+def _route_collaborator_daily_alerts(
+    source: pd.DataFrame,
+    *,
+    minimum_hours: float = 9.0,
+) -> pd.DataFrame:
+    """Aponta colaboradores com jornada diária positiva abaixo do mínimo."""
+    columns = [
+        "Data", "Colaborador", "Função", "Horas cumpridas", "Horas faltantes",
+        "Rotas", "Placas", "Cargas", "Quantidade de rotas",
+    ]
+    if source.empty:
+        return pd.DataFrame(columns=columns)
+
+    def text_value(value: object) -> str:
+        try:
+            if pd.isna(value):
+                return ""
+        except (TypeError, ValueError):
+            pass
+        return str(value or "").strip()
+
+    occurrences: list[dict] = []
+    for _, route in source.iterrows():
+        intervals: list[tuple[pd.Timestamp, pd.Timestamp]] = []
+        raw_journeys = route.get("Jornadas")
+        journeys: list[dict] = []
+        if isinstance(raw_journeys, list):
+            journeys = raw_journeys
+        elif isinstance(raw_journeys, str) and raw_journeys.strip():
+            try:
+                parsed = json.loads(raw_journeys)
+                journeys = parsed if isinstance(parsed, list) else []
+            except (TypeError, ValueError, json.JSONDecodeError):
+                journeys = []
+        for journey in journeys:
+            start = pd.to_datetime(journey.get("saida"), errors="coerce")
+            stop = pd.to_datetime(journey.get("parada"), errors="coerce")
+            if pd.notna(start) and pd.notna(stop) and stop > start and start.date() == stop.date():
+                intervals.append((start, stop))
+
+        if not intervals:
+            start = pd.to_datetime(route.get("Saida"), errors="coerce")
+            stop = pd.to_datetime(route.get("Retorno"), errors="coerce")
+            if pd.notna(start) and pd.notna(stop) and stop > start and start.date() == stop.date():
+                intervals.append((start, stop))
+
+        if not intervals:
+            route_day = pd.to_datetime(route.get("Data"), errors="coerce")
+            hours = pd.to_numeric(pd.Series([route.get("Horas Trabalhadas")]), errors="coerce").iloc[0]
+            if pd.notna(route_day) and pd.notna(hours) and 0 < float(hours) <= 24:
+                start = route_day.normalize()
+                intervals.append((start, start + pd.Timedelta(hours=float(hours))))
+
+        for column, role in (("Motorista", "Motorista"), ("Ajudante", "Ajudante")):
+            collaborator = text_value(route.get(column))
+            if not collaborator:
+                continue
+            for start, stop in intervals:
+                occurrences.append(
+                    {
+                        "Data": start.normalize(),
+                        "Colaborador": collaborator,
+                        "Função": role,
+                        "Inicio": start,
+                        "Fim": stop,
+                        "Rota": text_value(route.get("Rota")),
+                        "PLACA": text_value(route.get("PLACA")),
+                        "Carga": text_value(route.get("Carga")),
+                        "Rota ID": text_value(route.get("Rota ID")),
+                    }
+                )
+    if not occurrences:
+        return pd.DataFrame(columns=columns)
+
+    rows: list[dict] = []
+    occurrences_df = pd.DataFrame(occurrences)
+    for (day, collaborator), group in occurrences_df.groupby(["Data", "Colaborador"], sort=False):
+        merged: list[list[pd.Timestamp]] = []
+        for start, stop in sorted(zip(group["Inicio"], group["Fim"]), key=lambda item: item[0]):
+            if not merged or start > merged[-1][1]:
+                merged.append([start, stop])
+            elif stop > merged[-1][1]:
+                merged[-1][1] = stop
+        worked_hours = sum((stop - start).total_seconds() / 3600.0 for start, stop in merged)
+        if worked_hours <= 0 or worked_hours >= minimum_hours:
+            continue
+
+        def joined_values(column: str) -> str:
+            values = {str(value).strip() for value in group[column] if str(value).strip()}
+            return " • ".join(sorted(values, key=str.casefold))
+
+        rows.append(
+            {
+                "Data": day,
+                "Colaborador": collaborator,
+                "Função": joined_values("Função"),
+                "Horas cumpridas": round(worked_hours, 2),
+                "Horas faltantes": round(minimum_hours - worked_hours, 2),
+                "Rotas": joined_values("Rota"),
+                "Placas": joined_values("PLACA"),
+                "Cargas": joined_values("Carga"),
+                "Quantidade de rotas": int(group["Rota ID"].replace("", pd.NA).nunique()),
+            }
+        )
+    if not rows:
+        return pd.DataFrame(columns=columns)
+    return pd.DataFrame(rows, columns=columns).sort_values(
+        ["Data", "Horas cumpridas", "Colaborador"], ascending=[False, True, True]
+    ).reset_index(drop=True)
+
+
 def _route_calendar_days(routes: pd.DataFrame) -> pd.DataFrame:
     columns = ["Rota ID", "Data", "Mes", "Rota", "PLACA", "Motorista", "Ajudante", "Categoria"]
     rows: list[dict] = []
@@ -5381,6 +5492,7 @@ def data_rotas(params: dict | None = None) -> dict:
     metric_source = _route_metric_source(routes, filtered_deliveries)
     ranking_motoristas = _route_performance_ranking(metric_source, "Motorista")
     ranking_colaboradores = _route_collaborator_ranking(metric_source)
+    collaborator_daily_alerts = _route_collaborator_daily_alerts(metric_source)
     ranking_placas = _route_performance_ranking(metric_source, "PLACA")
     ranking_rotas = _route_performance_ranking(metric_source, "Rota", route_mode=True)
 
@@ -5565,6 +5677,7 @@ def data_rotas(params: dict | None = None) -> dict:
         "entregas_detalhes": _route_records(delivery_details),
         "ranking_motoristas": _route_records(ranking_motoristas),
         "ranking_colaboradores": _route_records(ranking_colaboradores),
+        "alertas_jornada_colaboradores": _route_records(collaborator_daily_alerts),
         "ranking_placas": _route_records(ranking_placas),
         "ranking_rotas": _route_records(ranking_rotas),
         "ranking_cidades": _route_records(city_ranking),
