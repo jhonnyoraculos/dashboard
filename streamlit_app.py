@@ -80,7 +80,7 @@ MUTED = "#6B7280"
 CARD_BORDER = "#c2d2f3"
 LOGO_PATH = Path(__file__).parent / "static" / "logo-jr.png"
 CURRENT_YEAR = date.today().year
-APP_VERSION = "global-groq-assistant-v42"
+APP_VERSION = "global-groq-assistant-v43"
 LOGGER = logging.getLogger("jr_dashboard.streamlit")
 RANK_ROUTES_ENABLED = True
 ROUTE_CACHE_TTL_SECONDS = max(int(os.environ.get("JR_ROUTE_CACHE_TTL_SECONDS", "180") or 180), 30)
@@ -16529,6 +16529,43 @@ def _inject_routes_platform_css(dark_mode: bool) -> None:
           color:#1C2D6B !important;
           fill:#1C2D6B !important;
           opacity:1 !important;
+        }}
+        .stApp .st-key-routes_global_route_v1,
+        .stApp .st-key-routes_global_route_v1 [data-testid="stSelectbox"],
+        .stApp .st-key-routes_global_route_v1 div[data-baseweb="select"] {{
+          opacity:1 !important;
+        }}
+        .stApp .st-key-routes_global_route_v1 div[data-baseweb="select"] > div {{
+          min-height:46px !important;
+          background:#FFFFFF !important;
+          background-color:#FFFFFF !important;
+          border:2px solid #9DB4E7 !important;
+          border-radius:10px !important;
+          box-shadow:0 6px 18px rgba(4,15,48,.22) !important;
+          color:#10204F !important;
+          -webkit-text-fill-color:#10204F !important;
+          opacity:1 !important;
+        }}
+        .stApp .st-key-routes_global_route_v1 div[data-baseweb="select"] > div *,
+        .stApp .st-key-routes_global_route_v1 div[data-baseweb="select"] span,
+        .stApp .st-key-routes_global_route_v1 div[data-baseweb="select"] input {{
+          color:#10204F !important;
+          -webkit-text-fill-color:#10204F !important;
+          opacity:1 !important;
+          font-size:14px !important;
+          font-weight:800 !important;
+          text-shadow:none !important;
+        }}
+        .stApp .st-key-routes_global_route_v1 div[data-baseweb="select"] svg {{
+          color:#10204F !important;
+          fill:#10204F !important;
+          opacity:1 !important;
+          stroke:#10204F !important;
+        }}
+        .stApp .st-key-routes_global_route_v1 div[data-baseweb="select"] > div:hover,
+        .stApp .st-key-routes_global_route_v1 div[data-baseweb="select"] > div:focus-within {{
+          border-color:#60A5FA !important;
+          box-shadow:0 0 0 3px rgba(96,165,250,.20), 0 6px 18px rgba(4,15,48,.22) !important;
         }}
         div[data-baseweb="popover"] li[role="option"] *,
         div[data-baseweb="menu"] li[role="option"] * {{
