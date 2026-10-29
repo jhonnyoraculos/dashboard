@@ -508,6 +508,63 @@ class RoutesDashboardTests(unittest.TestCase):
         self.assertEqual(saved_aliases[backend._collaborator_name_key("LUCAS.A")], "LUCAS ALMEIDA")
         self.assertEqual(saved_aliases[backend._collaborator_name_key("LUCAS A")], "LUCAS ALMEIDA")
 
+    def test_merge_multiple_route_names_and_save_aliases(self):
+        executed = []
+
+        class Result:
+            rowcount = 2
+
+        class Connection:
+            def execute(self, statement, params=None):
+                executed.append((str(statement), params or {}))
+                return Result()
+
+        class BeginContext:
+            def __enter__(self):
+                return Connection()
+
+            def __exit__(self, exc_type, exc, traceback):
+                return False
+
+        class Engine:
+            def begin(self):
+                return BeginContext()
+
+        with (
+            patch.object(backend, "_db_engine", return_value=Engine()),
+            patch.object(backend, "_ensure_dataset_table"),
+            patch.object(backend, "_write_metadata") as write_metadata,
+            patch.object(backend, "_clear_dataset_cache"),
+            patch.object(backend, "_route_aliases", return_value={}),
+        ):
+            result = backend.merge_route_names_bulk(
+                ["10 - DIVINOPOLIS", "ROTA 10 DIVINOPOLIS"], "10 - DIVINOPOLIS FERRAGENS"
+            )
+
+        update_calls = [item for item in executed if item[0].lstrip().upper().startswith("UPDATE")]
+        self.assertEqual(len(update_calls), 4)
+        self.assertTrue(all('SET "Rota" = :target' in statement for statement, _ in update_calls))
+        self.assertEqual(result["updated_records"], 8)
+        alias_call = next(
+            call for call in write_metadata.call_args_list
+            if call.args[1] == backend.ROUTE_ALIASES_METADATA_KEY
+        )
+        saved_aliases = alias_call.args[2]
+        self.assertEqual(
+            saved_aliases[backend._route_name_key("10 - DIVINOPOLIS")],
+            "10 - DIVINOPOLIS FERRAGENS",
+        )
+        self.assertEqual(
+            saved_aliases[backend._route_name_key("ROTA 10 DIVINOPOLIS")],
+            "10 - DIVINOPOLIS FERRAGENS",
+        )
+
+    def test_future_route_import_uses_saved_canonical_name(self):
+        aliases = {backend._route_name_key("ROTA ANTIGA"): "ROTA CORRETA"}
+        with patch.object(backend, "_route_aliases", return_value=aliases):
+            prepared = backend._prepare_insert_row("rotas", {"Rota": "Rota Antiga"})
+        self.assertEqual(prepared["Rota"], "ROTA CORRETA")
+
     def test_hotel_is_linked_to_specific_route_by_day_and_either_role(self):
         hotels = pd.DataFrame(
             [

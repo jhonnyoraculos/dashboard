@@ -142,6 +142,11 @@ comparacao e ativada, o sistema consulta o intervalo imediatamente anterior com
 a mesma quantidade de dias e preserva os filtros de placa, motorista, rota,
 categoria e pesquisa.
 
+Em Rankings, as abas de unificacao permitem consolidar varios nomes de
+colaboradores ou varias descricoes de rota em um cadastro correto. A troca de
+rota atualiza rotas importadas, peso, KM e velocidade e fica registrada como
+alias para corrigir automaticamente as proximas importacoes.
+
 O custo operacional atribuido usa o custo historico real de combustivel por KM
 de cada placa ate a data atual. O combustivel de uma rota e esse valor em R$/KM
 multiplicado pelos KM informados na propria rota; nao ha mais associacao por

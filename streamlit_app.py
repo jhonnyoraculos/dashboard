@@ -69,7 +69,7 @@ _backend_aluguel_period_ready = {"Inicio", "Fim"}.issubset(
 )
 _backend_aluguel_monthly_ready = getattr(backend, "BACKEND_BUILD_VERSION", "") == "aluguel-multiplicar-meses-v1"
 _backend_pedagio_chart_ready = getattr(backend, "PEDAGIO_CHART_VERSION", "") == "all-types-v1"
-_backend_routes_ready = getattr(backend, "ROUTES_BUILD_VERSION", "") == "rotas-colaboradores-v22"
+_backend_routes_ready = getattr(backend, "ROUTES_BUILD_VERSION", "") == "rotas-colaboradores-v23"
 if not _backend_features_ready or not _backend_aluguel_period_ready or not _backend_aluguel_monthly_ready or not _backend_pedagio_chart_ready or not _backend_routes_ready:
     backend = importlib.reload(backend)
 
@@ -80,7 +80,7 @@ MUTED = "#6B7280"
 CARD_BORDER = "#c2d2f3"
 LOGO_PATH = Path(__file__).parent / "static" / "logo-jr.png"
 CURRENT_YEAR = date.today().year
-APP_VERSION = "global-groq-assistant-v43"
+APP_VERSION = "global-groq-assistant-v44"
 LOGGER = logging.getLogger("jr_dashboard.streamlit")
 RANK_ROUTES_ENABLED = True
 ROUTE_CACHE_TTL_SECONDS = max(int(os.environ.get("JR_ROUTE_CACHE_TTL_SECONDS", "180") or 180), 30)
@@ -18301,8 +18301,8 @@ def render_rotas() -> None:
 
     elif section == "Rankings":
         _route_section_title("Rankings", "Ordenações transparentes com os filtros globais aplicados")
-        rank_driver, rank_staff, rank_unify, rank_plate, rank_route, rank_city = st.tabs(
-            ["Motoristas", "Colaboradores", "Unificar nomes", "Placas", "Rotas", "Cidades"]
+        rank_driver, rank_staff, rank_unify, rank_unify_routes, rank_plate, rank_route, rank_city = st.tabs(
+            ["Motoristas", "Colaboradores", "Unificar nomes", "Unificar rotas", "Placas", "Rotas", "Cidades"]
         )
         with rank_driver: _render_route_driver_ranking_table(data.get("ranking_motoristas") or [])
         with rank_staff:
@@ -18539,6 +18539,99 @@ def render_rotas() -> None:
 
                 with st.expander("Ver todos os nomes e quantidades cadastradas"):
                     st.dataframe(name_summary, width="stretch", hide_index=True)
+        with rank_unify_routes:
+            st.markdown("#### Unificar rotas duplicadas")
+            st.caption(
+                "Troque uma ou várias descrições incorretas pela rota correta. A alteração alcança as rotas "
+                "importadas e os registros de peso, KM e velocidade. As próximas importações também usarão "
+                "automaticamente a descrição correta."
+            )
+            if message := st.session_state.pop("route_name_merge_message", None):
+                st.success(message)
+            try:
+                route_name_summary = pd.DataFrame(backend.route_name_summary())
+            except Exception as exc:
+                st.error("Não foi possível carregar os nomes das rotas.")
+                st.exception(exc)
+                route_name_summary = pd.DataFrame()
+            if route_name_summary.empty:
+                st.info("Ainda não existem descrições de rotas para unificar.")
+            else:
+                route_names = route_name_summary["Rota"].astype(str).tolist()
+                source_col, target_col = st.columns(2)
+                with source_col:
+                    duplicate_routes = st.multiselect(
+                        "Rotas duplicadas que serão removidas",
+                        route_names,
+                        placeholder="Selecione uma ou várias rotas incorretas",
+                        key="routes_name_merge_sources_v1",
+                    )
+                route_target_options = [name for name in route_names if name not in duplicate_routes]
+                if duplicate_routes:
+                    route_target_options.sort(
+                        key=lambda name: (
+                            -max(
+                                SequenceMatcher(None, duplicate.casefold(), name.casefold()).ratio()
+                                for duplicate in duplicate_routes
+                            ),
+                            name.casefold(),
+                        )
+                    )
+                with target_col:
+                    canonical_route = st.selectbox(
+                        "Rota correta que permanecerá",
+                        route_target_options,
+                        index=None,
+                        placeholder="Selecione a descrição correta",
+                        key="routes_name_merge_target_v1",
+                    )
+
+                if duplicate_routes:
+                    selected_routes_summary = route_name_summary.loc[
+                        route_name_summary["Rota"].isin(duplicate_routes)
+                    ].copy()
+                    if not selected_routes_summary.empty:
+                        st.markdown("**Registros que usam as rotas selecionadas**")
+                        st.dataframe(selected_routes_summary, width="stretch", hide_index=True)
+                if duplicate_routes and canonical_route:
+                    duplicate_list = ", ".join(f"**{name}**" for name in duplicate_routes)
+                    st.warning(
+                        f"Todos os registros de {duplicate_list} serão transferidos para "
+                        f"**{canonical_route}**. As descrições antigas deixarão de aparecer nos filtros e rankings."
+                    )
+                route_merge_key = hashlib.sha256(
+                    f"{'|'.join(sorted(duplicate_routes))}|{canonical_route or ''}".encode("utf-8")
+                ).hexdigest()[:10]
+                route_confirmation = st.checkbox(
+                    "Confirmo que todas as descrições selecionadas representam a mesma rota",
+                    value=False,
+                    key=f"routes_name_merge_confirm_v1_{route_merge_key}",
+                )
+                if st.button(
+                    "Unificar rotas em todos os dados",
+                    type="primary",
+                    width="stretch",
+                    disabled=not (duplicate_routes and canonical_route and route_confirmation),
+                    key=f"routes_name_merge_apply_v1_{route_merge_key}",
+                ):
+                    try:
+                        with st.spinner("Atualizando rotas e registros relacionados..."):
+                            merged = backend.merge_route_names_bulk(duplicate_routes, canonical_route)
+                    except Exception as exc:
+                        st.error("Não foi possível unificar as rotas no Neon.")
+                        st.exception(exc)
+                    else:
+                        clear_cached_reads()
+                        st.session_state["route_name_merge_message"] = (
+                            f"{len(merged.get('sources') or [])} rota(s) unificada(s) em {merged['canonical']}. "
+                            f"{int(merged.get('updated_records', 0))} registro(s) atualizado(s)."
+                        )
+                        st.session_state.pop("routes_name_merge_sources_v1", None)
+                        st.session_state.pop("routes_name_merge_target_v1", None)
+                        st.rerun()
+
+                with st.expander("Ver todas as rotas e quantidades cadastradas"):
+                    st.dataframe(route_name_summary, width="stretch", hide_index=True)
         with rank_plate:
             _render_route_ranking_indicator_table(
                 data.get("ranking_placas") or [], entity_column="PLACA", entity_label="placas"

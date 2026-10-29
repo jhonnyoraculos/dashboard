@@ -60,11 +60,12 @@ DB_TABLES = {
 }
 DB_METADATA_TABLE = "dashboard_metadata"
 BACKEND_BUILD_VERSION = "aluguel-multiplicar-meses-v1"
-ROUTES_BUILD_VERSION = "rotas-colaboradores-v22"
+ROUTES_BUILD_VERSION = "rotas-colaboradores-v23"
 PEDAGIO_CHART_VERSION = "all-types-v1"
 USE_LEGACY_ROUTE_HOTEL_ALLOCATION = False
 BACKUP_METADATA_KEY = "backup.last_downloaded_at"
 COLLABORATOR_ALIASES_METADATA_KEY = "routes.collaborator_aliases"
+ROUTE_ALIASES_METADATA_KEY = "routes.route_aliases"
 _DB_ENGINE = None
 _METADATA_CACHE_SECONDS = float(os.environ.get("JR_METADATA_CACHE_SECONDS", "30") or 30)
 _METADATA_CACHE = {"loaded": False, "loaded_at": 0.0, "values": {}, "lock": threading.Lock()}
@@ -454,6 +455,50 @@ def _canonical_collaborator_name(value: object, aliases: dict[str, str] | None =
     visited: set[str] = set()
     while True:
         key = _collaborator_name_key(name)
+        if not key or key in visited or key not in alias_map:
+            return name
+        visited.add(key)
+        replacement = re.sub(r"\s+", " ", str(alias_map[key] or "")).strip().upper()
+        if not replacement:
+            return name
+        name = replacement
+
+
+def _route_name_key(value: object) -> str:
+    try:
+        if pd.isna(value):
+            value = ""
+    except (TypeError, ValueError):
+        pass
+    plain = unicodedata.normalize("NFKD", str(value or ""))
+    plain = "".join(character for character in plain if not unicodedata.combining(character))
+    return re.sub(r"\s+", " ", plain).strip().casefold()
+
+
+def _route_aliases() -> dict[str, str]:
+    raw = _db_metadata(ROUTE_ALIASES_METADATA_KEY, {})
+    if not isinstance(raw, dict):
+        return {}
+    return {
+        _route_name_key(alias): re.sub(r"\s+", " ", str(canonical or "")).strip().upper()
+        for alias, canonical in raw.items()
+        if _route_name_key(alias) and str(canonical or "").strip()
+    }
+
+
+def _canonical_route_name(value: object, aliases: dict[str, str] | None = None) -> str:
+    try:
+        if pd.isna(value):
+            value = ""
+    except (TypeError, ValueError):
+        pass
+    name = re.sub(r"\s+", " ", str(value or "")).strip().upper()
+    if not name:
+        return ""
+    alias_map = _route_aliases() if aliases is None else aliases
+    visited: set[str] = set()
+    while True:
+        key = _route_name_key(name)
         if not key or key in visited or key not in alias_map:
             return name
         visited.add(key)
@@ -860,6 +905,8 @@ def _prepare_insert_row(dataset: str, row: dict) -> dict:
     for collaborator_column in ("Motorista", "Ajudante"):
         if collaborator_column in prepared and prepared.get(collaborator_column):
             prepared[collaborator_column] = _canonical_collaborator_name(prepared[collaborator_column])
+    if prepared.get("Rota"):
+        prepared["Rota"] = _canonical_route_name(prepared["Rota"])
     if dataset == "aluguel_veiculos":
         prepared["Categoria"] = "Vex"
     if "Diaria" in prepared:
@@ -2752,6 +2799,105 @@ def collaborator_name_summary() -> list[dict]:
         row["Total de ocorrências"] = sum(value for key, value in row.items() if key != "Nome")
         rows.append(row)
     return sorted(rows, key=lambda row: (-int(row["Total de ocorrências"]), str(row["Nome"])))
+
+
+def merge_route_names_bulk(source_names: Iterable[str], canonical_name: str) -> dict:
+    """Substitui várias descrições de rota por uma rota canônica em todos os cadastros."""
+    if isinstance(source_names, str):
+        source_names = [source_names]
+    sources = list(
+        dict.fromkeys(
+            re.sub(r"\s+", " ", str(source or "")).strip().upper()
+            for source in source_names
+            if re.sub(r"\s+", " ", str(source or "")).strip()
+        )
+    )
+    target = re.sub(r"\s+", " ", str(canonical_name or "")).strip().upper()
+    if not sources or not target:
+        raise ValueError("Selecione ao menos uma rota duplicada e a rota correta.")
+    if target.casefold() in {source.casefold() for source in sources}:
+        raise ValueError("A rota correta não pode estar entre as rotas que serão removidas.")
+
+    from sqlalchemy import text
+
+    aliases = _route_aliases()
+    target = _canonical_route_name(target, aliases)
+    source_keys = {_route_name_key(source) for source in sources}
+    if _route_name_key(target) in source_keys:
+        raise ValueError("A rota correta resolve para uma das rotas que serão removidas.")
+    for source_key in source_keys:
+        for alias, value in list(aliases.items()):
+            if _route_name_key(value) == source_key:
+                aliases[alias] = target
+        aliases[source_key] = target
+
+    version = datetime.now(timezone.utc).isoformat()
+    changes: dict[str, int] = {}
+    specifications = ("rotas", "peso", "rodagem_rota", "velocidade")
+    with _db_engine().begin() as conn:
+        for dataset in specifications:
+            _ensure_dataset_table(conn, dataset)
+            table = _quote_identifier(DB_TABLES[dataset])
+            updated_at_sql = ', "Atualizado Em" = :updated_at' if dataset == "rotas" else ""
+            source_params = {f"source_{index}": source for index, source in enumerate(sources)}
+            source_placeholders = ", ".join(f":{name}" for name in source_params)
+            update_params = {**source_params, "target": target}
+            if updated_at_sql:
+                update_params["updated_at"] = datetime.now(timezone.utc)
+            result = conn.execute(
+                text(
+                    f'UPDATE {table} SET "Rota" = :target{updated_at_sql} '
+                    f'WHERE UPPER(BTRIM(COALESCE("Rota", \'\'))) IN ({source_placeholders})'
+                ),
+                update_params,
+            )
+            changed = max(int(result.rowcount or 0), 0)
+            changes[dataset] = changed
+            if changed:
+                _write_metadata(conn, f"{dataset}.version", version)
+        _write_metadata(conn, ROUTE_ALIASES_METADATA_KEY, aliases)
+        _write_metadata(conn, "import.version", version)
+
+    for dataset in specifications:
+        _clear_dataset_cache(dataset)
+    return {
+        "sources": sources,
+        "canonical": target,
+        "updated_records": sum(changes.values()),
+        "changes": changes,
+        "version": version,
+    }
+
+
+def route_name_summary() -> list[dict]:
+    """Lista descrições de rota e suas ocorrências nos cadastros relacionados."""
+    counts: dict[str, Counter] = defaultdict(Counter)
+    sources = (
+        (load_rotas(), "Rotas importadas"),
+        (load_peso(), "Registros de peso"),
+        (load_rodagem_rota(), "Registros de KM"),
+        (load_velocidade(), "Registros de velocidade"),
+    )
+    for frame, label in sources:
+        if frame is None or frame.empty or "Rota" not in frame.columns:
+            continue
+        for raw_name in frame["Rota"].astype("string").fillna(""):
+            name = re.sub(r"\s+", " ", str(raw_name or "")).strip().upper()
+            if name and name != "<NA>":
+                counts[name][label] += 1
+
+    rows: list[dict] = []
+    for name, values in counts.items():
+        row = {
+            "Rota": name,
+            "Rotas importadas": int(values["Rotas importadas"]),
+            "Registros de peso": int(values["Registros de peso"]),
+            "Registros de KM": int(values["Registros de KM"]),
+            "Registros de velocidade": int(values["Registros de velocidade"]),
+        }
+        row["Total de ocorrências"] = sum(value for key, value in row.items() if key != "Rota")
+        rows.append(row)
+    return sorted(rows, key=lambda row: (-int(row["Total de ocorrências"]), str(row["Rota"])))
 
 
 def _normalize_ascii(value):
