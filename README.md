@@ -147,7 +147,12 @@ de cada placa ate a data atual. O combustivel de uma rota e esse valor em R$/KM
 multiplicado pelos KM informados na propria rota; nao ha mais associacao por
 proximidade de posto, cidade ou horario. Manutencao e pedagio/extras sao
 rateados entre rotas da mesma placa e dia; hospedagem usa motorista e data;
-salarios usam os dias operacionais; freteiros usam a diaria cadastrada. O
+salarios usam os dias operacionais; freteiros usam a diaria cadastrada. A
+hospedagem e vinculada a uma unica rota pela data e pelo nome encontrado como
+motorista ou ajudante; em caso de mais de uma candidata, a dupla completa, a
+mesma funcao e a rota com pernoite/mais dias recebem prioridade. O rateio
+anterior entre todas as rotas compativeis continua preservado no codigo, mas
+fica desativado. O
 resultado operacional e a receita atribuida menos esses custos disponiveis e
 nao deve ser interpretado como lucro liquido contabil. Tributos, depreciacao e
 qualquer custo nao cadastrado nao sao estimados artificialmente.

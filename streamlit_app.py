@@ -69,7 +69,7 @@ _backend_aluguel_period_ready = {"Inicio", "Fim"}.issubset(
 )
 _backend_aluguel_monthly_ready = getattr(backend, "BACKEND_BUILD_VERSION", "") == "aluguel-multiplicar-meses-v1"
 _backend_pedagio_chart_ready = getattr(backend, "PEDAGIO_CHART_VERSION", "") == "all-types-v1"
-_backend_routes_ready = getattr(backend, "ROUTES_BUILD_VERSION", "") == "rotas-colaboradores-v19"
+_backend_routes_ready = getattr(backend, "ROUTES_BUILD_VERSION", "") == "rotas-colaboradores-v20"
 if not _backend_features_ready or not _backend_aluguel_period_ready or not _backend_aluguel_monthly_ready or not _backend_pedagio_chart_ready or not _backend_routes_ready:
     backend = importlib.reload(backend)
 
@@ -80,7 +80,7 @@ MUTED = "#6B7280"
 CARD_BORDER = "#c2d2f3"
 LOGO_PATH = Path(__file__).parent / "static" / "logo-jr.png"
 CURRENT_YEAR = date.today().year
-APP_VERSION = "global-groq-assistant-v39"
+APP_VERSION = "global-groq-assistant-v40"
 LOGGER = logging.getLogger("jr_dashboard.streamlit")
 RANK_ROUTES_ENABLED = True
 ROUTE_CACHE_TTL_SECONDS = max(int(os.environ.get("JR_ROUTE_CACHE_TTL_SECONDS", "180") or 180), 30)
@@ -15888,7 +15888,8 @@ def _render_rotas_v4() -> None:
         st.markdown("#### Custos associados às rotas concluídas")
         st.caption(
             "Combustível é ligado pela placa, período e proximidade do posto. Manutenção e pedágio são rateados entre "
-            "rotas da mesma placa no mesmo dia. Salários usam os dias operacionais; hotéis usam motorista e data."
+            "rotas da mesma placa no mesmo dia. Salários usam os dias operacionais; hotéis são vinculados a uma "
+            "rota específica pela data e pelo nome encontrado como motorista ou ajudante."
         )
         render_kpis(
             [
@@ -18204,6 +18205,41 @@ def render_rotas() -> None:
             st.caption(
                 "Rotas sem KM e placas sem base histórica permanecem sem custo de combustível; nenhum valor médio da frota é inventado."
             )
+        hotel_links = pd.DataFrame(costs.get("hotel_vinculos") or [])
+        with st.expander("Como as hospedagens foram vinculadas às rotas", expanded=not hotel_links.empty):
+            st.write(
+                "Cada registro de hotel é comparado com as rotas ativas no mesmo dia. O sistema procura o nome "
+                "informado no hotel tanto no motorista quanto no ajudante da rota e atribui o valor integral a uma "
+                "única rota específica. Quando há mais de uma candidata, prioriza a dupla completa, a mesma função "
+                "e a rota com pernoite ou maior duração."
+            )
+            st.caption(
+                "O método anterior, que dividia a hospedagem entre todas as rotas compatíveis, permanece preservado "
+                "no sistema, mas está desativado."
+            )
+            unmatched_hotels = int(costs.get("hoteis_sem_vinculo") or 0)
+            if unmatched_hotels:
+                st.warning(
+                    f"{unmatched_hotels} hospedagem(ns) do período ficaram sem vínculo porque não foi encontrado "
+                    "motorista ou ajudante correspondente no mesmo dia."
+                )
+            if hotel_links.empty:
+                st.info("Nenhuma hospedagem foi vinculada às rotas selecionadas.")
+            else:
+                visible_hotel_columns = [
+                    "Data", "Hotel", "Cidade", "Motorista hotel", "Ajudante hotel", "Nome encontrado",
+                    "Rota", "PLACA", "Valor atribuído", "Critério", "Candidatas",
+                ]
+                st.dataframe(
+                    hotel_links[[column for column in visible_hotel_columns if column in hotel_links.columns]],
+                    width="stretch",
+                    hide_index=True,
+                    column_config={
+                        "Data": _date_col(),
+                        "Valor atribuído": _money_col("Valor atribuído"),
+                        "Candidatas": st.column_config.NumberColumn("Rotas candidatas", format="%d"),
+                    },
+                )
         for warning in costs.get("avisos") or []:
             st.warning(clean_text(warning))
         st.info("Incluídos conforme disponibilidade: combustível histórico por KM da placa, manutenção, pedágio/extras, hotéis, salários e freteiros. Tributos, depreciação e outros custos não cadastrados não são presumidos; por isso o resultado não deve ser chamado de lucro líquido.")

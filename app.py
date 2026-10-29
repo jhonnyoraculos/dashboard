@@ -59,8 +59,9 @@ DB_TABLES = {
 }
 DB_METADATA_TABLE = "dashboard_metadata"
 BACKEND_BUILD_VERSION = "aluguel-multiplicar-meses-v1"
-ROUTES_BUILD_VERSION = "rotas-colaboradores-v19"
+ROUTES_BUILD_VERSION = "rotas-colaboradores-v20"
 PEDAGIO_CHART_VERSION = "all-types-v1"
+USE_LEGACY_ROUTE_HOTEL_ALLOCATION = False
 BACKUP_METADATA_KEY = "backup.last_downloaded_at"
 COLLABORATOR_ALIASES_METADATA_KEY = "routes.collaborator_aliases"
 _DB_ENGINE = None
@@ -5172,6 +5173,213 @@ def _route_calendar_days(routes: pd.DataFrame) -> pd.DataFrame:
     return pd.DataFrame(rows, columns=columns)
 
 
+def _route_text_value(value: object) -> str:
+    try:
+        if pd.isna(value):
+            return ""
+    except (TypeError, ValueError):
+        pass
+    return str(value or "").strip()
+
+
+def _legacy_route_hotel_allocations(
+    hotels: pd.DataFrame,
+    route_days: pd.DataFrame,
+) -> tuple[pd.DataFrame, list[dict]]:
+    """Método anterior: divide a reserva entre todas as rotas compatíveis."""
+    columns = ["Rota ID", "Valor Alocado", "Hotel ID"]
+    if hotels.empty or route_days.empty or not {"Data", "Valor"}.issubset(hotels.columns):
+        return pd.DataFrame(columns=columns), []
+    hotel_rows = hotels.copy().reset_index(drop=True)
+    hotel_rows["Data"] = pd.to_datetime(hotel_rows["Data"], errors="coerce").dt.normalize()
+    hotel_rows["Valor"] = pd.to_numeric(hotel_rows["Valor"], errors="coerce").fillna(0.0).clip(lower=0)
+    hotel_rows["Hotel ID"] = hotel_rows.index.astype(str)
+    hotel_driver = hotel_rows["Motorista"] if "Motorista" in hotel_rows.columns else pd.Series("", index=hotel_rows.index)
+    hotel_helper = hotel_rows["Ajudante"] if "Ajudante" in hotel_rows.columns else pd.Series("", index=hotel_rows.index)
+    hotel_rows["_Motorista"] = hotel_driver.astype("string").fillna("").map(
+        _collaborator_name_key
+    )
+    hotel_rows["_Ajudante"] = hotel_helper.astype("string").fillna("").map(
+        _collaborator_name_key
+    )
+    day_names = route_days.copy()
+    day_names["Data"] = pd.to_datetime(day_names["Data"], errors="coerce").dt.normalize()
+    day_names["_Motorista Rota"] = day_names["Motorista"].astype("string").fillna("").map(
+        _collaborator_name_key
+    )
+    route_helper = day_names["Ajudante"] if "Ajudante" in day_names.columns else pd.Series("", index=day_names.index)
+    day_names["_Ajudante Rota"] = route_helper.astype("string").fillna("").map(
+        _collaborator_name_key
+    )
+    matches = hotel_rows.merge(day_names, on="Data", how="inner", suffixes=(" Hotel", " Rota"))
+    matches = matches.loc[
+        (
+            matches["_Motorista Rota"].ne("")
+            & (
+                matches["_Motorista Rota"].eq(matches["_Motorista"])
+                | matches["_Motorista Rota"].eq(matches["_Ajudante"])
+            )
+        )
+        | (
+            matches["_Ajudante Rota"].ne("")
+            & (
+                matches["_Ajudante Rota"].eq(matches["_Motorista"])
+                | matches["_Ajudante Rota"].eq(matches["_Ajudante"])
+            )
+        )
+    ].copy()
+    if matches.empty:
+        return pd.DataFrame(columns=columns), []
+    matches["_Divisor"] = matches.groupby("Hotel ID")["Rota ID"].transform("nunique").clip(lower=1)
+    matches["Valor Alocado"] = matches["Valor"] / matches["_Divisor"]
+    audit = [
+        {
+            "Data": row.get("Data"),
+            "Hotel": row.get("Hotel"),
+            "Cidade": row.get("Cidade"),
+            "Nome do hotel": _route_text_value(row.get("Motorista Hotel")) or _route_text_value(row.get("Ajudante Hotel")),
+            "Rota ID": row.get("Rota ID"),
+            "Rota": row.get("Rota"),
+            "PLACA": row.get("PLACA"),
+            "Valor atribuído": row.get("Valor Alocado"),
+            "Critério": "Método anterior: valor dividido entre rotas compatíveis",
+            "Candidatas": int(row.get("_Divisor") or 1),
+            "Status": "Vinculado",
+        }
+        for _, row in matches.iterrows()
+    ]
+    return matches[["Rota ID", "Valor Alocado", "Hotel ID"]].copy(), audit
+
+
+def _route_hotel_allocations_by_person_day(
+    hotels: pd.DataFrame,
+    route_days: pd.DataFrame,
+) -> tuple[pd.DataFrame, list[dict]]:
+    """Vincula cada hospedagem a uma única rota pela data e pelos colaboradores."""
+    allocation_columns = ["Rota ID", "Valor Alocado", "Hotel ID"]
+    if hotels.empty or route_days.empty or not {"Data", "Valor"}.issubset(hotels.columns):
+        return pd.DataFrame(columns=allocation_columns), []
+
+    days = route_days.copy()
+    days["Data"] = pd.to_datetime(days["Data"], errors="coerce").dt.normalize()
+    route_driver = days["Motorista"] if "Motorista" in days.columns else pd.Series("", index=days.index)
+    route_helper = days["Ajudante"] if "Ajudante" in days.columns else pd.Series("", index=days.index)
+    days["_Motorista"] = route_driver.astype("string").fillna("").map(
+        _collaborator_name_key
+    )
+    days["_Ajudante"] = route_helper.astype("string").fillna("").map(
+        _collaborator_name_key
+    )
+    route_stats = days.groupby("Rota ID")["Data"].agg(["nunique", "max"]).rename(
+        columns={"nunique": "_Dias Rota", "max": "_Ultimo Dia"}
+    )
+    days = days.merge(route_stats, left_on="Rota ID", right_index=True, how="left")
+
+    hotel_rows = hotels.copy().reset_index(drop=True)
+    hotel_rows["Data"] = pd.to_datetime(hotel_rows["Data"], errors="coerce").dt.normalize()
+    hotel_rows["Valor"] = pd.to_numeric(hotel_rows["Valor"], errors="coerce").fillna(0.0).clip(lower=0)
+    hotel_rows["Hotel ID"] = [
+        _route_text_value(value) if _route_text_value(value) else f"linha-{index}"
+        for index, value in enumerate(hotel_rows.get("Reserva ID", pd.Series(index=hotel_rows.index, dtype=object)))
+    ]
+
+    allocations: list[dict] = []
+    audit: list[dict] = []
+    for _, hotel in hotel_rows.iterrows():
+        hotel_people = {
+            role: _collaborator_name_key(hotel.get(column))
+            for role, column in (("Motorista", "Motorista"), ("Ajudante", "Ajudante"))
+            if _collaborator_name_key(hotel.get(column))
+        }
+        base_audit = {
+            "Data": hotel.get("Data"),
+            "Hotel": hotel.get("Hotel"),
+            "Cidade": hotel.get("Cidade"),
+            "Motorista hotel": hotel.get("Motorista"),
+            "Ajudante hotel": hotel.get("Ajudante"),
+            "Valor atribuído": float(hotel.get("Valor") or 0.0),
+        }
+        if pd.isna(hotel.get("Data")) or not hotel_people:
+            audit.append(
+                {
+                    **base_audit,
+                    "Rota ID": "", "Rota": "", "PLACA": "", "Nome encontrado": "",
+                    "Critério": "Hotel sem data ou sem colaborador informado",
+                    "Candidatas": 0, "Status": "Sem vínculo",
+                }
+            )
+            continue
+
+        candidates = days.loc[days["Data"].eq(hotel.get("Data"))].copy()
+        scored: list[tuple[tuple[int, int, int, int], str, pd.Series, list[str]]] = []
+        for _, route in candidates.iterrows():
+            route_people = {
+                "Motorista": str(route.get("_Motorista") or ""),
+                "Ajudante": str(route.get("_Ajudante") or ""),
+            }
+            hotel_keys = set(hotel_people.values())
+            route_keys = {value for value in route_people.values() if value}
+            overlap = hotel_keys & route_keys
+            if not overlap:
+                continue
+            same_role = sum(
+                1 for role, person in hotel_people.items()
+                if person and person == route_people.get(role)
+            )
+            found_names = sorted(
+                {
+                    _route_text_value(hotel.get(role))
+                    for role, person in hotel_people.items()
+                    if person in overlap
+                },
+                key=str.casefold,
+            )
+            route_days_count = int(route.get("_Dias Rota") or 1)
+            has_next_day = int(pd.notna(route.get("_Ultimo Dia")) and hotel.get("Data") < route.get("_Ultimo Dia"))
+            score = (len(overlap), same_role, has_next_day, route_days_count)
+            scored.append((score, _route_text_value(route.get("Rota ID")), route, found_names))
+
+        if not scored:
+            audit.append(
+                {
+                    **base_audit,
+                    "Rota ID": "", "Rota": "", "PLACA": "", "Nome encontrado": "",
+                    "Critério": "Nenhuma rota no mesmo dia com motorista ou ajudante correspondente",
+                    "Candidatas": 0, "Status": "Sem vínculo",
+                }
+            )
+            continue
+
+        scored.sort(key=lambda item: (tuple(-value for value in item[0]), item[1]))
+        best_score, _, selected, found_names = scored[0]
+        candidate_count = len(scored)
+        if best_score[0] >= 2:
+            criterion = "Data + dupla encontrada na rota"
+        elif best_score[1] >= 1:
+            criterion = "Data + colaborador encontrado na mesma função"
+        else:
+            criterion = "Data + colaborador encontrado como motorista ou ajudante"
+        if candidate_count > 1:
+            criterion += "; escolhida a melhor correspondência, priorizando rota com pernoite/mais dias"
+
+        route_id = _route_text_value(selected.get("Rota ID"))
+        value = float(hotel.get("Valor") or 0.0)
+        allocations.append({"Rota ID": route_id, "Valor Alocado": value, "Hotel ID": hotel.get("Hotel ID")})
+        audit.append(
+            {
+                **base_audit,
+                "Rota ID": route_id,
+                "Rota": selected.get("Rota"),
+                "PLACA": selected.get("PLACA"),
+                "Nome encontrado": " / ".join(found_names),
+                "Critério": criterion,
+                "Candidatas": candidate_count,
+                "Status": "Vinculado",
+            }
+        )
+    return pd.DataFrame(allocations, columns=allocation_columns), audit
+
+
 def _historical_plate_fuel_rates(
     fuel_rows: pd.DataFrame,
     km_rows: pd.DataFrame,
@@ -5298,6 +5506,9 @@ def _route_cost_breakdown(
         "percentual_custo": None,
         "resultado": 0.0,
         "avisos": [],
+        "hotel_vinculos": [],
+        "hoteis_sem_vinculo": 0,
+        "metodo_hotel": "legado_rateado" if USE_LEGACY_ROUTE_HOTEL_ALLOCATION else "nome_data_rota_especifica",
     }
     if selected_routes.empty:
         return empty
@@ -5445,48 +5656,22 @@ def _route_cost_breakdown(
     except Exception:
         pass
 
+    hotel_links: list[dict] = []
+    unmatched_hotels = 0
     try:
         hotels = period_rows(load_hoteis())
         if not hotels.empty and {"Data", "Valor"}.issubset(hotels.columns):
-            hotel_rows = hotels.copy().reset_index(drop=True)
-            hotel_rows["Data"] = pd.to_datetime(hotel_rows["Data"], errors="coerce").dt.normalize()
-            hotel_rows["Valor"] = pd.to_numeric(hotel_rows["Valor"], errors="coerce").fillna(0.0).clip(lower=0)
-            hotel_rows["_Hotel ID"] = hotel_rows.index
-            hotel_rows["_Motorista"] = hotel_rows.get("Motorista", "").astype("string").fillna("").map(
-                lambda value: _normalize_ascii(value).casefold().strip()
-            )
-            hotel_rows["_Ajudante"] = hotel_rows.get("Ajudante", "").astype("string").fillna("").map(
-                lambda value: _normalize_ascii(value).casefold().strip()
-            )
-            day_names = all_days.copy()
-            day_names["_Motorista Rota"] = day_names["Motorista"].astype("string").fillna("").map(
-                lambda value: _normalize_ascii(value).casefold().strip()
-            )
-            day_names["_Ajudante Rota"] = day_names.get("Ajudante", "").astype("string").fillna("").map(
-                lambda value: _normalize_ascii(value).casefold().strip()
-            )
-            matches = hotel_rows.merge(day_names, on="Data", how="inner")
-            matches = matches.loc[
-                (
-                    matches["_Motorista Rota"].ne("")
-                    & (
-                        matches["_Motorista Rota"].eq(matches["_Motorista"])
-                        | matches["_Motorista Rota"].eq(matches["_Ajudante"])
-                    )
-                )
-                | (
-                    matches["_Ajudante Rota"].ne("")
-                    & (
-                        matches["_Ajudante Rota"].eq(matches["_Motorista"])
-                        | matches["_Ajudante Rota"].eq(matches["_Ajudante"])
-                    )
-                )
-            ].copy()
-            if not matches.empty:
-                matches["_Divisor"] = matches.groupby("_Hotel ID")["Rota ID"].transform("nunique").clip(lower=1)
-                matches["_Allocated"] = matches["Valor"] / matches["_Divisor"]
-                for _, row in matches.iterrows():
-                    add_cost(row.get("Rota ID"), "Hoteis", row.get("_Allocated"))
+            if USE_LEGACY_ROUTE_HOTEL_ALLOCATION:
+                allocations, hotel_audit = _legacy_route_hotel_allocations(hotels, all_days)
+            else:
+                allocations, hotel_audit = _route_hotel_allocations_by_person_day(hotels, all_days)
+            for _, allocation in allocations.iterrows():
+                add_cost(allocation.get("Rota ID"), "Hoteis", allocation.get("Valor Alocado"))
+            hotel_links = [
+                row for row in hotel_audit
+                if str(row.get("Rota ID") or "") in selected_ids
+            ]
+            unmatched_hotels = sum(1 for row in hotel_audit if row.get("Status") == "Sem vínculo")
     except Exception:
         pass
 
@@ -5562,6 +5747,9 @@ def _route_cost_breakdown(
         "percentual_custo": round(total_ratio, 2) if total_ratio is not None else None,
         "resultado": round(total_gain - total_cost, 2),
         "avisos": fuel_warnings,
+        "hotel_vinculos": _route_records(pd.DataFrame(hotel_links)) if hotel_links else [],
+        "hoteis_sem_vinculo": unmatched_hotels,
+        "metodo_hotel": "legado_rateado" if USE_LEGACY_ROUTE_HOTEL_ALLOCATION else "nome_data_rota_especifica",
     }
 
 

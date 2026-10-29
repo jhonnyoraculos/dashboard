@@ -462,6 +462,63 @@ class RoutesDashboardTests(unittest.TestCase):
         saved_aliases = alias_calls[0].args[2]
         self.assertEqual(saved_aliases[backend._collaborator_name_key("NOME DUPLICADO")], "NOME CORRETO")
 
+    def test_hotel_is_linked_to_specific_route_by_day_and_either_role(self):
+        hotels = pd.DataFrame(
+            [
+                {
+                    "Data": "2026-10-13", "Valor": 220.0, "Motorista": "PESSOA X",
+                    "Ajudante": "", "Hotel": "HOTEL TESTE", "Cidade": "CIDADE TESTE",
+                }
+            ]
+        )
+        route_days = pd.DataFrame(
+            [
+                {
+                    "Rota ID": "r1", "Data": "2026-10-13", "Rota": "ROTA 10", "PLACA": "AAA1A11",
+                    "Motorista": "OUTRA PESSOA", "Ajudante": "PESSOA X", "Categoria": "Transporte",
+                }
+            ]
+        )
+
+        allocations, audit = backend._route_hotel_allocations_by_person_day(hotels, route_days)
+
+        self.assertEqual(len(allocations), 1)
+        self.assertEqual(allocations.iloc[0]["Rota ID"], "r1")
+        self.assertEqual(allocations.iloc[0]["Valor Alocado"], 220.0)
+        self.assertEqual(audit[0]["Nome encontrado"], "PESSOA X")
+        self.assertIn("motorista ou ajudante", audit[0]["Critério"])
+
+    def test_hotel_prefers_multiday_route_and_legacy_method_remains_available(self):
+        hotels = pd.DataFrame(
+            [{"Data": "2026-10-13", "Valor": 240.0, "Motorista": "MOTORISTA A", "Ajudante": ""}]
+        )
+        route_days = pd.DataFrame(
+            [
+                {
+                    "Rota ID": "curta", "Data": "2026-10-13", "Rota": "ROTA CURTA", "PLACA": "AAA1A11",
+                    "Motorista": "MOTORISTA A", "Ajudante": "", "Categoria": "Transporte",
+                },
+                {
+                    "Rota ID": "longa", "Data": "2026-10-13", "Rota": "ROTA LONGA", "PLACA": "BBB1B11",
+                    "Motorista": "MOTORISTA A", "Ajudante": "", "Categoria": "Transporte",
+                },
+                {
+                    "Rota ID": "longa", "Data": "2026-10-14", "Rota": "ROTA LONGA", "PLACA": "BBB1B11",
+                    "Motorista": "MOTORISTA A", "Ajudante": "", "Categoria": "Transporte",
+                },
+            ]
+        )
+
+        allocations, audit = backend._route_hotel_allocations_by_person_day(hotels, route_days)
+        legacy_allocations, _ = backend._legacy_route_hotel_allocations(hotels, route_days)
+
+        self.assertEqual(allocations.iloc[0]["Rota ID"], "longa")
+        self.assertEqual(allocations.iloc[0]["Valor Alocado"], 240.0)
+        self.assertEqual(audit[0]["Candidatas"], 2)
+        self.assertEqual(set(legacy_allocations["Rota ID"]), {"curta", "longa"})
+        self.assertTrue(legacy_allocations["Valor Alocado"].eq(120.0).all())
+        self.assertFalse(backend.USE_LEGACY_ROUTE_HOTEL_ALLOCATION)
+
     def test_pending_routes_never_enter_completed_scope(self):
         routes = pd.DataFrame(
             [
