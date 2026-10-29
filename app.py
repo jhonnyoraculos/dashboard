@@ -9,6 +9,7 @@ import threading
 import time
 import unicodedata
 from collections import Counter, defaultdict
+from collections.abc import Iterable
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -59,7 +60,7 @@ DB_TABLES = {
 }
 DB_METADATA_TABLE = "dashboard_metadata"
 BACKEND_BUILD_VERSION = "aluguel-multiplicar-meses-v1"
-ROUTES_BUILD_VERSION = "rotas-colaboradores-v20"
+ROUTES_BUILD_VERSION = "rotas-colaboradores-v21"
 PEDAGIO_CHART_VERSION = "all-types-v1"
 USE_LEGACY_ROUTE_HOTEL_ALLOCATION = False
 BACKUP_METADATA_KEY = "backup.last_downloaded_at"
@@ -2637,24 +2638,35 @@ def update_route_collaborators(rows: list[dict]) -> dict:
     return {"updated": len(updated_ids), "route_ids": updated_ids, "version": version}
 
 
-def merge_collaborator_names(source_name: str, canonical_name: str) -> dict:
-    """Substitui um nome duplicado e memoriza o nome canônico para novas entradas."""
-    source = re.sub(r"\s+", " ", str(source_name or "")).strip().upper()
+def merge_collaborator_names_bulk(source_names: Iterable[str], canonical_name: str) -> dict:
+    """Substitui vários nomes duplicados pelo mesmo nome canônico em uma transação."""
+    if isinstance(source_names, str):
+        source_names = [source_names]
+    sources = list(
+        dict.fromkeys(
+            re.sub(r"\s+", " ", str(source or "")).strip().upper()
+            for source in source_names
+            if re.sub(r"\s+", " ", str(source or "")).strip()
+        )
+    )
     target = re.sub(r"\s+", " ", str(canonical_name or "")).strip().upper()
-    if not source or not target:
-        raise ValueError("Selecione o nome duplicado e o nome correto.")
-    if source.casefold() == target.casefold():
-        raise ValueError("O nome duplicado e o nome correto devem ser diferentes.")
+    if not sources or not target:
+        raise ValueError("Selecione ao menos um nome duplicado e o nome correto.")
+    if target.casefold() in {source.casefold() for source in sources}:
+        raise ValueError("O nome correto não pode estar entre os nomes que serão removidos.")
 
     from sqlalchemy import text
 
     aliases = _collaborator_aliases()
     target = _canonical_collaborator_name(target, aliases)
-    source_key = _collaborator_name_key(source)
-    for alias, value in list(aliases.items()):
-        if _collaborator_name_key(value) == source_key:
-            aliases[alias] = target
-    aliases[source_key] = target
+    source_keys = {_collaborator_name_key(source) for source in sources}
+    if _collaborator_name_key(target) in source_keys:
+        raise ValueError("O nome correto resolve para um dos nomes que serão removidos.")
+    for source_key in source_keys:
+        for alias, value in list(aliases.items()):
+            if _collaborator_name_key(value) == source_key:
+                aliases[alias] = target
+        aliases[source_key] = target
 
     version = datetime.now(timezone.utc).isoformat()
     changes: dict[str, int] = {}
@@ -2670,14 +2682,16 @@ def merge_collaborator_names(source_name: str, canonical_name: str) -> dict:
             dataset_total = 0
             for column in columns:
                 updated_at_sql = ', "Atualizado Em" = :updated_at' if dataset in {"rotas", "hoteis"} else ""
-                update_params = {"source": source, "target": target}
+                source_params = {f"source_{index}": source for index, source in enumerate(sources)}
+                source_placeholders = ", ".join(f":{name}" for name in source_params)
+                update_params = {**source_params, "target": target}
                 if updated_at_sql:
                     update_params["updated_at"] = datetime.now(timezone.utc)
                 result = conn.execute(
                     text(
                         f"UPDATE {table} SET {_quote_identifier(column)} = :target{updated_at_sql} "
-                        f"WHERE UPPER(BTRIM(COALESCE({_quote_identifier(column)}, ''))) = "
-                        "UPPER(BTRIM(:source))"
+                        f"WHERE UPPER(BTRIM(COALESCE({_quote_identifier(column)}, ''))) IN "
+                        f"({source_placeholders})"
                     ),
                     update_params,
                 )
@@ -2692,12 +2706,18 @@ def merge_collaborator_names(source_name: str, canonical_name: str) -> dict:
     for dataset in specifications:
         _clear_dataset_cache(dataset)
     return {
-        "source": source,
+        "sources": sources,
+        "source": sources[0] if len(sources) == 1 else "",
         "canonical": target,
         "updated_fields": sum(changes.values()),
         "changes": changes,
         "version": version,
     }
+
+
+def merge_collaborator_names(source_name: str, canonical_name: str) -> dict:
+    """Compatibilidade: unifica um único nome usando a operação em lote."""
+    return merge_collaborator_names_bulk([source_name], canonical_name)
 
 
 def collaborator_name_summary() -> list[dict]:

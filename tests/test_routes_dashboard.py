@@ -462,6 +462,52 @@ class RoutesDashboardTests(unittest.TestCase):
         saved_aliases = alias_calls[0].args[2]
         self.assertEqual(saved_aliases[backend._collaborator_name_key("NOME DUPLICADO")], "NOME CORRETO")
 
+    def test_merge_multiple_collaborator_names_in_one_operation(self):
+        executed = []
+
+        class Result:
+            rowcount = 2
+
+        class Connection:
+            def execute(self, statement, params=None):
+                executed.append((str(statement), params or {}))
+                return Result()
+
+        class BeginContext:
+            def __enter__(self):
+                return Connection()
+
+            def __exit__(self, exc_type, exc, traceback):
+                return False
+
+        class Engine:
+            def begin(self):
+                return BeginContext()
+
+        with (
+            patch.object(backend, "_db_engine", return_value=Engine()),
+            patch.object(backend, "_ensure_dataset_table"),
+            patch.object(backend, "_write_metadata") as write_metadata,
+            patch.object(backend, "_clear_dataset_cache"),
+            patch.object(backend, "_collaborator_aliases", return_value={}),
+        ):
+            result = backend.merge_collaborator_names_bulk(
+                ["LUCAS.A", "LUCAS A", "LUCAS.A"], "LUCAS ALMEIDA"
+            )
+
+        update_calls = [item for item in executed if item[0].lstrip().upper().startswith("UPDATE")]
+        self.assertEqual(len(update_calls), 5)
+        self.assertTrue(all(" IN " in statement for statement, _ in update_calls))
+        self.assertEqual(result["sources"], ["LUCAS.A", "LUCAS A"])
+        self.assertEqual(result["updated_fields"], 10)
+        alias_call = next(
+            call for call in write_metadata.call_args_list
+            if call.args[1] == backend.COLLABORATOR_ALIASES_METADATA_KEY
+        )
+        saved_aliases = alias_call.args[2]
+        self.assertEqual(saved_aliases[backend._collaborator_name_key("LUCAS.A")], "LUCAS ALMEIDA")
+        self.assertEqual(saved_aliases[backend._collaborator_name_key("LUCAS A")], "LUCAS ALMEIDA")
+
     def test_hotel_is_linked_to_specific_route_by_day_and_either_role(self):
         hotels = pd.DataFrame(
             [

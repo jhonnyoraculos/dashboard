@@ -69,7 +69,7 @@ _backend_aluguel_period_ready = {"Inicio", "Fim"}.issubset(
 )
 _backend_aluguel_monthly_ready = getattr(backend, "BACKEND_BUILD_VERSION", "") == "aluguel-multiplicar-meses-v1"
 _backend_pedagio_chart_ready = getattr(backend, "PEDAGIO_CHART_VERSION", "") == "all-types-v1"
-_backend_routes_ready = getattr(backend, "ROUTES_BUILD_VERSION", "") == "rotas-colaboradores-v20"
+_backend_routes_ready = getattr(backend, "ROUTES_BUILD_VERSION", "") == "rotas-colaboradores-v21"
 if not _backend_features_ready or not _backend_aluguel_period_ready or not _backend_aluguel_monthly_ready or not _backend_pedagio_chart_ready or not _backend_routes_ready:
     backend = importlib.reload(backend)
 
@@ -80,7 +80,7 @@ MUTED = "#6B7280"
 CARD_BORDER = "#c2d2f3"
 LOGO_PATH = Path(__file__).parent / "static" / "logo-jr.png"
 CURRENT_YEAR = date.today().year
-APP_VERSION = "global-groq-assistant-v40"
+APP_VERSION = "global-groq-assistant-v41"
 LOGGER = logging.getLogger("jr_dashboard.streamlit")
 RANK_ROUTES_ENABLED = True
 ROUTE_CACHE_TTL_SECONDS = max(int(os.environ.get("JR_ROUTE_CACHE_TTL_SECONDS", "180") or 180), 30)
@@ -18431,18 +18431,20 @@ def render_rotas() -> None:
                 names = name_summary["Nome"].astype(str).tolist()
                 source_col, target_col = st.columns(2)
                 with source_col:
-                    duplicate_name = st.selectbox(
-                        "Nome duplicado que será removido",
+                    duplicate_names = st.multiselect(
+                        "Nomes duplicados que serão removidos",
                         names,
-                        index=None,
-                        placeholder="Selecione o nome incorreto",
-                        key="routes_collaborator_merge_source_v1",
+                        placeholder="Selecione um ou vários nomes incorretos",
+                        key="routes_collaborator_merge_sources_v2",
                     )
-                target_options = [name for name in names if name != duplicate_name]
-                if duplicate_name:
+                target_options = [name for name in names if name not in duplicate_names]
+                if duplicate_names:
                     target_options.sort(
                         key=lambda name: (
-                            -SequenceMatcher(None, duplicate_name.casefold(), name.casefold()).ratio(),
+                            -max(
+                                SequenceMatcher(None, duplicate.casefold(), name.casefold()).ratio()
+                                for duplicate in duplicate_names
+                            ),
                             name.casefold(),
                         )
                     )
@@ -18452,48 +18454,49 @@ def render_rotas() -> None:
                         target_options,
                         index=None,
                         placeholder="Selecione o nome correto",
-                        key="routes_collaborator_merge_target_v1",
+                        key="routes_collaborator_merge_target_v2",
                     )
 
-                if duplicate_name:
-                    selected_summary = name_summary.loc[name_summary["Nome"].eq(duplicate_name)].copy()
+                if duplicate_names:
+                    selected_summary = name_summary.loc[name_summary["Nome"].isin(duplicate_names)].copy()
                     if not selected_summary.empty:
-                        st.markdown("**Registros que usam o nome duplicado**")
+                        st.markdown("**Registros que usam os nomes selecionados**")
                         st.dataframe(selected_summary, width="stretch", hide_index=True)
-                if duplicate_name and canonical_name:
+                if duplicate_names and canonical_name:
+                    duplicate_list = ", ".join(f"**{name}**" for name in duplicate_names)
                     st.warning(
-                        f"Todos os registros de **{duplicate_name}** serão transferidos para "
-                        f"**{canonical_name}**. O nome antigo deixará de aparecer nos rankings."
+                        f"Todos os registros de {duplicate_list} serão transferidos para "
+                        f"**{canonical_name}**. Os nomes antigos deixarão de aparecer nos rankings."
                     )
                 merge_pair_key = hashlib.sha256(
-                    f"{duplicate_name or ''}|{canonical_name or ''}".encode("utf-8")
+                    f"{'|'.join(sorted(duplicate_names))}|{canonical_name or ''}".encode("utf-8")
                 ).hexdigest()[:10]
                 confirmation = st.checkbox(
-                    "Confirmo que os dois nomes representam a mesma pessoa",
+                    "Confirmo que todos os nomes selecionados representam a mesma pessoa",
                     value=False,
-                    key=f"routes_collaborator_merge_confirm_v1_{merge_pair_key}",
+                    key=f"routes_collaborator_merge_confirm_v2_{merge_pair_key}",
                 )
                 if st.button(
                     "Unificar nomes em todos os dados",
                     type="primary",
                     width="stretch",
-                    disabled=not (duplicate_name and canonical_name and confirmation),
-                    key=f"routes_collaborator_merge_apply_v1_{merge_pair_key}",
+                    disabled=not (duplicate_names and canonical_name and confirmation),
+                    key=f"routes_collaborator_merge_apply_v2_{merge_pair_key}",
                 ):
                     try:
                         with st.spinner("Atualizando rotas e demais registros..."):
-                            merged = backend.merge_collaborator_names(duplicate_name, canonical_name)
+                            merged = backend.merge_collaborator_names_bulk(duplicate_names, canonical_name)
                     except Exception as exc:
                         st.error("Não foi possível unificar os nomes no Neon.")
                         st.exception(exc)
                     else:
                         clear_cached_reads()
                         st.session_state["collaborator_merge_message"] = (
-                            f"Nome unificado: {merged['source']} → {merged['canonical']}. "
+                            f"{len(merged.get('sources') or [])} nome(s) unificado(s) em {merged['canonical']}. "
                             f"{int(merged.get('updated_fields', 0))} campo(s) atualizado(s)."
                         )
-                        st.session_state.pop("routes_collaborator_merge_source_v1", None)
-                        st.session_state.pop("routes_collaborator_merge_target_v1", None)
+                        st.session_state.pop("routes_collaborator_merge_sources_v2", None)
+                        st.session_state.pop("routes_collaborator_merge_target_v2", None)
                         st.rerun()
 
                 with st.expander("Ver todos os nomes e quantidades cadastradas"):
