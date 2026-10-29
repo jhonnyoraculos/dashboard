@@ -338,6 +338,41 @@ class RoutesDashboardTests(unittest.TestCase):
         self.assertEqual(pd.to_datetime(alerts.iloc[0]["Data"]).date(), date(2026, 10, 14))
         self.assertEqual(alerts.iloc[0]["Horas cumpridas"], 8.0)
 
+    def test_collaborator_performance_supports_total_individual_weekly_and_monthly(self):
+        rows = pd.DataFrame(
+            [
+                {
+                    "Rota ID": "r1", "Data": "2026-10-05", "Motorista": "MOTORISTA A", "Ajudante": "AJUDANTE B",
+                    "Entregas": 10, "Peso Carga": 5000, "KM Rodados": 100, "Horas Trabalhadas": 10,
+                },
+                {
+                    "Rota ID": "r2", "Data": "2026-10-07", "Motorista": "MOTORISTA C", "Ajudante": "AJUDANTE B",
+                    "Entregas": 8, "Peso Carga": 3000, "KM Rodados": 80, "Horas Trabalhadas": 8,
+                },
+                {
+                    "Rota ID": "r3", "Data": "2026-10-14", "Motorista": "MOTORISTA A", "Ajudante": "",
+                    "Entregas": 12, "Peso Carga": 6000, "KM Rodados": 120, "Horas Trabalhadas": 10,
+                },
+            ]
+        )
+
+        total_weekly = dashboard._route_collaborator_performance_frame(rows, cadence="Semanal")
+        helper_weekly = dashboard._route_collaborator_performance_frame(
+            rows, collaborator="AJUDANTE B", cadence="Semanal"
+        )
+        driver_monthly = dashboard._route_collaborator_performance_frame(
+            rows, collaborator="MOTORISTA A", cadence="Mensal"
+        )
+
+        self.assertEqual(len(total_weekly), 2)
+        self.assertEqual(total_weekly["Rotas"].sum(), 3)
+        self.assertEqual(len(helper_weekly), 1)
+        self.assertEqual(helper_weekly.iloc[0]["Entregas"], 18)
+        self.assertEqual(helper_weekly.iloc[0]["Entregas por hora"], 1.0)
+        self.assertEqual(len(driver_monthly), 1)
+        self.assertEqual(driver_monthly.iloc[0]["Rotas"], 2)
+        self.assertEqual(driver_monthly.iloc[0]["Peso transportado (t)"], 11.0)
+
     def test_pending_routes_never_enter_completed_scope(self):
         routes = pd.DataFrame(
             [

@@ -78,7 +78,7 @@ MUTED = "#6B7280"
 CARD_BORDER = "#c2d2f3"
 LOGO_PATH = Path(__file__).parent / "static" / "logo-jr.png"
 CURRENT_YEAR = date.today().year
-APP_VERSION = "global-groq-assistant-v36"
+APP_VERSION = "global-groq-assistant-v37"
 LOGGER = logging.getLogger("jr_dashboard.streamlit")
 RANK_ROUTES_ENABLED = True
 ROUTE_CACHE_TTL_SECONDS = max(int(os.environ.get("JR_ROUTE_CACHE_TTL_SECONDS", "180") or 180), 30)
@@ -15181,6 +15181,72 @@ def _route_driver_ranking_frame(rows: list[dict] | pd.DataFrame) -> pd.DataFrame
     return _route_ranking_indicator_frame(rows, entity_column="Motorista")
 
 
+def _route_collaborator_performance_frame(
+    rows: list[dict] | pd.DataFrame,
+    *,
+    collaborator: str = "",
+    cadence: str = "Semanal",
+) -> pd.DataFrame:
+    """Consolida a evolução operacional geral ou de um colaborador."""
+    frame = rows.copy() if isinstance(rows, pd.DataFrame) else pd.DataFrame(rows or [])
+    output_columns = [
+        "Início", "Período", "Rotas", "Entregas", "Peso transportado (t)", "KM",
+        "Horas trabalhadas", "Entregas por hora", "Toneladas por hora",
+    ]
+    if frame.empty:
+        return pd.DataFrame(columns=output_columns)
+    for column in ("Rota ID", "Data", "Motorista", "Ajudante"):
+        if column not in frame.columns:
+            frame[column] = ""
+    frame["Data"] = pd.to_datetime(frame["Data"], errors="coerce").dt.normalize()
+    frame = frame.loc[frame["Data"].notna()].copy()
+    if collaborator:
+        target = clean_text(collaborator).strip().casefold()
+        driver = frame["Motorista"].astype("string").fillna("").str.strip().str.casefold()
+        helper = frame["Ajudante"].astype("string").fillna("").str.strip().str.casefold()
+        frame = frame.loc[driver.eq(target) | helper.eq(target)].copy()
+    if frame.empty:
+        return pd.DataFrame(columns=output_columns)
+
+    route_ids = frame["Rota ID"].astype("string").fillna("").str.strip()
+    frame["_route_key"] = route_ids.where(route_ids.ne(""), frame.index.astype(str))
+    frame = frame.drop_duplicates("_route_key")
+    for column in ("Entregas", "Peso Carga", "KM Rodados", "Horas Trabalhadas"):
+        source = frame[column] if column in frame.columns else pd.Series(0.0, index=frame.index)
+        frame[column] = pd.to_numeric(source, errors="coerce").fillna(0.0).clip(lower=0.0)
+
+    cadence_key = clean_text(cadence).strip().casefold()
+    if cadence_key.startswith("di"):
+        frame["Início"] = frame["Data"]
+        label = lambda value: value.strftime("%d/%m/%Y")
+    elif cadence_key.startswith("mens"):
+        frame["Início"] = frame["Data"].dt.to_period("M").dt.start_time
+        label = lambda value: value.strftime("%m/%Y")
+    else:
+        frame["Início"] = frame["Data"] - pd.to_timedelta(frame["Data"].dt.day_of_week, unit="D")
+        label = lambda value: f"{value:%d/%m}–{value + pd.Timedelta(days=6):%d/%m}"
+
+    grouped = frame.groupby("Início", as_index=False).agg(
+        Rotas=("_route_key", "nunique"),
+        Entregas=("Entregas", "sum"),
+        **{
+            "Peso transportado (t)": ("Peso Carga", lambda values: values.sum() / 1000.0),
+            "KM": ("KM Rodados", "sum"),
+            "Horas trabalhadas": ("Horas Trabalhadas", "sum"),
+        },
+    ).sort_values("Início")
+    grouped["Entregas por hora"] = grouped["Entregas"].div(
+        grouped["Horas trabalhadas"].replace(0, pd.NA)
+    ).fillna(0.0)
+    grouped["Toneladas por hora"] = grouped["Peso transportado (t)"].div(
+        grouped["Horas trabalhadas"].replace(0, pd.NA)
+    ).fillna(0.0)
+    grouped["Período"] = grouped["Início"].map(label)
+    for column in ["Peso transportado (t)", "KM", "Horas trabalhadas", "Entregas por hora", "Toneladas por hora"]:
+        grouped[column] = pd.to_numeric(grouped[column], errors="coerce").fillna(0.0).round(2)
+    return grouped[output_columns]
+
+
 def _render_route_driver_ranking_table(rows: list[dict] | pd.DataFrame) -> None:
     _render_route_ranking_indicator_table(rows, entity_column="Motorista", entity_label="motoristas")
 
@@ -18163,6 +18229,120 @@ def render_rotas() -> None:
                             "Quantidade de rotas": st.column_config.NumberColumn("Nº de rotas", format="%d"),
                         },
                     )
+            st.markdown("#### Evolução de desempenho dos colaboradores")
+            performance_source = pd.DataFrame(data.get("tempos_rotas") or [])
+            people: list[str] = []
+            for person_column in ("Motorista", "Ajudante"):
+                if person_column in performance_source.columns:
+                    people.extend(
+                        clean_text(value).strip()
+                        for value in performance_source[person_column].tolist()
+                        if clean_text(value).strip()
+                    )
+            people = sorted(set(people), key=str.casefold)
+            selector_col, cadence_col, metric_col = st.columns([1.4, 0.8, 1.2])
+            with selector_col:
+                selected_person = st.selectbox(
+                    "Colaborador",
+                    ["Todos os colaboradores", *people],
+                    key="routes_staff_performance_person_v1",
+                )
+            with cadence_col:
+                selected_cadence = st.selectbox(
+                    "Agrupar por",
+                    ["Semanal", "Mensal", "Diário"],
+                    key="routes_staff_performance_cadence_v1",
+                )
+            metric_options = [
+                "Entregas por hora", "Toneladas por hora", "Rotas", "Entregas",
+                "Peso transportado (t)", "KM", "Horas trabalhadas",
+            ]
+            with metric_col:
+                selected_metric = st.selectbox(
+                    "Indicador do gráfico",
+                    metric_options,
+                    key="routes_staff_performance_metric_v1",
+                )
+            performance = _route_collaborator_performance_frame(
+                performance_source,
+                collaborator="" if selected_person == "Todos os colaboradores" else selected_person,
+                cadence=selected_cadence,
+            )
+            if performance.empty:
+                st.info("Não há jornadas concluídas para montar este gráfico com os filtros selecionados.")
+            else:
+                total_routes = int(performance["Rotas"].sum())
+                total_deliveries = float(performance["Entregas"].sum())
+                total_weight = float(performance["Peso transportado (t)"].sum())
+                total_hours = float(performance["Horas trabalhadas"].sum())
+                deliveries_hour = total_deliveries / total_hours if total_hours else 0.0
+                kpi_columns = st.columns(5)
+                for column, (label, value) in zip(
+                    kpi_columns,
+                    [
+                        ("Rotas", fmt_num(total_routes, 0)),
+                        ("Entregas", fmt_num(total_deliveries, 0)),
+                        ("Peso", f"{fmt_num(total_weight, 2)} t"),
+                        ("Horas trabalhadas", f"{fmt_num(total_hours, 2)} h"),
+                        ("Entregas por hora", fmt_num(deliveries_hour, 2)),
+                    ],
+                ):
+                    column.metric(label, value)
+
+                metric_style = {
+                    "Entregas por hora": ("ent/h", 2, "#0F766E"),
+                    "Toneladas por hora": ("t/h", 2, "#7C3AED"),
+                    "Rotas": ("rotas", 0, "#2563EB"),
+                    "Entregas": ("entregas", 0, "#172554"),
+                    "Peso transportado (t)": ("t", 2, "#7C3AED"),
+                    "KM": ("km", 1, "#D97706"),
+                    "Horas trabalhadas": ("h", 2, "#DC2626"),
+                }
+                unit, decimals, chart_color = metric_style[selected_metric]
+                values = pd.to_numeric(performance[selected_metric], errors="coerce").fillna(0.0)
+                rgb = tuple(int(chart_color[index:index + 2], 16) for index in (1, 3, 5))
+                fig = go.Figure()
+                fig.add_trace(
+                    go.Scatter(
+                        x=performance["Período"],
+                        y=values,
+                        mode="lines+markers",
+                        line={"color": chart_color, "width": 3},
+                        marker={"size": 9, "color": chart_color, "line": {"color": "white", "width": 2}},
+                        fill="tozeroy",
+                        fillcolor=f"rgba{rgb + (0.10,)}",
+                        text=[f"{value:,.{decimals}f} {unit}" for value in values],
+                        hovertemplate="<b>%{x}</b><br>%{text}<extra></extra>",
+                        name=selected_metric,
+                    )
+                )
+                average_value = float(values.mean()) if len(values) else 0.0
+                fig.add_hline(
+                    y=average_value,
+                    line_dash="dash",
+                    line_color="#64748B",
+                    annotation_text=f"Média: {fmt_num(average_value, decimals)} {unit}",
+                    annotation_position="top left",
+                )
+                scope_label = "Todos os colaboradores" if selected_person == "Todos os colaboradores" else selected_person
+                fig.update_layout(title=f"{selected_metric} · {scope_label}", hovermode="x unified")
+                fig.update_xaxes(title=None)
+                fig.update_yaxes(title=unit)
+                st.plotly_chart(
+                    apply_theme(fig, height=380, margin={"l": 35, "r": 25, "t": 65, "b": 45}),
+                    width="stretch",
+                    config=PLOTLY_CONFIG,
+                )
+                with st.expander("Ver números usados no gráfico"):
+                    st.dataframe(
+                        performance.drop(columns=["Início"]),
+                        width="stretch",
+                        hide_index=True,
+                    )
+                st.caption(
+                    "Na visão total, cada rota é contada uma única vez. Ao selecionar uma pessoa, entram somente "
+                    "as rotas em que ela aparece como motorista ou ajudante."
+                )
             _render_route_ranking_indicator_table(
                 data.get("ranking_colaboradores") or [], entity_column="Colaborador", entity_label="colaboradores"
             )
