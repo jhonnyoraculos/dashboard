@@ -166,17 +166,53 @@ class RoutesDashboardTests(unittest.TestCase):
             margin_percent=10,
             include_hotels=False,
             freighter_trip_days=1.5,
+            freighter_daily_rate_override=800,
+            freighter_excess_km_rate=5,
         )
 
         self.assertTrue(reference["is_freighter"])
         self.assertEqual(reference["freighter_daily_rate"], 750)
         self.assertEqual(reference["rate_per_km"], 0)
         self.assertEqual(quote["freighter_days"], 1.5)
-        self.assertEqual(quote["freighter_cost"], 1_125)
-        self.assertEqual(quote["vehicle_component"], 1_125)
+        self.assertEqual(quote["freighter_daily_rate"], 800)
+        self.assertEqual(quote["freighter_daily_cost"], 1_200)
+        self.assertEqual(quote["freighter_excess_km"], 210)
+        self.assertEqual(quote["freighter_excess_cost"], 1_050)
+        self.assertEqual(quote["freighter_cost"], 2_250)
+        self.assertEqual(quote["vehicle_component"], 2_250)
         self.assertEqual(quote["distance_component"], 0)
-        self.assertEqual(quote["estimated_cost"], 1_125)
-        self.assertEqual(quote["suggested_freight"], 1_237.5)
+        self.assertEqual(quote["estimated_cost"], 2_250)
+        self.assertEqual(quote["suggested_freight"], 2_475)
+
+    def test_plate_comparison_uses_same_scenario_and_each_vehicle_rule(self):
+        rows_by_plate = {
+            "FRT1A11": {
+                "categoria": "Freteiro", "diaria": 750, "dias_trabalhados": 2,
+                "gasto_diarias": 1_500, "km_total": 0,
+            },
+            "TRP1A11": {
+                "categoria": "Transporte", "total": 600, "salario_transporte": 0,
+                "km_total": 100, "dias_servico": 1,
+            },
+        }
+        comparison = dashboard._freight_plate_comparison(
+            ["FRT1A11", "TRP1A11"],
+            rows_by_plate,
+            {"rate_per_km": 8, "hotel_daily_rate": 0, "rate_per_employee_hour": 0},
+            quote_inputs={
+                "weight_kg": 0, "distance_km": 330, "employees": 2,
+                "employee_hourly_rate": 0, "margin_percent": 0, "include_hotels": False,
+            },
+            average_trip_days=1.5,
+            excess_km_rate=5,
+            selected_plate="FRT1A11",
+            selected_daily_rate=800,
+        ).set_index("Placa")
+
+        self.assertEqual(comparison.loc["FRT1A11", "Custo do veículo"], 2_250)
+        self.assertEqual(comparison.loc["TRP1A11", "Custo do veículo"], 1_980)
+        self.assertEqual(comparison.loc["TRP1A11", "Diferença para o menor"], 0)
+        self.assertEqual(comparison.loc["FRT1A11", "Diferença para o menor"], 270)
 
     def test_fleet_cost_over_revenue_uses_aggregated_plate_totals(self):
         financial = pd.DataFrame(

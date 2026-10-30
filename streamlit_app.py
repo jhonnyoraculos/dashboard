@@ -80,7 +80,7 @@ MUTED = "#6B7280"
 CARD_BORDER = "#c2d2f3"
 LOGO_PATH = Path(__file__).parent / "static" / "logo-jr.png"
 CURRENT_YEAR = date.today().year
-APP_VERSION = "global-groq-assistant-v52"
+APP_VERSION = "global-groq-assistant-v53"
 LOGGER = logging.getLogger("jr_dashboard.streamlit")
 RANK_ROUTES_ENABLED = True
 ROUTE_CACHE_TTL_SECONDS = max(int(os.environ.get("JR_ROUTE_CACHE_TTL_SECONDS", "180") or 180), 30)
@@ -94,6 +94,8 @@ FREIGHT_HOTEL_DAY_HOURS = 10.0
 FREIGHT_WORKDAY_HOURS = 8.0
 FREIGHT_REFERENCE_CREW_SIZE = 2.0
 FREIGHT_FLEET_AVERAGE_LABEL = "Média da frota (sem placa)"
+FREIGHT_FREIGHTER_INCLUDED_KM = 120.0
+FREIGHT_FREIGHTER_EXCESS_RATE = 4.60
 CITIES_COORDINATES = {
     "ARCOS": (-20.2863, -45.5373),
     "BELO HORIZONTE": (-19.9167, -43.9345),
@@ -4163,6 +4165,8 @@ def _calculate_freight_quote(
     margin_percent: float,
     include_hotels: bool,
     freighter_trip_days: float | None = None,
+    freighter_daily_rate_override: float | None = None,
+    freighter_excess_km_rate: float = FREIGHT_FREIGHTER_EXCESS_RATE,
 ) -> dict[str, float]:
     employee_count = max(int(employees), 1)
     unload_hours = max(weight_kg, 0.0) / FREIGHT_UNLOAD_KG_PER_HOUR
@@ -4176,15 +4180,26 @@ def _calculate_freight_quote(
     travel_labor_cost = travel_employee_hours * hourly_rate
     team_cost = unload_labor_cost + travel_labor_cost
     is_freighter = bool(reference.get("is_freighter"))
-    freighter_daily_rate = max(float(reference.get("freighter_daily_rate") or 0.0), 0.0)
+    reference_daily_rate = max(float(reference.get("freighter_daily_rate") or 0.0), 0.0)
+    freighter_daily_rate = max(
+        float(freighter_daily_rate_override), 0.0
+    ) if freighter_daily_rate_override is not None else reference_daily_rate
     if is_freighter:
         estimated_days = max(float(math.ceil(total_operation_hours / 24.0)), 1.0)
         freighter_days = max(float(freighter_trip_days or estimated_days), 1.0)
-        freighter_cost = freighter_days * freighter_daily_rate
+        freighter_daily_cost = freighter_days * freighter_daily_rate
+        freighter_excess_km = max(float(distance_km) - FREIGHT_FREIGHTER_INCLUDED_KM, 0.0)
+        applied_excess_rate = max(float(freighter_excess_km_rate), 0.0)
+        freighter_excess_cost = freighter_excess_km * applied_excess_rate
+        freighter_cost = freighter_daily_cost + freighter_excess_cost
         distance_component = 0.0
         vehicle_component = freighter_cost
     else:
         freighter_days = 0.0
+        freighter_daily_cost = 0.0
+        freighter_excess_km = 0.0
+        applied_excess_rate = 0.0
+        freighter_excess_cost = 0.0
         freighter_cost = 0.0
         distance_component = max(distance_km, 0.0) * float(reference.get("rate_per_km") or 0.0)
         vehicle_component = distance_component
@@ -4206,6 +4221,11 @@ def _calculate_freight_quote(
         "vehicle_component": vehicle_component,
         "freighter_days": freighter_days,
         "freighter_daily_rate": freighter_daily_rate,
+        "freighter_daily_cost": freighter_daily_cost,
+        "freighter_included_km": FREIGHT_FREIGHTER_INCLUDED_KM,
+        "freighter_excess_km": freighter_excess_km,
+        "freighter_excess_km_rate": applied_excess_rate,
+        "freighter_excess_cost": freighter_excess_cost,
         "freighter_cost": freighter_cost,
         "hotel_days": float(hotel_days),
         "hotel_daily_rate": hotel_daily_rate,
@@ -4218,6 +4238,75 @@ def _calculate_freight_quote(
         "margin_value": margin_value,
         "suggested_freight": suggested_freight,
     }
+
+
+def _freight_plate_comparison(
+    plates: list[str],
+    rows_by_plate: dict[str, dict],
+    general_reference: dict[str, float],
+    *,
+    quote_inputs: dict[str, object],
+    average_trip_days: float,
+    excess_km_rate: float,
+    selected_plate: str | None = None,
+    selected_daily_rate: float | None = None,
+) -> pd.DataFrame:
+    """Compara placas no mesmo cenário sem misturar as regras de frota própria e Freteiro."""
+    rows: list[dict[str, object]] = []
+    for plate in dict.fromkeys(str(value).strip() for value in plates if str(value).strip()):
+        reference = _freight_plate_reference(rows_by_plate.get(plate, {}), general_reference)
+        is_freighter = bool(reference.get("is_freighter"))
+        if not is_freighter and reference.get("km_rate_source") != "placa":
+            reference["rate_per_km"] = 0.0
+            reference["direct_rate_per_km"] = 0.0
+        daily_override = (
+            float(selected_daily_rate)
+            if is_freighter and plate == selected_plate and selected_daily_rate is not None
+            else None
+        )
+        quote = _calculate_freight_quote(
+            reference,
+            weight_kg=float(quote_inputs.get("weight_kg") or 0.0),
+            distance_km=float(quote_inputs.get("distance_km") or 0.0),
+            employees=int(quote_inputs.get("employees") or 1),
+            employee_hourly_rate=float(quote_inputs.get("employee_hourly_rate") or 0.0),
+            margin_percent=float(quote_inputs.get("margin_percent") or 0.0),
+            include_hotels=bool(quote_inputs.get("include_hotels")),
+            freighter_trip_days=average_trip_days if is_freighter else None,
+            freighter_daily_rate_override=daily_override,
+            freighter_excess_km_rate=excess_km_rate,
+        )
+        if is_freighter:
+            basis = (
+                f"{fmt_brl(quote['freighter_daily_rate'])}/dia + "
+                f"{fmt_brl(quote['freighter_excess_km_rate'])}/km após 120 km"
+            )
+        elif float(reference.get("direct_rate_per_km") or 0.0) > 0:
+            basis = f"{fmt_brl(reference.get('direct_rate_per_km'))}/km"
+        else:
+            basis = "Sem custo por KM próprio"
+        rows.append(
+            {
+                "Placa": plate,
+                "Categoria": reference.get("category") or "Transporte",
+                "Base do veículo": basis,
+                "Dias cobrados": quote["freighter_days"] if is_freighter else pd.NA,
+                "Diária": quote["freighter_daily_rate"] if is_freighter else pd.NA,
+                "KM excedentes": quote["freighter_excess_km"] if is_freighter else pd.NA,
+                "Custo do excedente": quote["freighter_excess_cost"] if is_freighter else pd.NA,
+                "Custo do veículo": quote["vehicle_component"],
+                "Equipe": quote["team_cost"],
+                "Hotel": quote["hotel_cost"],
+                "Custo estimado": quote["estimated_cost"],
+                "Frete sugerido": quote["suggested_freight"],
+            }
+        )
+    frame = pd.DataFrame(rows)
+    if frame.empty:
+        return frame
+    frame = frame.sort_values(["Frete sugerido", "Placa"], ascending=[True, True]).reset_index(drop=True)
+    frame["Diferença para o menor"] = frame["Frete sugerido"] - float(frame["Frete sugerido"].min())
+    return frame
 
 
 @st.cache_data(ttl=600, show_spinner=False)
@@ -7721,6 +7810,32 @@ def render_calculadora_frete() -> None:
                     width="stretch",
                     key="frete_refresh",
                 )
+            if is_freighter:
+                freighter_cols = st.columns(2)
+                with freighter_cols[0]:
+                    freighter_daily_rate_override = st.number_input(
+                        "Diária do freteiro (R$) — somente nesta simulação",
+                        min_value=0.0,
+                        value=float(plate_reference.get("freighter_daily_rate") or 0.0),
+                        step=10.0,
+                        format="%.2f",
+                        key=f"frete_daily_override_{selected_plate}",
+                    )
+                with freighter_cols[1]:
+                    freighter_excess_km_rate = st.number_input(
+                        "Valor por KM acima de 120 km (R$/km)",
+                        min_value=0.0,
+                        value=FREIGHT_FREIGHTER_EXCESS_RATE,
+                        step=0.10,
+                        format="%.2f",
+                        key=f"frete_excess_rate_{selected_plate}",
+                    )
+                st.caption(
+                    "A diária cobre os primeiros 120 km. As alterações valem apenas para esta simulação e não mudam o cadastro da placa."
+                )
+            else:
+                freighter_daily_rate_override = None
+                freighter_excess_km_rate = FREIGHT_FREIGHTER_EXCESS_RATE
             st.caption("O resultado usa sempre os valores atuais. Confirme a digitação com Enter ou saia do campo.")
 
         st.session_state.pop("frete_quote_inputs_v2", None)
@@ -7732,10 +7847,14 @@ def render_calculadora_frete() -> None:
             "employee_hourly_rate": float(employee_hourly_rate),
             "margin_percent": float(margin_percent),
             "include_hotels": bool(include_hotels),
+            "freighter_daily_rate_override": (
+                float(freighter_daily_rate_override) if is_freighter else None
+            ),
+            "freighter_excess_km_rate": float(freighter_excess_km_rate),
         }
         quote = _calculate_freight_quote(plate_reference, **quote_inputs)
         vehicle_cost_label = (
-            f"Freteiro — {fmt_num(quote['freighter_days'], 2)} diária(s)"
+            f"Freteiro — diária + {fmt_num(quote['freighter_excess_km'], 1)} km excedentes"
             if is_freighter
             else "Custo do caminhão na distância"
         )
@@ -7743,7 +7862,11 @@ def render_calculadora_frete() -> None:
         vehicle_memory = (
             f"Freteiro: {h(fmt_num(quote['freighter_days'], 2))} diária(s) × "
             f"{h(fmt_brl(quote['freighter_daily_rate'], compact_threshold=float('inf')))} = "
-            f"{h(fmt_brl(quote['freighter_cost'], compact_threshold=float('inf')))}."
+            f"{h(fmt_brl(quote['freighter_daily_cost'], compact_threshold=float('inf')))}; mais "
+            f"{h(fmt_num(quote['freighter_excess_km'], 1))} km acima de 120 km × "
+            f"{h(fmt_brl(quote['freighter_excess_km_rate'], compact_threshold=float('inf')))} = "
+            f"{h(fmt_brl(quote['freighter_excess_cost'], compact_threshold=float('inf')))}. "
+            f"Total do Freteiro: {h(fmt_brl(quote['freighter_cost'], compact_threshold=float('inf')))}."
             if is_freighter
             else f"Caminhão: {h(fmt_brl(quote['distance_component'], compact_threshold=float('inf')))} pela distância."
         )
@@ -7824,7 +7947,7 @@ def render_calculadora_frete() -> None:
             st.markdown(
                 "**Custos separados:** "
                 + (
-                    "o custo do freteiro é a diária cadastrada × os dias estimados da viagem. "
+                    "o custo do freteiro é a diária informada × os dias estimados, mais os KM que ultrapassarem 120 km × a tarifa excedente. "
                     if is_freighter
                     else "o custo do caminhão é a distância × o custo direto por km. "
                 )
@@ -7833,7 +7956,8 @@ def render_calculadora_frete() -> None:
             )
             vehicle_basis_explanation = (
                 f"O custo do freteiro usa {plate_reference['freighter_daily_rate_source']}: "
-                f"{fmt_brl(plate_reference.get('freighter_daily_rate'))} por dia estimado de viagem."
+                f"{fmt_brl(quote['freighter_daily_rate'])} por dia estimado de viagem + "
+                f"{fmt_brl(quote['freighter_excess_km_rate'])}/km acima de 120 km."
                 if is_freighter
                 else (
                     f"O custo por km usa {plate_reference['km_rate_source']} e reúne combustível, "
@@ -17027,7 +17151,8 @@ def _render_route_freight_calculator(
     elif is_freighter:
         st.info(
             f"Freteiro: diária de {fmt_brl(plate_reference.get('freighter_daily_rate'))} × "
-            f"{_format_days_hours(profile.get('average_trip_days'))} de duração média da rota. Não será usado custo por KM."
+            f"{_format_days_hours(profile.get('average_trip_days'))} de duração média da rota, mais os KM que "
+            "ultrapassarem 120 km. Os dois valores podem ser alterados abaixo somente para esta simulação."
         )
 
     route_token = hashlib.sha256(str(selected_route).encode("utf-8")).hexdigest()[:10]
@@ -17096,6 +17221,41 @@ def _render_route_freight_calculator(
                 ),
             )
 
+    with st.container(border=True):
+        st.markdown("#### Regra dos freteiros nesta simulação")
+        rule_cols = st.columns(2)
+        with rule_cols[0]:
+            freighter_excess_km_rate = st.number_input(
+                "Valor por KM acima de 120 km (R$/km)",
+                min_value=0.0,
+                value=FREIGHT_FREIGHTER_EXCESS_RATE,
+                step=0.10,
+                format="%.2f",
+                key=f"routes_freight_excess_rate_{route_token}",
+                help="A diária cobre os primeiros 120 km. O valor é aplicado somente aos quilômetros excedentes e não altera o cadastro.",
+            )
+        with rule_cols[1]:
+            if is_freighter:
+                freighter_daily_rate_override = st.number_input(
+                    "Diária do freteiro (R$) — somente nesta simulação",
+                    min_value=0.0,
+                    value=float(plate_reference.get("freighter_daily_rate") or 0.0),
+                    step=10.0,
+                    format="%.2f",
+                    key=f"routes_freight_daily_{route_token}_{plate_token}",
+                    help="Você pode testar outro valor sem alterar a diária cadastrada da placa.",
+                )
+            else:
+                freighter_daily_rate_override = None
+                st.caption(
+                    "A placa selecionada é da frota própria. A diária será exibida aqui ao escolher um Freteiro; "
+                    "o valor por KM excedente continua disponível para a comparação entre placas."
+                )
+        st.caption(
+            "Regra: custo do Freteiro = diária × dias médios da rota + (KM da viagem − 120 km) × valor do KM excedente. "
+            "Valores alterados aqui valem somente para esta simulação."
+        )
+
     if not has_hotel:
         st.info(
             "Esta rota não possui hotel no histórico. Mesmo que a operação ultrapasse 10 horas, a simulação "
@@ -17119,11 +17279,15 @@ def _render_route_freight_calculator(
             if is_freighter
             else None
         ),
+        "freighter_daily_rate_override": (
+            float(freighter_daily_rate_override) if is_freighter else None
+        ),
+        "freighter_excess_km_rate": float(freighter_excess_km_rate),
     }
     quote = _calculate_freight_quote(plate_reference, **quote_inputs)
     result_plate = selected_plate or FREIGHT_FLEET_AVERAGE_LABEL
     vehicle_cost_label = (
-        f"Freteiro — {fmt_num(quote['freighter_days'], 2)} diária(s)"
+        f"Freteiro — diária + {fmt_num(quote['freighter_excess_km'], 1)} km excedentes"
         if is_freighter
         else "Caminhão na distância"
     )
@@ -17157,7 +17321,9 @@ def _render_route_freight_calculator(
         vehicle_memory = (
             f"**Freteiro:** {fmt_num(quote['freighter_days'], 2)} diária(s) × "
             f"{fmt_brl(quote['freighter_daily_rate'], compact_threshold=float('inf'))} = "
-            f"**{fmt_brl(quote['freighter_cost'])}**."
+            f"{fmt_brl(quote['freighter_daily_cost'])}; mais {fmt_num(quote['freighter_excess_km'], 1)} km "
+            f"acima de 120 km × {fmt_brl(quote['freighter_excess_km_rate'], compact_threshold=float('inf'))}/km = "
+            f"{fmt_brl(quote['freighter_excess_cost'])}. **Total do Freteiro: {fmt_brl(quote['freighter_cost'])}**."
             if is_freighter
             else (
                 f"**Caminhão:** {fmt_num(distance_km, 1)} km × "
@@ -17178,6 +17344,73 @@ def _render_route_freight_calculator(
             f"{('O Freteiro usa a diária da placa e a duração média histórica da rota.' if is_freighter else 'O custo por KM usa ' + str(plate_reference['km_rate_source']) + '.')} Hotel só é permitido quando há hospedagem "
             "historicamente vinculada à rota selecionada. Menos de 10 horas não gera diária."
         )
+
+    with st.container(border=True):
+        st.markdown("### Comparar placas nesta rota")
+        st.caption(
+            "Todas as placas usam o mesmo peso, distância, equipe, hotel e margem informados acima. "
+            "Frota própria usa custo por KM; Freteiro usa diária e KM excedente acima de 120 km."
+        )
+        default_comparison = [selected_plate] if selected_plate in rows_by_plate else []
+        comparison_plates = st.multiselect(
+            "Placas para comparar",
+            sorted(rows_by_plate),
+            default=default_comparison,
+            key=f"routes_freight_compare_{route_token}",
+            help="Escolha duas ou mais placas para comparar o custo no mesmo cenário.",
+        )
+        if len(comparison_plates) < 2:
+            st.info("Selecione pelo menos duas placas para gerar a comparação.")
+        else:
+            comparison = _freight_plate_comparison(
+                comparison_plates,
+                rows_by_plate,
+                general_reference,
+                quote_inputs=quote_inputs,
+                average_trip_days=float(profile.get("average_trip_days") or 0.0),
+                excess_km_rate=float(freighter_excess_km_rate),
+                selected_plate=selected_plate,
+                selected_daily_rate=(
+                    float(freighter_daily_rate_override) if is_freighter else None
+                ),
+            )
+            if comparison.empty:
+                st.info("Não foi possível calcular as placas selecionadas.")
+            else:
+                best_plate = str(comparison.iloc[0]["Placa"])
+                best_price = float(comparison.iloc[0]["Frete sugerido"])
+                st.success(
+                    f"Menor frete sugerido neste cenário: {best_plate} — {fmt_brl(best_price)}."
+                )
+                comparison_chart = metric_bar_chart(
+                    comparison["Placa"].tolist(),
+                    comparison["Frete sugerido"].tolist(),
+                    unit="R$",
+                    horizontal=True,
+                    color="#0F766E",
+                )
+                comparison_chart.update_traces(
+                    text=[fmt_brl(value) for value in comparison["Frete sugerido"]],
+                    hovertemplate="<b>%{y}</b><br>Frete sugerido: R$ %{x:,.2f}<extra></extra>",
+                )
+                st.plotly_chart(comparison_chart, width="stretch", config=PLOTLY_CONFIG)
+                st.dataframe(
+                    comparison,
+                    width="stretch",
+                    hide_index=True,
+                    column_config={
+                        "Dias cobrados": st.column_config.NumberColumn(format="%.2f"),
+                        "Diária": _money_col("Diária"),
+                        "KM excedentes": st.column_config.NumberColumn(format="%.1f km"),
+                        "Custo do excedente": _money_col("Custo excedente"),
+                        "Custo do veículo": _money_col("Custo veículo"),
+                        "Equipe": _money_col("Equipe"),
+                        "Hotel": _money_col("Hotel"),
+                        "Custo estimado": _money_col("Custo estimado"),
+                        "Frete sugerido": _money_col("Frete sugerido"),
+                        "Diferença para o menor": _money_col("Diferença para o menor"),
+                    },
+                )
 
 
 def _route_unprofitable_trips(financial: pd.DataFrame) -> pd.DataFrame:
