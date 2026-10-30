@@ -113,23 +113,23 @@ KM nao e usado: a calculadora aplica a diaria cadastrada da placa aos dias da
 viagem, sempre em dias inteiros: qualquer fracao de dia e arredondada para a
 proxima diaria completa. A diaria cobre os primeiros 120 km; a distancia excedente usa a tarifa
 padrao de R$ 4,60 por km. A diaria e a tarifa excedente podem ser alteradas na
-simulacao sem modificar o cadastro. Para Freteiro, a diaria de um ajudante e
-somada pelos mesmos dias da viagem: o padrao e R$ 32 quando a descricao da rota
+simulacao sem modificar o cadastro. A diaria de cada ajudante e somada pelos
+mesmos dias inteiros da viagem: o padrao e R$ 32 quando a descricao da rota
 contem Divinopolis ou Carmo do Cajuru, inclusive prefixos e variacoes como
 `D+0,5 DIVINOPOLIS`; nas demais rotas, o padrao e R$ 100. Esse valor tambem pode
 ser alterado somente para a simulacao. A viagem usa a velocidade media de
 80 km/h, e o peso e convertido em horas de descarga pela produtividade media de
-350 kg por hora. O tempo da viagem e o tempo da descarga sao somados e
-multiplicados pela quantidade de funcionarios e pelo salario medio por hora,
-que pode ser ajustado na simulacao. O resultado separa o custo estimado do
-valor sugerido com a margem informada.
+350 kg por hora. O resultado separa o custo estimado do valor sugerido com a
+margem informada.
 
-Na frota propria, a equipe minima e formada por um motorista e um ajudante. O
-mesmo valor por funcionario/hora e aplicado separadamente ao motorista e a cada
-ajudante durante todo o tempo de viagem mais descarga; os dois custos aparecem
-separados na memoria, nos cards e na comparacao. No Freteiro, motorista e
-ajudante principal seguem as regras de diaria, e o campo de equipe por hora
-representa somente pessoas adicionais.
+Salario e diaria sao componentes diferentes e nunca substituem um ao outro. A
+simulacao possui quatro valores independentes: salario/hora do motorista,
+salario/hora do ajudante, diaria do motorista e diaria do ajudante. Na frota
+propria, entram os quatro componentes: os salarios usam o tempo de viagem mais
+descarga, enquanto as diarias usam os dias inteiros da rota. No Freteiro, a
+diaria contratada do veiculo ja cobre o motorista; por isso, alem do contrato do
+Freteiro, entram separadamente somente o salario/hora e a diaria de cada
+ajudante. Todos os valores podem ser alterados apenas para a simulacao.
 
 Os resultados usam diretamente os valores atuais dos campos; a calculadora nao
 mantem uma simulacao anterior depois que peso, distancia ou equipe sao
@@ -143,9 +143,9 @@ hotel e calculado pelo tempo total da operacao: menos de 10 horas nao gera
 diaria; de 10 ate menos de 20 horas gera uma diaria; de 20 ate menos de 30
 horas gera duas diarias, e assim por diante.
 
-O resumo separa o custo direto do caminhao por km, o custo da equipe e o hotel.
-O salario da equipe e calculado pelo tempo de viagem e descarga, quantidade de
-funcionarios e valor por hora. O hotel nao altera o custo por km da placa.
+O resumo separa o custo direto do caminhao por km, o salario do motorista, o
+salario dos ajudantes, as diarias da equipe e o hotel. O hotel nao altera o
+custo por km da placa.
 
 A calculadora tambem esta disponivel dentro da plataforma de Rotas. Nesse modo,
 o usuario escolhe uma rota concluida e um caminhao; peso e KM sao preenchidos

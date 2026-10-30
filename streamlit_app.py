@@ -80,7 +80,7 @@ MUTED = "#6B7280"
 CARD_BORDER = "#c2d2f3"
 LOGO_PATH = Path(__file__).parent / "static" / "logo-jr.png"
 CURRENT_YEAR = date.today().year
-APP_VERSION = "global-groq-assistant-v57"
+APP_VERSION = "global-groq-assistant-v58"
 LOGGER = logging.getLogger("jr_dashboard.streamlit")
 RANK_ROUTES_ENABLED = True
 ROUTE_CACHE_TTL_SECONDS = max(int(os.environ.get("JR_ROUTE_CACHE_TTL_SECONDS", "180") or 180), 30)
@@ -4183,6 +4183,10 @@ def _calculate_freight_quote(
     freighter_daily_rate_override: float | None = None,
     freighter_excess_km_rate: float = FREIGHT_FREIGHTER_EXCESS_RATE,
     assistant_daily_rate: float = 0.0,
+    driver_daily_rate: float = 0.0,
+    own_trip_days: float | None = None,
+    driver_hourly_rate: float | None = None,
+    helper_hourly_rate: float | None = None,
 ) -> dict[str, float]:
     employee_count = max(int(employees), 1)
     unload_hours = max(weight_kg, 0.0) / FREIGHT_UNLOAD_KG_PER_HOUR
@@ -4191,22 +4195,25 @@ def _calculate_freight_quote(
     unload_employee_hours = unload_hours * employee_count
     travel_employee_hours = travel_hours * employee_count
     employee_hours = total_operation_hours * employee_count
-    hourly_rate = max(employee_hourly_rate, 0.0)
+    hourly_rate = max(float(employee_hourly_rate), 0.0)
+    applied_driver_hourly_rate = (
+        hourly_rate if driver_hourly_rate is None else max(float(driver_hourly_rate), 0.0)
+    )
+    applied_helper_hourly_rate = (
+        hourly_rate if helper_hourly_rate is None else max(float(helper_hourly_rate), 0.0)
+    )
     driver_employee_hours = total_operation_hours
     helper_count = max(employee_count - 1, 0)
     helper_employee_hours = total_operation_hours * helper_count
-    driver_labor_cost = driver_employee_hours * hourly_rate
-    helper_labor_cost = helper_employee_hours * hourly_rate
-    unload_labor_cost = unload_employee_hours * hourly_rate
-    travel_labor_cost = travel_employee_hours * hourly_rate
-    team_cost = driver_labor_cost + helper_labor_cost
     is_freighter = bool(reference.get("is_freighter"))
+    estimated_days = max(float(math.ceil(total_operation_hours / 24.0)), 1.0)
+    applied_assistant_daily_rate = max(float(assistant_daily_rate), 0.0)
+    applied_driver_daily_rate = max(float(driver_daily_rate), 0.0)
     reference_daily_rate = max(float(reference.get("freighter_daily_rate") or 0.0), 0.0)
     freighter_daily_rate = max(
         float(freighter_daily_rate_override), 0.0
     ) if freighter_daily_rate_override is not None else reference_daily_rate
     if is_freighter:
-        estimated_days = max(float(math.ceil(total_operation_hours / 24.0)), 1.0)
         route_days = float(freighter_trip_days or estimated_days)
         freighter_days = float(max(math.ceil(route_days), 1))
         freighter_daily_cost = freighter_days * freighter_daily_rate
@@ -4214,9 +4221,12 @@ def _calculate_freight_quote(
         applied_excess_rate = max(float(freighter_excess_km_rate), 0.0)
         freighter_excess_cost = freighter_excess_km * applied_excess_rate
         freighter_cost = freighter_daily_cost + freighter_excess_cost
-        applied_assistant_daily_rate = max(float(assistant_daily_rate), 0.0)
         assistant_days = freighter_days
-        assistant_cost = assistant_days * applied_assistant_daily_rate
+        own_days = 0.0
+        driver_salary_cost = 0.0
+        helper_salary_cost = helper_employee_hours * applied_helper_hourly_rate
+        driver_daily_cost = 0.0
+        helper_daily_cost = assistant_days * applied_assistant_daily_rate * helper_count
         distance_component = 0.0
         vehicle_component = freighter_cost
     else:
@@ -4226,11 +4236,25 @@ def _calculate_freight_quote(
         applied_excess_rate = 0.0
         freighter_excess_cost = 0.0
         freighter_cost = 0.0
-        applied_assistant_daily_rate = 0.0
-        assistant_days = 0.0
-        assistant_cost = 0.0
+        route_days = float(own_trip_days or estimated_days)
+        own_days = float(max(math.ceil(route_days), 1))
+        assistant_days = own_days
+        driver_salary_cost = driver_employee_hours * applied_driver_hourly_rate
+        helper_salary_cost = helper_employee_hours * applied_helper_hourly_rate
+        driver_daily_cost = own_days * applied_driver_daily_rate
+        helper_daily_cost = own_days * applied_assistant_daily_rate * helper_count
         distance_component = max(distance_km, 0.0) * float(reference.get("rate_per_km") or 0.0)
         vehicle_component = distance_component
+    unload_labor_cost = unload_hours * (
+        (0.0 if is_freighter else applied_driver_hourly_rate)
+        + (helper_count * applied_helper_hourly_rate)
+    )
+    travel_labor_cost = travel_hours * (
+        (0.0 if is_freighter else applied_driver_hourly_rate)
+        + (helper_count * applied_helper_hourly_rate)
+    )
+    team_cost = driver_salary_cost + helper_salary_cost
+    assistant_cost = helper_daily_cost
     hotel_daily_rate = max(float(reference.get("hotel_daily_rate") or 0.0), 0.0)
     hotel_days = (
         int(total_operation_hours // FREIGHT_HOTEL_DAY_HOURS)
@@ -4238,7 +4262,14 @@ def _calculate_freight_quote(
         else 0
     )
     hotel_cost = hotel_days * hotel_daily_rate
-    estimated_cost = vehicle_component + assistant_cost + team_cost + hotel_cost
+    estimated_cost = (
+        vehicle_component
+        + driver_salary_cost
+        + helper_salary_cost
+        + driver_daily_cost
+        + helper_daily_cost
+        + hotel_cost
+    )
     margin_value = estimated_cost * max(margin_percent, 0.0) / 100.0
     suggested_freight = estimated_cost + margin_value
     return {
@@ -4246,9 +4277,18 @@ def _calculate_freight_quote(
         "travel_labor_cost": travel_labor_cost,
         "driver_employee_hours": driver_employee_hours,
         "helper_employee_hours": helper_employee_hours,
-        "driver_labor_cost": driver_labor_cost,
-        "helper_labor_cost": helper_labor_cost,
+        "driver_labor_cost": driver_salary_cost,
+        "helper_labor_cost": helper_salary_cost,
+        "driver_salary_cost": driver_salary_cost,
+        "helper_salary_cost": helper_salary_cost,
+        "driver_daily_cost": driver_daily_cost,
+        "helper_daily_cost": helper_daily_cost,
+        "driver_hourly_rate": applied_driver_hourly_rate,
+        "helper_hourly_rate": applied_helper_hourly_rate,
         "helper_count": float(helper_count),
+        "own_days": own_days,
+        "driver_daily_rate": applied_driver_daily_rate,
+        "helper_daily_rate": applied_assistant_daily_rate,
         "team_cost": team_cost,
         "distance_component": distance_component,
         "vehicle_component": vehicle_component,
@@ -4285,6 +4325,9 @@ def _freight_plate_comparison(
     average_trip_days: float,
     excess_km_rate: float,
     assistant_daily_rate: float,
+    driver_daily_rate: float = 0.0,
+    driver_hourly_rate: float = 0.0,
+    helper_hourly_rate: float = 0.0,
     selected_plate: str | None = None,
     selected_daily_rate: float | None = None,
 ) -> pd.DataFrame:
@@ -4313,6 +4356,10 @@ def _freight_plate_comparison(
             freighter_daily_rate_override=daily_override,
             freighter_excess_km_rate=excess_km_rate,
             assistant_daily_rate=assistant_daily_rate,
+            driver_daily_rate=driver_daily_rate,
+            own_trip_days=average_trip_days if not is_freighter else None,
+            driver_hourly_rate=driver_hourly_rate,
+            helper_hourly_rate=helper_hourly_rate,
         )
         if is_freighter:
             basis = (
@@ -4336,14 +4383,18 @@ def _freight_plate_comparison(
                 "Base do veículo": basis,
                 "Base calculável": calculable,
                 "Situação da base": base_status,
-                "Dias cobrados": quote["freighter_days"] if is_freighter else pd.NA,
-                "Diária": quote["freighter_daily_rate"] if is_freighter else pd.NA,
+                "Dias cobrados": quote["freighter_days"] if is_freighter else quote["own_days"],
+                "Diária Freteiro": quote["freighter_daily_rate"] if is_freighter else pd.NA,
+                "Diária motorista": pd.NA if is_freighter else quote["driver_daily_rate"],
+                "Diária ajudante": quote["assistant_daily_rate"] if is_freighter else quote["helper_daily_rate"],
                 "KM excedentes": quote["freighter_excess_km"] if is_freighter else pd.NA,
                 "Custo do excedente": quote["freighter_excess_cost"] if is_freighter else pd.NA,
                 "Custo do veículo": quote["vehicle_component"],
-                "Motorista": pd.NA if is_freighter else quote["driver_labor_cost"],
-                "Ajudante": quote["assistant_cost"] if is_freighter else quote["helper_labor_cost"],
-                "Equipe": quote["team_cost"],
+                "Salário motorista": quote["driver_salary_cost"],
+                "Salário ajudante": quote["helper_salary_cost"],
+                "Diária motorista - custo": quote["driver_daily_cost"],
+                "Diária ajudante - custo": quote["helper_daily_cost"],
+                "Equipe - salários": quote["team_cost"],
                 "Hotel": quote["hotel_cost"],
                 "Custo estimado": quote["estimated_cost"],
                 "Frete sugerido": quote["suggested_freight"],
@@ -7829,14 +7880,14 @@ def render_calculadora_frete() -> None:
             if default_hourly_rate <= 0:
                 st.warning(
                     "A base escolhida não possui salário histórico calculável. "
-                    "Informe abaixo o salário por funcionário/hora para incluir o peso no custo."
+                    "Informe abaixo, separadamente, o salário/hora do motorista e do ajudante."
                 )
             if is_freighter:
                 daily_rate = float(plate_reference.get("freighter_daily_rate") or 0.0)
                 if daily_rate > 0:
                     st.info(
                         f"Freteiro selecionado: será usada a diária de {fmt_brl(daily_rate)} por dia estimado de viagem, "
-                        "sem cobrança por KM."
+                        "mais o valor por KM que exceder 120 km. O salário e a diária do ajudante entram separadamente."
                     )
                 else:
                     st.warning(
@@ -7852,18 +7903,14 @@ def render_calculadora_frete() -> None:
                     format="%.2f",
                     key="frete_weight_kg",
                 )
-                employees = st.number_input(
-                    "Equipe adicional na descarga" if is_freighter else "Equipe própria — motorista + ajudante(s)",
-                    min_value=1 if is_freighter else 2,
-                    max_value=20,
-                    value=2,
+                helper_count_input = st.number_input(
+                    "Quantidade de ajudantes",
+                    min_value=1,
+                    max_value=19,
+                    value=1,
                     step=1,
-                    key=f"frete_employees_{selected_plate or 'sem_placa'}",
-                    help=(
-                        "Para frota própria, a primeira pessoa é o motorista e as demais são ajudantes."
-                        if not is_freighter
-                        else "Equipe adicional por hora; motorista e ajudante principal usam as regras de diária do Freteiro."
-                    ),
+                    key=f"frete_helpers_{selected_plate or 'sem_placa'}",
+                    help="Quantidade de ajudantes além do motorista.",
                 )
             with input_cols[1]:
                 distance_km = st.number_input(
@@ -7874,15 +7921,7 @@ def render_calculadora_frete() -> None:
                     format="%.1f",
                     key="frete_distance_km",
                 )
-                employee_hourly_rate = st.number_input(
-                    "Salário por funcionário/hora (R$)",
-                    min_value=0.0,
-                    value=default_hourly_rate,
-                    step=1.0,
-                    format="%.2f",
-                    key=f"frete_hourly_rate_{selected_plate or 'sem_placa'}",
-                    help="Média calculada pelos salários do Transporte, considerando jornada de 8 horas.",
-                )
+                st.caption("A distância deve conter ida e volta.")
             with input_cols[2]:
                 margin_percent = st.number_input(
                     "Margem de segurança (%)",
@@ -7901,8 +7940,52 @@ def render_calculadora_frete() -> None:
                     width="stretch",
                     key="frete_refresh",
                 )
+            st.markdown("#### Salários e diárias da equipe")
+            team_cols = st.columns(4)
+            with team_cols[0]:
+                driver_hourly_rate = st.number_input(
+                    "Salário do motorista por hora (R$)",
+                    min_value=0.0,
+                    value=default_hourly_rate,
+                    step=1.0,
+                    format="%.2f",
+                    key=f"frete_driver_hourly_{selected_plate or 'sem_placa'}",
+                )
+            with team_cols[1]:
+                helper_hourly_rate = st.number_input(
+                    "Salário do ajudante por hora (R$)",
+                    min_value=0.0,
+                    value=default_hourly_rate,
+                    step=1.0,
+                    format="%.2f",
+                    key=f"frete_helper_hourly_{selected_plate or 'sem_placa'}",
+                )
+            with team_cols[2]:
+                driver_daily_rate = st.number_input(
+                    "Diária do motorista (R$)",
+                    min_value=0.0,
+                    value=0.0,
+                    step=10.0,
+                    format="%.2f",
+                    key=f"frete_driver_daily_{selected_plate or 'sem_placa'}",
+                    help="Adicional ao salário e válido somente nesta simulação.",
+                )
+            with team_cols[3]:
+                assistant_daily_rate = st.number_input(
+                    "Diária do ajudante (R$)",
+                    min_value=0.0,
+                    value=FREIGHT_ASSISTANT_OTHER_DAILY_RATE,
+                    step=1.0,
+                    format="%.2f",
+                    key=f"frete_assistant_daily_{selected_plate or 'sem_placa'}",
+                    help="Sem rota selecionada, o padrão é R$ 100. É adicional ao salário.",
+                )
+            st.caption(
+                "Salário e diária são separados e somados. No Freteiro, a diária contratada já cobre o motorista; "
+                "entram à parte somente o salário e a diária do(s) ajudante(s)."
+            )
             if is_freighter:
-                freighter_cols = st.columns(3)
+                freighter_cols = st.columns(2)
                 with freighter_cols[0]:
                     freighter_daily_rate_override = st.number_input(
                         "Diária do freteiro (R$) — somente nesta simulação",
@@ -7921,16 +8004,6 @@ def render_calculadora_frete() -> None:
                         format="%.2f",
                         key=f"frete_excess_rate_{selected_plate}",
                     )
-                with freighter_cols[2]:
-                    assistant_daily_rate = st.number_input(
-                        "Diária do ajudante do Freteiro (R$)",
-                        min_value=0.0,
-                        value=FREIGHT_ASSISTANT_OTHER_DAILY_RATE,
-                        step=1.0,
-                        format="%.2f",
-                        key=f"frete_assistant_daily_{selected_plate}",
-                        help="Sem uma rota selecionada, o padrão usado é R$ 100. Você pode alterar apenas para esta simulação.",
-                    )
                 st.caption(
                     "A diária cobre os primeiros 120 km. Qualquer fração é arredondada para uma diária inteira, "
                     "e o ajudante usa os mesmos dias cobrados. "
@@ -7939,7 +8012,6 @@ def render_calculadora_frete() -> None:
             else:
                 freighter_daily_rate_override = None
                 freighter_excess_km_rate = FREIGHT_FREIGHTER_EXCESS_RATE
-                assistant_daily_rate = 0.0
             st.caption("O resultado usa sempre os valores atuais. Confirme a digitação com Enter ou saia do campo.")
 
         st.session_state.pop("frete_quote_inputs_v2", None)
@@ -7947,8 +8019,10 @@ def render_calculadora_frete() -> None:
         quote_inputs = {
             "weight_kg": float(weight_kg),
             "distance_km": float(distance_km),
-            "employees": int(employees),
-            "employee_hourly_rate": float(employee_hourly_rate),
+            "employees": int(helper_count_input) + 1,
+            "employee_hourly_rate": 0.0,
+            "driver_hourly_rate": float(driver_hourly_rate),
+            "helper_hourly_rate": float(helper_hourly_rate),
             "margin_percent": float(margin_percent),
             "include_hotels": bool(include_hotels),
             "freighter_daily_rate_override": (
@@ -7956,6 +8030,7 @@ def render_calculadora_frete() -> None:
             ),
             "freighter_excess_km_rate": float(freighter_excess_km_rate),
             "assistant_daily_rate": float(assistant_daily_rate),
+            "driver_daily_rate": float(driver_daily_rate),
         }
         quote = _calculate_freight_quote(plate_reference, **quote_inputs)
         vehicle_cost_label = (
@@ -7963,7 +8038,11 @@ def render_calculadora_frete() -> None:
             if is_freighter
             else "Custo do caminhão na distância"
         )
-        vehicle_cost_note = "Freteiro + ajudante + equipe adicional + hotel" if is_freighter else "Caminhão + motorista + ajudante(s) + hotel"
+        vehicle_cost_note = (
+            "Freteiro + salário e diária do(s) ajudante(s) + hotel"
+            if is_freighter
+            else "Caminhão + salários + diárias da equipe + hotel"
+        )
         vehicle_memory = (
             f"Freteiro: {h(fmt_num(quote['freighter_days'], 0))} diária(s) × "
             f"{h(fmt_brl(quote['freighter_daily_rate'], compact_threshold=float('inf')))} = "
@@ -7972,37 +8051,43 @@ def render_calculadora_frete() -> None:
             f"{h(fmt_brl(quote['freighter_excess_km_rate'], compact_threshold=float('inf')))} = "
             f"{h(fmt_brl(quote['freighter_excess_cost'], compact_threshold=float('inf')))}. "
             f"Total do Freteiro: {h(fmt_brl(quote['freighter_cost'], compact_threshold=float('inf')))}. "
-            f"Ajudante: {h(fmt_num(quote['assistant_days'], 0))} diária(s) × "
+            f"Ajudante(s): {h(fmt_num(quote['helper_count'], 0))} × {h(fmt_num(quote['assistant_days'], 0))} diária(s) × "
             f"{h(fmt_brl(quote['assistant_daily_rate'], compact_threshold=float('inf')))} = "
             f"{h(fmt_brl(quote['assistant_cost'], compact_threshold=float('inf')))}."
             if is_freighter
             else f"Caminhão: {h(fmt_brl(quote['distance_component'], compact_threshold=float('inf')))} pela distância."
         )
         assistant_breakdown_html = (
-            f'<div class="frete-breakdown-card"><p>Ajudante — {h(fmt_num(quote["assistant_days"], 0))} diária(s)</p>'
+            f'<div class="frete-breakdown-card"><p>Diária do(s) ajudante(s) — {h(fmt_num(quote["helper_count"], 0))} × {h(fmt_num(quote["assistant_days"], 0))} dia(s)</p>'
             f'<strong>{h(fmt_brl(quote["assistant_cost"], compact_threshold=float("inf")))}</strong></div>'
-            if is_freighter
-            else ""
         )
         labor_breakdown_html = (
-            f'<div class="frete-breakdown-card"><p>Equipe adicional</p><strong>{h(fmt_brl(quote["team_cost"], compact_threshold=float("inf")))}</strong></div>'
+            f'<div class="frete-breakdown-card"><p>Salário do(s) ajudante(s)</p><strong>{h(fmt_brl(quote["helper_salary_cost"], compact_threshold=float("inf")))}</strong></div>'
             if is_freighter
             else (
-                f'<div class="frete-breakdown-card"><p>Motorista — {h(fmt_num(quote["driver_employee_hours"], 2))} h</p>'
-                f'<strong>{h(fmt_brl(quote["driver_labor_cost"], compact_threshold=float("inf")))}</strong></div>'
-                f'<div class="frete-breakdown-card"><p>Ajudante(s) — {h(fmt_num(quote["helper_count"], 0))}</p>'
-                f'<strong>{h(fmt_brl(quote["helper_labor_cost"], compact_threshold=float("inf")))}</strong></div>'
+                f'<div class="frete-breakdown-card"><p>Salário do motorista</p>'
+                f'<strong>{h(fmt_brl(quote["driver_salary_cost"], compact_threshold=float("inf")))}</strong></div>'
+                f'<div class="frete-breakdown-card"><p>Salário do(s) ajudante(s)</p>'
+                f'<strong>{h(fmt_brl(quote["helper_salary_cost"], compact_threshold=float("inf")))}</strong></div>'
+                f'<div class="frete-breakdown-card"><p>Diária do motorista</p>'
+                f'<strong>{h(fmt_brl(quote["driver_daily_cost"], compact_threshold=float("inf")))}</strong></div>'
             )
         )
         labor_memory = (
-            f"Equipe adicional: {h(fmt_num(quote['employee_hours'], 2))} horas-pessoa × "
-            f"{h(fmt_brl(employee_hourly_rate, compact_threshold=float('inf')))} = {h(fmt_brl(quote['team_cost']))}."
+            f"Salário do(s) ajudante(s): {h(fmt_num(quote['helper_count'], 0))} × "
+            f"{h(fmt_num(quote['total_operation_hours'], 2))} h × "
+            f"{h(fmt_brl(quote['helper_hourly_rate'], compact_threshold=float('inf')))} = "
+            f"{h(fmt_brl(quote['helper_salary_cost']))}."
             if is_freighter
             else (
-                f"Motorista: {h(fmt_num(quote['driver_employee_hours'], 2))} h × "
-                f"{h(fmt_brl(employee_hourly_rate, compact_threshold=float('inf')))} = {h(fmt_brl(quote['driver_labor_cost']))}. "
-                f"Ajudante(s): {h(fmt_num(quote['helper_count'], 0))} × {h(fmt_num(quote['total_operation_hours'], 2))} h × "
-                f"{h(fmt_brl(employee_hourly_rate, compact_threshold=float('inf')))} = {h(fmt_brl(quote['helper_labor_cost']))}."
+                f"Salário do motorista: {h(fmt_num(quote['driver_employee_hours'], 2))} h × "
+                f"{h(fmt_brl(quote['driver_hourly_rate'], compact_threshold=float('inf')))} = {h(fmt_brl(quote['driver_salary_cost']))}. "
+                f"Salário do(s) ajudante(s): {h(fmt_num(quote['helper_count'], 0))} × {h(fmt_num(quote['total_operation_hours'], 2))} h × "
+                f"{h(fmt_brl(quote['helper_hourly_rate'], compact_threshold=float('inf')))} = {h(fmt_brl(quote['helper_salary_cost']))}. "
+                f"Diária do motorista: {h(fmt_num(quote['own_days'], 0))} × "
+                f"{h(fmt_brl(quote['driver_daily_rate'], compact_threshold=float('inf')))} = {h(fmt_brl(quote['driver_daily_cost']))}. "
+                f"Diária do(s) ajudante(s): {h(fmt_num(quote['helper_count'], 0))} × {h(fmt_num(quote['own_days'], 0))} × "
+                f"{h(fmt_brl(quote['helper_daily_rate'], compact_threshold=float('inf')))} = {h(fmt_brl(quote['helper_daily_cost']))}."
             )
         )
         st.html(
@@ -8087,7 +8172,8 @@ def render_calculadora_frete() -> None:
                     if is_freighter
                     else "o custo do caminhão é a distância × o custo direto por km. "
                 )
-                + "A equipe usa o tempo de viagem + descarga × funcionários × salário/hora. "
+                + "Salário e diária são componentes diferentes e são somados. Na frota própria entram motorista e ajudante(s); "
+                + "no Freteiro entram separadamente o salário e a diária do(s) ajudante(s), pois o motorista está coberto pelo contrato. "
                 + "O hotel usa os blocos completos de 10 horas × a média histórica por reserva da dupla."
             )
             vehicle_basis_explanation = (
@@ -17307,18 +17393,14 @@ def _render_route_freight_calculator(
                 format="%.2f",
                 key=f"routes_freight_weight_{route_token}",
             )
-            employees = st.number_input(
-                "Equipe adicional na descarga" if is_freighter else "Equipe própria — motorista + ajudante(s)",
-                min_value=1 if is_freighter else 2,
-                max_value=20,
-                value=2,
+            helper_count_input = st.number_input(
+                "Quantidade de ajudantes",
+                min_value=1,
+                max_value=19,
+                value=1,
                 step=1,
-                key=f"routes_freight_employees_{route_token}_{plate_token}",
-                help=(
-                    "Para frota própria, a primeira pessoa é o motorista e as demais são ajudantes."
-                    if not is_freighter
-                    else "Equipe adicional por hora; motorista e ajudante principal já usam as regras de diária do Freteiro."
-                ),
+                key=f"routes_freight_helpers_{route_token}_{plate_token}",
+                help="Quantidade de ajudantes além do motorista. Cada ajudante recebe salário e diária próprios.",
             )
         with input_cols[1]:
             distance_km = st.number_input(
@@ -17329,14 +17411,7 @@ def _render_route_freight_calculator(
                 format="%.1f",
                 key=f"routes_freight_distance_{route_token}",
             )
-            employee_hourly_rate = st.number_input(
-                "Salário por funcionário/hora (R$)",
-                min_value=0.0,
-                value=default_hourly_rate,
-                step=1.0,
-                format="%.2f",
-                key=f"routes_freight_hourly_{route_token}_{plate_token}",
-            )
+            st.caption("A distância deve conter ida e volta.")
         with input_cols[2]:
             margin_percent = st.number_input(
                 "Margem de segurança (%)",
@@ -17363,8 +17438,59 @@ def _render_route_freight_calculator(
             )
 
     with st.container(border=True):
-        st.markdown("#### Regra dos freteiros nesta simulação")
-        rule_cols = st.columns(3)
+        st.markdown("#### Salários e diárias da equipe")
+        team_cols = st.columns(4)
+        with team_cols[0]:
+            driver_hourly_rate = st.number_input(
+                "Salário do motorista por hora (R$)",
+                min_value=0.0,
+                value=default_hourly_rate,
+                step=1.0,
+                format="%.2f",
+                key=f"routes_freight_driver_hourly_{route_token}_{plate_token}",
+            )
+        with team_cols[1]:
+            helper_hourly_rate = st.number_input(
+                "Salário do ajudante por hora (R$)",
+                min_value=0.0,
+                value=default_hourly_rate,
+                step=1.0,
+                format="%.2f",
+                key=f"routes_freight_helper_hourly_{route_token}_{plate_token}",
+            )
+        with team_cols[2]:
+            driver_daily_rate = st.number_input(
+                "Diária do motorista (R$)",
+                min_value=0.0,
+                value=0.0,
+                step=10.0,
+                format="%.2f",
+                key=f"routes_freight_driver_daily_{route_token}_{plate_token}",
+                help="É adicional ao salário e vale somente para esta simulação.",
+            )
+        with team_cols[3]:
+            assistant_default_rate = _freight_assistant_daily_rate(selected_route)
+            assistant_daily_rate = st.number_input(
+                "Diária do ajudante (R$)",
+                min_value=0.0,
+                value=assistant_default_rate,
+                step=1.0,
+                format="%.2f",
+                key=f"routes_freight_assistant_daily_{route_token}",
+                help=(
+                    "Padrão de R$ 32 para qualquer rota cujo nome contenha Divinópolis ou Carmo do Cajuru; "
+                    "R$ 100 para as demais. É adicional ao salário."
+                ),
+            )
+        st.caption(
+            "Salário e diária são custos diferentes e são somados. Na frota própria entram motorista e ajudante(s). "
+            "No Freteiro, a diária contratada já cobre o motorista; por isso entram separadamente apenas o salário "
+            "e a diária do(s) ajudante(s). Os valores do motorista continuam disponíveis para comparar com placas próprias."
+        )
+
+    with st.container(border=True):
+        st.markdown("#### Regras do Freteiro")
+        rule_cols = st.columns(2)
         with rule_cols[0]:
             freighter_excess_km_rate = st.number_input(
                 "Valor por KM acima de 120 km (R$/km)",
@@ -17388,27 +17514,10 @@ def _render_route_freight_calculator(
                 )
             else:
                 freighter_daily_rate_override = None
-                st.caption(
-                    "A placa selecionada é da frota própria. A diária será exibida aqui ao escolher um Freteiro; "
-                    "o valor por KM excedente continua disponível para a comparação entre placas."
-                )
-        with rule_cols[2]:
-            assistant_default_rate = _freight_assistant_daily_rate(selected_route)
-            assistant_daily_rate = st.number_input(
-                "Diária do ajudante do Freteiro (R$)",
-                min_value=0.0,
-                value=assistant_default_rate,
-                step=1.0,
-                format="%.2f",
-                key=f"routes_freight_assistant_daily_{route_token}",
-                help=(
-                    "Padrão de R$ 32 para qualquer rota cujo nome contenha Divinópolis ou Carmo do Cajuru; "
-                    "R$ 100 para as demais. A alteração vale somente nesta simulação."
-                ),
-            )
+                st.info("A placa selecionada é da frota própria; estas tarifas só são usadas ao comparar com Freteiros.")
         st.caption(
-            "Regra: qualquer fração de dia é arredondada para o próximo dia inteiro. Custo do Freteiro = diária × dias cobrados "
-            "+ (KM da viagem − 120 km) × valor do KM excedente. A diária do ajudante usa os mesmos dias inteiros. "
+            "Regra: qualquer fração de dia é arredondada para o próximo dia inteiro. No Freteiro: diária do veículo × dias "
+            "+ KM excedente acima de 120 km. "
             "Valores alterados aqui valem somente para esta simulação."
         )
 
@@ -17426,8 +17535,10 @@ def _render_route_freight_calculator(
     quote_inputs = {
         "weight_kg": float(weight_kg),
         "distance_km": float(distance_km),
-        "employees": int(employees),
-        "employee_hourly_rate": float(employee_hourly_rate),
+        "employees": int(helper_count_input) + 1,
+        "employee_hourly_rate": 0.0,
+        "driver_hourly_rate": float(driver_hourly_rate),
+        "helper_hourly_rate": float(helper_hourly_rate),
         "margin_percent": float(margin_percent),
         "include_hotels": bool(include_hotels and has_hotel),
         "freighter_trip_days": (
@@ -17440,6 +17551,12 @@ def _render_route_freight_calculator(
         ),
         "freighter_excess_km_rate": float(freighter_excess_km_rate),
         "assistant_daily_rate": float(assistant_daily_rate),
+        "driver_daily_rate": float(driver_daily_rate),
+        "own_trip_days": (
+            float(profile.get("average_trip_days") or 0.0)
+            if not is_freighter
+            else None
+        ),
     }
     quote = _calculate_freight_quote(plate_reference, **quote_inputs)
     all_plate_comparison = _freight_plate_comparison(
@@ -17450,6 +17567,9 @@ def _render_route_freight_calculator(
         average_trip_days=float(profile.get("average_trip_days") or 0.0),
         excess_km_rate=float(freighter_excess_km_rate),
         assistant_daily_rate=float(assistant_daily_rate),
+        driver_daily_rate=float(driver_daily_rate),
+        driver_hourly_rate=float(driver_hourly_rate),
+        helper_hourly_rate=float(helper_hourly_rate),
         selected_plate=selected_plate,
         selected_daily_rate=(
             float(freighter_daily_rate_override) if is_freighter else None
@@ -17465,21 +17585,29 @@ def _render_route_freight_calculator(
         if is_freighter
         else "Caminhão na distância"
     )
-    vehicle_cost_note = "Freteiro + ajudante + equipe adicional + hotel permitido pela rota, sem margem." if is_freighter else "Caminhão + motorista + ajudante(s) + hotel permitido pela rota, sem margem."
+    vehicle_cost_note = (
+        "Freteiro + salário e diária do(s) ajudante(s) + hotel permitido pela rota, sem margem."
+        if is_freighter
+        else "Caminhão + salários + diárias da equipe + hotel permitido pela rota, sem margem."
+    )
     assistant_breakdown_html = (
-        f'<div class="frete-breakdown-card"><p>Ajudante — {h(fmt_num(quote["assistant_days"], 0))} diária(s)</p>'
+        f'<div class="frete-breakdown-card"><p>Diária do(s) ajudante(s) — {h(fmt_num(quote["helper_count"], 0))} × {h(fmt_num(quote["assistant_days"], 0))} dia(s)</p>'
         f'<strong>{h(fmt_brl(quote["assistant_cost"], compact_threshold=float("inf")))}</strong></div>'
         if is_freighter
         else ""
     )
     labor_breakdown_html = (
-        f'<div class="frete-breakdown-card"><p>Equipe adicional</p><strong>{h(fmt_brl(quote["team_cost"], compact_threshold=float("inf")))}</strong></div>'
+        f'<div class="frete-breakdown-card"><p>Salário do(s) ajudante(s)</p><strong>{h(fmt_brl(quote["helper_salary_cost"], compact_threshold=float("inf")))}</strong></div>'
         if is_freighter
         else (
-            f'<div class="frete-breakdown-card"><p>Motorista — {h(fmt_num(quote["driver_employee_hours"], 2))} h</p>'
-            f'<strong>{h(fmt_brl(quote["driver_labor_cost"], compact_threshold=float("inf")))}</strong></div>'
-            f'<div class="frete-breakdown-card"><p>Ajudante(s) — {h(fmt_num(quote["helper_count"], 0))}</p>'
-            f'<strong>{h(fmt_brl(quote["helper_labor_cost"], compact_threshold=float("inf")))}</strong></div>'
+            f'<div class="frete-breakdown-card"><p>Salário do motorista</p>'
+            f'<strong>{h(fmt_brl(quote["driver_salary_cost"], compact_threshold=float("inf")))}</strong></div>'
+            f'<div class="frete-breakdown-card"><p>Salário do(s) ajudante(s)</p>'
+            f'<strong>{h(fmt_brl(quote["helper_salary_cost"], compact_threshold=float("inf")))}</strong></div>'
+            f'<div class="frete-breakdown-card"><p>Diária do motorista — {h(fmt_num(quote["own_days"], 0))} dia(s)</p>'
+            f'<strong>{h(fmt_brl(quote["driver_daily_cost"], compact_threshold=float("inf")))}</strong></div>'
+            f'<div class="frete-breakdown-card"><p>Diária do(s) ajudante(s)</p>'
+            f'<strong>{h(fmt_brl(quote["helper_daily_cost"], compact_threshold=float("inf")))}</strong></div>'
         )
     )
     st.html(
@@ -17546,7 +17674,7 @@ def _render_route_freight_calculator(
             f"{fmt_brl(quote['freighter_daily_cost'])}; mais {fmt_num(quote['freighter_excess_km'], 1)} km "
             f"acima de 120 km × {fmt_brl(quote['freighter_excess_km_rate'], compact_threshold=float('inf'))}/km = "
             f"{fmt_brl(quote['freighter_excess_cost'])}. **Total do Freteiro: {fmt_brl(quote['freighter_cost'])}**.  \n"
-            f"**Ajudante:** {fmt_num(quote['assistant_days'], 0)} diária(s) × "
+            f"**Diária do(s) ajudante(s):** {fmt_num(quote['helper_count'], 0)} × {fmt_num(quote['assistant_days'], 0)} dia(s) × "
             f"{fmt_brl(quote['assistant_daily_rate'], compact_threshold=float('inf'))} = "
             f"**{fmt_brl(quote['assistant_cost'])}**."
             if is_freighter
@@ -17557,14 +17685,20 @@ def _render_route_freight_calculator(
             )
         )
         labor_memory = (
-            f"**Equipe adicional:** {fmt_num(quote['employee_hours'], 2)} horas-pessoa × "
-            f"{fmt_brl(employee_hourly_rate, compact_threshold=float('inf'))} = **{fmt_brl(quote['team_cost'])}**."
+            f"**Salário do ajudante:** {fmt_num(quote['helper_count'], 0)} ajudante(s) × "
+            f"{fmt_num(quote['total_operation_hours'], 2)} h × "
+            f"{fmt_brl(quote['helper_hourly_rate'], compact_threshold=float('inf'))} = "
+            f"**{fmt_brl(quote['helper_salary_cost'])}**."
             if is_freighter
             else (
-                f"**Motorista:** {fmt_num(quote['driver_employee_hours'], 2)} h × "
-                f"{fmt_brl(employee_hourly_rate, compact_threshold=float('inf'))} = **{fmt_brl(quote['driver_labor_cost'])}**.  \n"
-                f"**Ajudante(s):** {fmt_num(quote['helper_count'], 0)} × {fmt_num(quote['total_operation_hours'], 2)} h × "
-                f"{fmt_brl(employee_hourly_rate, compact_threshold=float('inf'))} = **{fmt_brl(quote['helper_labor_cost'])}**."
+                f"**Salário do motorista:** {fmt_num(quote['driver_employee_hours'], 2)} h × "
+                f"{fmt_brl(quote['driver_hourly_rate'], compact_threshold=float('inf'))} = **{fmt_brl(quote['driver_salary_cost'])}**.  \n"
+                f"**Salário do(s) ajudante(s):** {fmt_num(quote['helper_count'], 0)} × {fmt_num(quote['total_operation_hours'], 2)} h × "
+                f"{fmt_brl(quote['helper_hourly_rate'], compact_threshold=float('inf'))} = **{fmt_brl(quote['helper_salary_cost'])}**.  \n"
+                f"**Diária do motorista:** {fmt_num(quote['own_days'], 0)} dia(s) × "
+                f"{fmt_brl(quote['driver_daily_rate'], compact_threshold=float('inf'))} = **{fmt_brl(quote['driver_daily_cost'])}**.  \n"
+                f"**Diária do(s) ajudante(s):** {fmt_num(quote['helper_count'], 0)} × {fmt_num(quote['own_days'], 0)} dia(s) × "
+                f"{fmt_brl(quote['helper_daily_rate'], compact_threshold=float('inf'))} = **{fmt_brl(quote['helper_daily_cost'])}**."
             )
         )
         st.markdown(
@@ -17576,7 +17710,7 @@ def _render_route_freight_calculator(
             f"{fmt_brl(quote['hotel_daily_rate'], compact_threshold=float('inf'))} = **{fmt_brl(quote['hotel_cost'])}**."
         )
         st.caption(
-            f"{('O Freteiro usa a diária da placa e a duração média histórica da rota.' if is_freighter else 'O custo por KM usa ' + str(plate_reference['km_rate_source']) + '.')} Hotel só é permitido quando há hospedagem "
+            f"{('O Freteiro usa a diária da placa e a duração média histórica da rota.' if is_freighter else 'O caminhão usa custo por KM; motorista e ajudante usam diárias inteiras da rota.')} Hotel só é permitido quando há hospedagem "
             "historicamente vinculada à rota selecionada. Menos de 10 horas não gera diária."
         )
 
@@ -17618,6 +17752,9 @@ def _render_route_freight_calculator(
                 average_trip_days=float(profile.get("average_trip_days") or 0.0),
                 excess_km_rate=float(freighter_excess_km_rate),
                 assistant_daily_rate=float(assistant_daily_rate),
+                driver_daily_rate=float(driver_daily_rate),
+                driver_hourly_rate=float(driver_hourly_rate),
+                helper_hourly_rate=float(helper_hourly_rate),
                 selected_plate=selected_plate,
                 selected_daily_rate=(
                     float(freighter_daily_rate_override) if is_freighter else None
@@ -17650,13 +17787,17 @@ def _render_route_freight_calculator(
                     hide_index=True,
                     column_config={
                         "Dias cobrados": st.column_config.NumberColumn(format="%.0f"),
-                        "Diária": _money_col("Diária"),
+                        "Diária Freteiro": _money_col("Diária Freteiro"),
+                        "Diária motorista": _money_col("Diária motorista"),
+                        "Diária ajudante": _money_col("Diária ajudante"),
                         "KM excedentes": st.column_config.NumberColumn(format="%.1f km"),
                         "Custo do excedente": _money_col("Custo excedente"),
                         "Custo do veículo": _money_col("Custo veículo"),
-                        "Motorista": _money_col("Motorista"),
-                        "Ajudante": _money_col("Ajudante"),
-                        "Equipe": _money_col("Equipe"),
+                        "Salário motorista": _money_col("Salário motorista"),
+                        "Salário ajudante": _money_col("Salário ajudante"),
+                        "Diária motorista - custo": _money_col("Custo diária motorista"),
+                        "Diária ajudante - custo": _money_col("Custo diária ajudante"),
+                        "Equipe - salários": _money_col("Salários da equipe"),
                         "Hotel": _money_col("Hotel"),
                         "Custo estimado": _money_col("Custo estimado"),
                         "Frete sugerido": _money_col("Frete sugerido"),

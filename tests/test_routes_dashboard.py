@@ -226,12 +226,12 @@ class RoutesDashboardTests(unittest.TestCase):
         ).set_index("Placa")
 
         self.assertEqual(comparison.loc["FRT1A11", "Custo do veículo"], 2_650)
-        self.assertEqual(comparison.loc["FRT1A11", "Ajudante"], 64)
+        self.assertEqual(comparison.loc["FRT1A11", "Diária ajudante - custo"], 64)
         self.assertEqual(comparison.loc["TRP1A11", "Custo do veículo"], 1_980)
-        self.assertEqual(comparison.loc["TRP1A11", "Motorista"], 0)
-        self.assertEqual(comparison.loc["TRP1A11", "Ajudante"], 0)
+        self.assertEqual(comparison.loc["TRP1A11", "Salário motorista"], 0)
+        self.assertEqual(comparison.loc["TRP1A11", "Salário ajudante"], 0)
         self.assertEqual(comparison.loc["TRP1A11", "Diferença para o menor"], 0)
-        self.assertEqual(comparison.loc["FRT1A11", "Diferença para o menor"], 734)
+        self.assertEqual(comparison.loc["FRT1A11", "Diferença para o menor"], 670)
         self.assertFalse(bool(comparison.loc["SEM1A11", "Base calculável"]))
         self.assertTrue(pd.isna(comparison.loc["SEM1A11", "Diferença para o menor"]))
 
@@ -241,7 +241,49 @@ class RoutesDashboardTests(unittest.TestCase):
         )
         self.assertEqual(recommendation["plate"], "TRP1A11")
         self.assertEqual(recommendation["selected_plate"], "FRT1A11")
-        self.assertEqual(recommendation["savings"], 734)
+        self.assertEqual(recommendation["savings"], 670)
+
+    def test_salary_and_daily_are_separate_for_own_fleet_and_freighter(self):
+        own_quote = dashboard._calculate_freight_quote(
+            {"rate_per_km": 5.0, "hotel_daily_rate": 0.0, "is_freighter": False},
+            weight_kg=3_500,
+            distance_km=80,
+            employees=2,
+            employee_hourly_rate=0,
+            driver_hourly_rate=20,
+            helper_hourly_rate=10,
+            driver_daily_rate=150,
+            assistant_daily_rate=32,
+            own_trip_days=1.5,
+            margin_percent=0,
+            include_hotels=False,
+        )
+        operation_hours = 11.0
+        self.assertEqual(own_quote["driver_salary_cost"], operation_hours * 20)
+        self.assertEqual(own_quote["helper_salary_cost"], operation_hours * 10)
+        self.assertEqual(own_quote["driver_daily_cost"], 2 * 150)
+        self.assertEqual(own_quote["helper_daily_cost"], 2 * 32)
+        self.assertEqual(own_quote["estimated_cost"], 400 + 220 + 110 + 300 + 64)
+
+        freighter_quote = dashboard._calculate_freight_quote(
+            {"is_freighter": True, "freighter_daily_rate": 800, "hotel_daily_rate": 0.0},
+            weight_kg=3_500,
+            distance_km=80,
+            employees=2,
+            employee_hourly_rate=0,
+            driver_hourly_rate=20,
+            helper_hourly_rate=10,
+            driver_daily_rate=150,
+            assistant_daily_rate=32,
+            freighter_trip_days=1.5,
+            margin_percent=0,
+            include_hotels=False,
+        )
+        self.assertEqual(freighter_quote["driver_salary_cost"], 0)
+        self.assertEqual(freighter_quote["driver_daily_cost"], 0)
+        self.assertEqual(freighter_quote["helper_salary_cost"], operation_hours * 10)
+        self.assertEqual(freighter_quote["helper_daily_cost"], 2 * 32)
+        self.assertEqual(freighter_quote["estimated_cost"], 1_600 + 110 + 64)
 
     def test_fleet_cost_over_revenue_uses_aggregated_plate_totals(self):
         financial = pd.DataFrame(
