@@ -80,7 +80,7 @@ MUTED = "#6B7280"
 CARD_BORDER = "#c2d2f3"
 LOGO_PATH = Path(__file__).parent / "static" / "logo-jr.png"
 CURRENT_YEAR = date.today().year
-APP_VERSION = "global-groq-assistant-v60"
+APP_VERSION = "global-groq-assistant-v61"
 LOGGER = logging.getLogger("jr_dashboard.streamlit")
 RANK_ROUTES_ENABLED = True
 ROUTE_CACHE_TTL_SECONDS = max(int(os.environ.get("JR_ROUTE_CACHE_TTL_SECONDS", "180") or 180), 30)
@@ -17769,33 +17769,67 @@ def _render_route_freight_calculator(
             else:
                 best_plate = str(eligible_comparison.iloc[0]["Placa"])
                 best_price = float(eligible_comparison.iloc[0]["Frete sugerido"])
+                best_cost = float(eligible_comparison.iloc[0]["Custo estimado"])
                 highest_row = eligible_comparison.sort_values("Frete sugerido", ascending=False).iloc[0]
                 highest_plate = str(highest_row["Placa"])
                 highest_price = float(highest_row["Frete sugerido"])
+                highest_cost = float(highest_row["Custo estimado"])
                 price_difference = max(highest_price - best_price, 0.0)
+                cost_difference = max(highest_cost - best_cost, 0.0)
                 st.success(
-                    f"Mais econômica: {best_plate} — {fmt_brl(best_price, compact_threshold=float('inf'))}. "
-                    f"Mais cara: {highest_plate} — {fmt_brl(highest_price, compact_threshold=float('inf'))}. "
-                    f"Diferença: {fmt_brl(price_difference, compact_threshold=float('inf'))}."
+                    f"Mais econômica: {best_plate} — custo {fmt_brl(best_cost, compact_threshold=float('inf'))} e "
+                    f"frete sugerido {fmt_brl(best_price, compact_threshold=float('inf'))}. "
+                    f"Mais cara: {highest_plate} — custo {fmt_brl(highest_cost, compact_threshold=float('inf'))} e "
+                    f"frete sugerido {fmt_brl(highest_price, compact_threshold=float('inf'))}. "
+                    f"Diferença de custo: {fmt_brl(cost_difference, compact_threshold=float('inf'))}; "
+                    f"diferença no sugerido: {fmt_brl(price_difference, compact_threshold=float('inf'))}."
                 )
-                comparison_chart = metric_bar_chart(
-                    eligible_comparison["Placa"].tolist(),
-                    eligible_comparison["Frete sugerido"].tolist(),
-                    unit="R$",
-                    horizontal=True,
-                    color="#0F766E",
+                chart_plates = eligible_comparison["Placa"].astype(str).tolist()
+                chart_costs = eligible_comparison["Custo estimado"].astype(float).tolist()
+                chart_prices = eligible_comparison["Frete sugerido"].astype(float).tolist()
+                comparison_chart = go.Figure()
+                comparison_chart.add_trace(
+                    go.Bar(
+                        name="Custo estimado",
+                        x=chart_costs,
+                        y=chart_plates,
+                        orientation="h",
+                        marker={"color": "#2563EB"},
+                        text=[fmt_brl(value, compact_threshold=float("inf")) for value in chart_costs],
+                        textposition="outside",
+                        cliponaxis=False,
+                        hovertemplate="<b>%{y}</b><br>Custo estimado: R$ %{x:,.2f}<extra></extra>",
+                    )
                 )
-                comparison_chart.update_traces(
-                    text=[
-                        (
-                            f"{fmt_brl(value, compact_threshold=float('inf'))}"
-                            if abs(float(value) - best_price) < 0.005
-                            else f"{fmt_brl(value, compact_threshold=float('inf'))} "
-                            f"(+{fmt_brl(float(value) - best_price, compact_threshold=float('inf'))})"
-                        )
-                        for value in eligible_comparison["Frete sugerido"]
-                    ],
-                    hovertemplate="<b>%{y}</b><br>Frete sugerido: R$ %{x:,.2f}<extra></extra>",
+                comparison_chart.add_trace(
+                    go.Bar(
+                        name="Frete sugerido",
+                        x=chart_prices,
+                        y=chart_plates,
+                        orientation="h",
+                        marker={"color": "#0F766E"},
+                        text=[
+                            f"{fmt_brl(value, compact_threshold=float('inf'))} "
+                            f"(+{fmt_brl(value - cost, compact_threshold=float('inf'))} margem)"
+                            for value, cost in zip(chart_prices, chart_costs)
+                        ],
+                        textposition="outside",
+                        cliponaxis=False,
+                        hovertemplate="<b>%{y}</b><br>Frete sugerido: R$ %{x:,.2f}<extra></extra>",
+                    )
+                )
+                chart_maximum = max(chart_prices, default=0.0)
+                comparison_chart.update_layout(barmode="group", legend={"orientation": "h", "y": 1.08})
+                comparison_chart.update_xaxes(
+                    ticksuffix=" R$",
+                    range=[0, chart_maximum * 1.35] if chart_maximum else None,
+                    rangemode="tozero",
+                )
+                comparison_chart.update_yaxes(autorange="reversed", automargin=True)
+                comparison_chart = apply_theme(
+                    comparison_chart,
+                    height=max(360, 130 + len(chart_plates) * 70),
+                    margin={"l": 150, "r": 220, "t": 55, "b": 50},
                 )
                 st.plotly_chart(comparison_chart, width="stretch", config=PLOTLY_CONFIG)
                 st.dataframe(
