@@ -164,6 +164,12 @@ class RoutesDashboardTests(unittest.TestCase):
         self.assertTrue(pd.isna(fleet.loc["CCC1C11", "Custo/receita %"]))
         self.assertTrue(bool(fleet.loc["CCC1C11", "Sem receita"]))
 
+        chart_data = fleet.dropna(subset=["Custo/receita %"]).reset_index()
+        chart = dashboard._route_fleet_cost_revenue_chart(chart_data)
+        self.assertTrue(all("R$" in label and "%" in label for label in chart.data[0].text))
+        self.assertIn("Receita atribuída", chart.data[0].hovertemplate)
+        self.assertIn("Resultado", chart.data[0].hovertemplate)
+
     def test_route_without_hotel_keeps_simulated_hotel_at_zero(self):
         data = {
             "tempos_rotas": [

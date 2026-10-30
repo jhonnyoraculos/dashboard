@@ -80,7 +80,7 @@ MUTED = "#6B7280"
 CARD_BORDER = "#c2d2f3"
 LOGO_PATH = Path(__file__).parent / "static" / "logo-jr.png"
 CURRENT_YEAR = date.today().year
-APP_VERSION = "global-groq-assistant-v50"
+APP_VERSION = "global-groq-assistant-v51"
 LOGGER = logging.getLogger("jr_dashboard.streamlit")
 RANK_ROUTES_ENABLED = True
 ROUTE_CACHE_TTL_SECONDS = max(int(os.environ.get("JR_ROUTE_CACHE_TTL_SECONDS", "180") or 180), 30)
@@ -16825,6 +16825,46 @@ def _route_fleet_cost_summary(financial: pd.DataFrame) -> pd.DataFrame:
     ).reset_index(drop=True)[columns]
 
 
+def _route_fleet_cost_revenue_chart(fleet: pd.DataFrame) -> go.Figure:
+    """Exibe o percentual junto do custo total que originou o indicador."""
+    percentages = pd.to_numeric(fleet["Custo/receita %"], errors="coerce").fillna(0).tolist()
+    costs = pd.to_numeric(fleet["Custo total"], errors="coerce").fillna(0).tolist()
+    revenues = pd.to_numeric(fleet["Receita atribuída"], errors="coerce").fillna(0).tolist()
+    results = pd.to_numeric(fleet["Resultado"], errors="coerce").fillna(0).tolist()
+    trips = pd.to_numeric(fleet["Viagens"], errors="coerce").fillna(0).tolist()
+    figure = metric_bar_chart(
+        fleet["PLACA"].tolist(),
+        percentages,
+        unit="%",
+        horizontal=True,
+        color="#D97706",
+    )
+    labels = [
+        f"{fmt_num(percentage, 1)}% • {fmt_brl(cost)}"
+        for percentage, cost in zip(percentages, costs)
+    ]
+    details = [
+        [fmt_num(percentage, 1) + "%", fmt_brl(cost), fmt_brl(revenue), fmt_brl(result), fmt_num(trip, 0)]
+        for percentage, cost, revenue, result, trip in zip(percentages, costs, revenues, results, trips)
+    ]
+    figure.update_traces(
+        text=labels,
+        customdata=details,
+        hovertemplate=(
+            "<b>%{y}</b><br>"
+            "Custo/receita: %{customdata[0]}<br>"
+            "Custo total: %{customdata[1]}<br>"
+            "Receita atribuída: %{customdata[2]}<br>"
+            "Resultado: %{customdata[3]}<br>"
+            "Viagens: %{customdata[4]}<extra></extra>"
+        ),
+    )
+    maximum = max(percentages) if percentages else 0
+    figure.update_xaxes(range=[0, maximum * 1.62] if maximum else None)
+    figure.update_layout(margin={"l": 150, "r": 180, "t": 25, "b": 50})
+    return figure
+
+
 def _render_route_freight_calculator(
     route_options: list[str],
     global_route: str,
@@ -18535,8 +18575,8 @@ def render_rotas() -> None:
             with right:
                 valid = fleet.dropna(subset=["Custo/receita %"]).nlargest(15, "Custo/receita %").sort_values("Custo/receita %")
                 st.markdown("**Veículos mais caros nas viagens — custo sobre receita**")
-                st.caption("Soma dos custos das viagens da placa ÷ soma da receita atribuída às mesmas viagens.")
-                st.plotly_chart(metric_bar_chart(valid["PLACA"].tolist(), valid["Custo/receita %"].tolist(), unit="%", horizontal=True, color="#D97706"), width="stretch", config=PLOTLY_CONFIG)
+                st.caption("Cada barra mostra: custo sobre receita (%) • custo total da placa (R$).")
+                st.plotly_chart(_route_fleet_cost_revenue_chart(valid), width="stretch", config=PLOTLY_CONFIG)
             no_revenue = fleet.loc[fleet["Sem receita"], "PLACA"].tolist()
             if no_revenue:
                 st.error(
