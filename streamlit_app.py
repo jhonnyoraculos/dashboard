@@ -80,7 +80,7 @@ MUTED = "#6B7280"
 CARD_BORDER = "#c2d2f3"
 LOGO_PATH = Path(__file__).parent / "static" / "logo-jr.png"
 CURRENT_YEAR = date.today().year
-APP_VERSION = "global-groq-assistant-v56"
+APP_VERSION = "global-groq-assistant-v57"
 LOGGER = logging.getLogger("jr_dashboard.streamlit")
 RANK_ROUTES_ENABLED = True
 ROUTE_CACHE_TTL_SECONDS = max(int(os.environ.get("JR_ROUTE_CACHE_TTL_SECONDS", "180") or 180), 30)
@@ -4319,15 +4319,23 @@ def _freight_plate_comparison(
                 f"{fmt_brl(quote['freighter_daily_rate'])}/dia + "
                 f"{fmt_brl(quote['freighter_excess_km_rate'])}/km após 120 km"
             )
+            calculable = float(quote["freighter_daily_rate"]) > 0
+            base_status = "Calculado" if calculable else "Sem diária do Freteiro"
         elif float(reference.get("direct_rate_per_km") or 0.0) > 0:
             basis = f"{fmt_brl(reference.get('direct_rate_per_km'))}/km"
+            calculable = True
+            base_status = "Calculado"
         else:
             basis = "Sem custo por KM próprio"
+            calculable = False
+            base_status = "Sem custo por KM próprio"
         rows.append(
             {
                 "Placa": plate,
                 "Categoria": reference.get("category") or "Transporte",
                 "Base do veículo": basis,
+                "Base calculável": calculable,
+                "Situação da base": base_status,
                 "Dias cobrados": quote["freighter_days"] if is_freighter else pd.NA,
                 "Diária": quote["freighter_daily_rate"] if is_freighter else pd.NA,
                 "KM excedentes": quote["freighter_excess_km"] if is_freighter else pd.NA,
@@ -4344,9 +4352,47 @@ def _freight_plate_comparison(
     frame = pd.DataFrame(rows)
     if frame.empty:
         return frame
-    frame = frame.sort_values(["Frete sugerido", "Placa"], ascending=[True, True]).reset_index(drop=True)
-    frame["Diferença para o menor"] = frame["Frete sugerido"] - float(frame["Frete sugerido"].min())
+    frame = frame.sort_values(
+        ["Base calculável", "Frete sugerido", "Placa"],
+        ascending=[False, True, True],
+    ).reset_index(drop=True)
+    valid_prices = frame.loc[frame["Base calculável"], "Frete sugerido"]
+    minimum = float(valid_prices.min()) if not valid_prices.empty else None
+    frame["Diferença para o menor"] = (
+        frame["Frete sugerido"] - minimum if minimum is not None else pd.NA
+    )
+    frame.loc[~frame["Base calculável"], "Diferença para o menor"] = pd.NA
     return frame
+
+
+def _freight_economic_recommendation(
+    comparison: pd.DataFrame,
+    selected_plates: list[str] | None = None,
+) -> dict[str, object]:
+    """Retorna a melhor placa calculável e a economia contra as escolhas informadas."""
+    if comparison.empty or "Base calculável" not in comparison.columns:
+        return {}
+    valid = comparison.loc[comparison["Base calculável"].fillna(False)].copy()
+    if valid.empty:
+        return {}
+    valid = valid.sort_values(["Frete sugerido", "Placa"], ascending=[True, True])
+    best = valid.iloc[0]
+    selected_set = {str(value).strip() for value in (selected_plates or []) if str(value).strip()}
+    selected = valid.loc[valid["Placa"].astype(str).isin(selected_set)]
+    selected_best = selected.iloc[0] if not selected.empty else None
+    selected_price = float(selected_best["Frete sugerido"]) if selected_best is not None else None
+    best_price = float(best["Frete sugerido"])
+    return {
+        "plate": str(best["Placa"]),
+        "category": str(best["Categoria"]),
+        "basis": str(best["Base do veículo"]),
+        "suggested_freight": best_price,
+        "estimated_cost": float(best["Custo estimado"]),
+        "selected_plate": str(selected_best["Placa"]) if selected_best is not None else None,
+        "selected_price": selected_price,
+        "savings": max((selected_price or best_price) - best_price, 0.0),
+        "is_selected": str(best["Placa"]) in selected_set,
+    }
 
 
 @st.cache_data(ttl=600, show_spinner=False)
@@ -17396,6 +17442,23 @@ def _render_route_freight_calculator(
         "assistant_daily_rate": float(assistant_daily_rate),
     }
     quote = _calculate_freight_quote(plate_reference, **quote_inputs)
+    all_plate_comparison = _freight_plate_comparison(
+        sorted(rows_by_plate),
+        rows_by_plate,
+        general_reference,
+        quote_inputs=quote_inputs,
+        average_trip_days=float(profile.get("average_trip_days") or 0.0),
+        excess_km_rate=float(freighter_excess_km_rate),
+        assistant_daily_rate=float(assistant_daily_rate),
+        selected_plate=selected_plate,
+        selected_daily_rate=(
+            float(freighter_daily_rate_override) if is_freighter else None
+        ),
+    )
+    automatic_recommendation = _freight_economic_recommendation(
+        all_plate_comparison,
+        [selected_plate] if selected_plate else [],
+    )
     result_plate = selected_plate or FREIGHT_FLEET_AVERAGE_LABEL
     vehicle_cost_label = (
         f"Freteiro — diária + {fmt_num(quote['freighter_excess_km'], 1)} km excedentes"
@@ -17445,6 +17508,37 @@ def _render_route_freight_calculator(
         </section>
         """
     )
+    with st.container(border=True):
+        st.markdown("### Sugestão automática da placa mais econômica")
+        if not automatic_recommendation:
+            st.warning(
+                "Nenhuma placa possui diária de Freteiro ou custo próprio por KM suficiente para uma recomendação segura."
+            )
+        else:
+            recommended_plate = str(automatic_recommendation["plate"])
+            recommended_price = float(automatic_recommendation["suggested_freight"])
+            recommendation_text = (
+                f"{recommended_plate} ({automatic_recommendation['category']}) — frete sugerido de "
+                f"{fmt_brl(recommended_price)}; custo estimado de "
+                f"{fmt_brl(automatic_recommendation['estimated_cost'])}. Base: {automatic_recommendation['basis']}."
+            )
+            savings = float(automatic_recommendation.get("savings") or 0.0)
+            compared_plate = automatic_recommendation.get("selected_plate")
+            if compared_plate and savings > 0.005:
+                st.success(
+                    f"Existe uma opção mais econômica que {compared_plate}: {recommendation_text} "
+                    f"Economia estimada de {fmt_brl(savings)} no mesmo cenário."
+                )
+            elif automatic_recommendation.get("is_selected"):
+                st.success(f"A placa selecionada já é a mais econômica neste cenário: {recommendation_text}")
+            else:
+                st.success(f"Melhor opção calculável para esta rota: {recommendation_text}")
+            valid_count = int(all_plate_comparison["Base calculável"].fillna(False).sum())
+            invalid_count = int(len(all_plate_comparison) - valid_count)
+            st.caption(
+                f"Foram avaliadas {valid_count} placa(s) com base válida. "
+                + (f"{invalid_count} placa(s) sem diária ou custo próprio por KM foram desconsideradas." if invalid_count else "")
+            )
     with st.expander("Ver memória e tarifas da simulação", expanded=True):
         vehicle_memory = (
             f"**Freteiro:** {fmt_num(quote['freighter_days'], 0)} diária(s) × "
@@ -17500,6 +17594,19 @@ def _render_route_freight_calculator(
             key=f"routes_freight_compare_{route_token}",
             help="Escolha duas ou mais placas para comparar o custo no mesmo cenário.",
         )
+        selected_recommendation = _freight_economic_recommendation(
+            all_plate_comparison,
+            comparison_plates,
+        )
+        if comparison_plates and selected_recommendation:
+            recommendation_plate = str(selected_recommendation["plate"])
+            savings = float(selected_recommendation.get("savings") or 0.0)
+            selected_best_plate = selected_recommendation.get("selected_plate")
+            if recommendation_plate not in comparison_plates and selected_best_plate and savings > 0.005:
+                st.warning(
+                    f"Fora da seleção, a placa {recommendation_plate} ficaria {fmt_brl(savings)} mais econômica "
+                    f"que {selected_best_plate}, a melhor das placas escolhidas."
+                )
         if len(comparison_plates) < 2:
             st.info("Selecione pelo menos duas placas para gerar a comparação.")
         else:
@@ -17516,28 +17623,29 @@ def _render_route_freight_calculator(
                     float(freighter_daily_rate_override) if is_freighter else None
                 ),
             )
-            if comparison.empty:
+            eligible_comparison = comparison.loc[comparison["Base calculável"].fillna(False)].copy()
+            if eligible_comparison.empty:
                 st.info("Não foi possível calcular as placas selecionadas.")
             else:
-                best_plate = str(comparison.iloc[0]["Placa"])
-                best_price = float(comparison.iloc[0]["Frete sugerido"])
+                best_plate = str(eligible_comparison.iloc[0]["Placa"])
+                best_price = float(eligible_comparison.iloc[0]["Frete sugerido"])
                 st.success(
                     f"Menor frete sugerido neste cenário: {best_plate} — {fmt_brl(best_price)}."
                 )
                 comparison_chart = metric_bar_chart(
-                    comparison["Placa"].tolist(),
-                    comparison["Frete sugerido"].tolist(),
+                    eligible_comparison["Placa"].tolist(),
+                    eligible_comparison["Frete sugerido"].tolist(),
                     unit="R$",
                     horizontal=True,
                     color="#0F766E",
                 )
                 comparison_chart.update_traces(
-                    text=[fmt_brl(value) for value in comparison["Frete sugerido"]],
+                    text=[fmt_brl(value) for value in eligible_comparison["Frete sugerido"]],
                     hovertemplate="<b>%{y}</b><br>Frete sugerido: R$ %{x:,.2f}<extra></extra>",
                 )
                 st.plotly_chart(comparison_chart, width="stretch", config=PLOTLY_CONFIG)
                 st.dataframe(
-                    comparison,
+                    comparison.drop(columns=["Base calculável"]),
                     width="stretch",
                     hide_index=True,
                     column_config={

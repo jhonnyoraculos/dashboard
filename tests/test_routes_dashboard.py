@@ -205,9 +205,13 @@ class RoutesDashboardTests(unittest.TestCase):
                 "categoria": "Transporte", "total": 600, "salario_transporte": 0,
                 "km_total": 100, "dias_servico": 1,
             },
+            "SEM1A11": {
+                "categoria": "Transporte", "total": 0, "salario_transporte": 0,
+                "km_total": 0, "dias_servico": 1,
+            },
         }
         comparison = dashboard._freight_plate_comparison(
-            ["FRT1A11", "TRP1A11"],
+            ["FRT1A11", "TRP1A11", "SEM1A11"],
             rows_by_plate,
             {"rate_per_km": 8, "hotel_daily_rate": 0, "rate_per_employee_hour": 0},
             quote_inputs={
@@ -228,6 +232,16 @@ class RoutesDashboardTests(unittest.TestCase):
         self.assertEqual(comparison.loc["TRP1A11", "Ajudante"], 0)
         self.assertEqual(comparison.loc["TRP1A11", "Diferença para o menor"], 0)
         self.assertEqual(comparison.loc["FRT1A11", "Diferença para o menor"], 734)
+        self.assertFalse(bool(comparison.loc["SEM1A11", "Base calculável"]))
+        self.assertTrue(pd.isna(comparison.loc["SEM1A11", "Diferença para o menor"]))
+
+        recommendation = dashboard._freight_economic_recommendation(
+            comparison.reset_index(),
+            ["FRT1A11"],
+        )
+        self.assertEqual(recommendation["plate"], "TRP1A11")
+        self.assertEqual(recommendation["selected_plate"], "FRT1A11")
+        self.assertEqual(recommendation["savings"], 734)
 
     def test_fleet_cost_over_revenue_uses_aggregated_plate_totals(self):
         financial = pd.DataFrame(

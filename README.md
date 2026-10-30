@@ -159,6 +159,11 @@ permanecem com esse custo zerado mesmo quando a operacao simulada passa de dez
 horas. A comparacao permite selecionar varias placas e aplica o mesmo cenario de
 peso, distancia, equipe, hotel e margem a todas elas, respeitando a regra por KM
 da frota propria e a regra de diaria mais KM excedente dos freteiros.
+Ao escolher uma rota, a calculadora tambem avalia automaticamente todas as
+placas com base completa e informa a mais economica, mesmo sem selecao manual.
+Quando uma placa externa a comparacao manual for mais barata, o painel mostra a
+economia estimada. Placas sem diaria de Freteiro ou sem custo proprio por KM sao
+desconsideradas da recomendacao para nao parecerem artificialmente baratas.
 
 ## Plataforma de rotas
 
