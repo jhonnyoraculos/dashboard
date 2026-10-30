@@ -124,8 +124,8 @@ class RoutesDashboardTests(unittest.TestCase):
     def test_route_freight_profile_uses_route_averages_and_hotel_history(self):
         data = {
             "tempos_rotas": [
-                {"Rota ID": "r1", "Rota": "ROTA TESTE", "Peso Carga": 8_000, "KM Rodados": 400},
-                {"Rota ID": "r2", "Rota": "ROTA TESTE", "Peso Carga": 12_000, "KM Rodados": 600},
+                {"Rota ID": "r1", "Rota": "ROTA TESTE", "Peso Carga": 8_000, "KM Rodados": 400, "Dias Rota": 1},
+                {"Rota ID": "r2", "Rota": "ROTA TESTE", "Peso Carga": 12_000, "KM Rodados": 600, "Dias Rota": 2},
             ],
             "custos": {
                 "rotas": [
@@ -141,8 +141,42 @@ class RoutesDashboardTests(unittest.TestCase):
         self.assertEqual(profile["trip_count"], 2)
         self.assertEqual(profile["average_weight_kg"], 10_000)
         self.assertEqual(profile["average_distance_km"], 500)
+        self.assertEqual(profile["average_trip_days"], 1.5)
         self.assertTrue(profile["has_hotel"])
         self.assertEqual(profile["hotel_trips"], 1)
+
+    def test_freighter_quote_uses_daily_rate_and_route_average_days(self):
+        reference = dashboard._freight_plate_reference(
+            {
+                "categoria": "Freteiro",
+                "diaria": 750,
+                "dias_trabalhados": 3,
+                "gasto_diarias": 2_250,
+                "km_total": 0,
+            },
+            {"rate_per_km": 6.5, "hotel_daily_rate": 220, "rate_per_employee_hour": 0},
+        )
+
+        quote = dashboard._calculate_freight_quote(
+            reference,
+            weight_kg=4_000,
+            distance_km=330,
+            employees=2,
+            employee_hourly_rate=0,
+            margin_percent=10,
+            include_hotels=False,
+            freighter_trip_days=1.5,
+        )
+
+        self.assertTrue(reference["is_freighter"])
+        self.assertEqual(reference["freighter_daily_rate"], 750)
+        self.assertEqual(reference["rate_per_km"], 0)
+        self.assertEqual(quote["freighter_days"], 1.5)
+        self.assertEqual(quote["freighter_cost"], 1_125)
+        self.assertEqual(quote["vehicle_component"], 1_125)
+        self.assertEqual(quote["distance_component"], 0)
+        self.assertEqual(quote["estimated_cost"], 1_125)
+        self.assertEqual(quote["suggested_freight"], 1_237.5)
 
     def test_fleet_cost_over_revenue_uses_aggregated_plate_totals(self):
         financial = pd.DataFrame(

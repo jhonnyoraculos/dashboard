@@ -108,7 +108,9 @@ Excel inclui as abas `Importacao`, `Exemplo` e `Instrucoes`; preencha a aba
 A calculadora e acessada pelo atalho ao lado do titulo da pagina inicial. O
 usuario pode usar a media da frota ou escolher a placa do caminhao; nesse caso,
 o custo direto por km e obtido do historico de combustivel, manutencao,
-pedagio/extras e diarias da placa. A viagem usa a velocidade media de
+pedagio/extras e demais custos da placa. Quando a placa e Freteiro, o custo por
+KM nao e usado: a calculadora aplica a diaria cadastrada da placa aos dias da
+viagem. A viagem usa a velocidade media de
 80 km/h, e o peso e convertido em horas de descarga pela produtividade media de
 350 kg por hora. O tempo da viagem e o tempo da descarga sao somados e
 multiplicados pela quantidade de funcionarios e pelo salario medio por hora,
@@ -134,7 +136,10 @@ funcionarios e valor por hora. O hotel nao altera o custo por km da placa.
 A calculadora tambem esta disponivel dentro da plataforma de Rotas. Nesse modo,
 o usuario escolhe uma rota concluida e um caminhao; peso e KM sao preenchidos
 com as medias historicas da rota e podem ser ajustados para a simulacao. O custo
-por KM vem do historico do caminhao escolhido. Hotel so pode ser incluido quando
+por KM vem do historico do caminhao escolhido. Para Freteiro, a duracao tambem
+vem da media das viagens concluidas da rota e o custo e `diaria x dias medios da
+viagem`; se a diaria cadastrada estiver vazia, o sistema tenta a media historica
+paga da placa. Hotel so pode ser incluido quando
 a rota possui ao menos uma hospedagem historicamente vinculada; rotas sem hotel
 permanecem com esse custo zerado mesmo quando a operacao simulada passa de dez
 horas.
