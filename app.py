@@ -56,6 +56,7 @@ DB_TABLES = {
     "velocidade": "dashboard_velocidade",
     "placas": "dashboard_placas",
     "salarios_transporte": "dashboard_salarios_transporte",
+    "diarias_equipe": "dashboard_diarias_equipe",
     "alertas_vex": "dashboard_alertas_vex",
 }
 DB_METADATA_TABLE = "dashboard_metadata"
@@ -91,6 +92,7 @@ _OVERVIEW_CACHE = {"mtimes": None, "dados": None}
 _PLATE_REGISTRY_CACHE = {"mtime": None, "df": None, "lock": threading.Lock()}
 _PLACAS_CACHE = {"mtime": None, "df": None, "lock": threading.Lock()}
 _SALARIOS_TRANSPORTE_CACHE = {"mtime": None, "df": None, "lock": threading.Lock()}
+_DIARIAS_EQUIPE_CACHE = {"mtime": None, "df": None, "lock": threading.Lock()}
 _ALERTAS_VEX_CACHE = {"mtime": None, "df": None, "lock": threading.Lock()}
 _TEXT_REGISTRY_CACHES = {
     "combustiveis": {"mtime": None, "df": None, "lock": threading.Lock()},
@@ -112,6 +114,7 @@ _CACHE_MAP = {
     "velocidade": _VELOCIDADE_CACHE,
     "placas": _PLACAS_CACHE,
     "salarios_transporte": _SALARIOS_TRANSPORTE_CACHE,
+    "diarias_equipe": _DIARIAS_EQUIPE_CACHE,
     "alertas_vex": _ALERTAS_VEX_CACHE,
 }
 
@@ -243,6 +246,10 @@ _VELOCIDADE_COLUMNS = [
 ]
 _PLACAS_COLUMNS = ["PLACA", "Categoria", "Diaria"]
 _SALARIOS_TRANSPORTE_COLUMNS = ["Mes", "Valor"]
+_DIARIAS_EQUIPE_COLUMNS = [
+    "Inicio", "Fim", "Mes", "Colaborador", "Funcao", "Valor",
+    "Arquivo", "Hash Documento", "Importado Em",
+]
 _ALERTAS_VEX_COLUMNS = ["Data", "Mes", "PLACA", "Local", "IGN", "Categoria"]
 _ALERTAS_VEX_SEED_PATH = Path(__file__).resolve().parent / "data" / "alertas_vex_base.csv"
 _PLATE_ALIASES = {
@@ -266,6 +273,7 @@ _DATASET_COLUMNS = {
     "velocidade": _VELOCIDADE_COLUMNS,
     "placas": _PLACAS_COLUMNS,
     "salarios_transporte": _SALARIOS_TRANSPORTE_COLUMNS,
+    "diarias_equipe": _DIARIAS_EQUIPE_COLUMNS,
     "alertas_vex": _ALERTAS_VEX_COLUMNS,
 }
 _COLUMN_SQL_TYPES = {
@@ -716,6 +724,7 @@ def _snapshot_record_cache(dataset: str) -> dict | None:
         "combustivel_km",
         "empilhadeira_horas",
         "salarios_transporte",
+        "diarias_equipe",
         "manutencao",
         "pneus",
         "hoteis",
@@ -760,6 +769,13 @@ def _cached_record_frame(dataset: str, prepared: dict) -> pd.DataFrame:
         frame = _finalize_common(frame, numeric_columns=["Horas"], plate_columns=["PLACA"])
     elif dataset == "salarios_transporte":
         frame = _finalize_common(frame, numeric_columns=["Valor"])
+    elif dataset == "diarias_equipe":
+        frame = _finalize_common(
+            frame,
+            date_columns=["Inicio", "Fim"],
+            numeric_columns=["Valor"],
+            text_columns=["Colaborador", "Funcao", "Arquivo", "Hash Documento"],
+        )
     elif dataset == "manutencao":
         frame = _finalize_common(
             frame,
@@ -3633,6 +3649,34 @@ def load_salarios_transporte() -> pd.DataFrame:
         cache["mtime"] = version
         cache["df"] = salarios.copy()
         return salarios.copy()
+
+
+def load_diarias_equipe() -> pd.DataFrame:
+    """Carrega os totais originais dos RDVs, sem estimar valores por dia."""
+    cache = _DIARIAS_EQUIPE_CACHE
+    with cache["lock"]:
+        version = _db_version("diarias_equipe")
+        cached = cache.get("df")
+        if cached is not None and cache.get("mtime") == version:
+            return cached.copy()
+        try:
+            diarias = _read_database_table("diarias_equipe", _DIARIAS_EQUIPE_COLUMNS)
+            diarias = _finalize_common(
+                diarias,
+                date_columns=["Inicio", "Fim"],
+                numeric_columns=["Valor"],
+                text_columns=["Colaborador", "Funcao", "Arquivo", "Hash Documento"],
+            )
+            diarias["Valor"] = pd.to_numeric(diarias["Valor"], errors="coerce").fillna(0.0).clip(lower=0)
+            diarias = diarias.dropna(subset=["Mes"])
+        except Exception:
+            diarias = _empty(_DIARIAS_EQUIPE_COLUMNS)
+        diarias = diarias[_DIARIAS_EQUIPE_COLUMNS].sort_values(
+            ["Inicio", "Colaborador"], na_position="last"
+        ).reset_index(drop=True)
+        cache["mtime"] = version
+        cache["df"] = diarias.copy()
+        return diarias.copy()
 
 
 def _load_text_registry(dataset: str, columns: list[str], column: str) -> pd.DataFrame:
@@ -7529,6 +7573,10 @@ def data_frota(params: dict | None = None) -> dict:
         not categorias_filtro
         or any(_normalize_category_value(category) == "Transporte" for category in categorias_filtro)
     )
+    include_original_dailies = (
+        not categorias_filtro
+        or any(_normalize_category_value(category) == "Transporte" for category in categorias_filtro)
+    )
     incluir_hoteis = _truthy_param(params.get("incluir_hoteis"))
     rotas = _ranking_parse_route_list(params.get("rota"))
     placas = _ranking_parse_plate_list(params.get("placa"))
@@ -7550,6 +7598,11 @@ def data_frota(params: dict | None = None) -> dict:
         load_salarios_transporte()
         if include_transport_salary
         else _empty(_SALARIOS_TRANSPORTE_COLUMNS)
+    )
+    df_diarias_equipe = (
+        load_diarias_equipe()
+        if include_original_dailies
+        else _empty(_DIARIAS_EQUIPE_COLUMNS)
     )
     df_peso_transport_base = _ranking_filter_categories(df_peso, ["Transporte"])
 
@@ -7579,6 +7632,8 @@ def data_frota(params: dict | None = None) -> dict:
         year_frames.append(df_hoteis_base)
     if include_transport_salary:
         year_frames.append(df_salarios_transporte)
+    if include_original_dailies:
+        year_frames.append(df_diarias_equipe)
     for df_src in year_frames:
         anos_disponiveis.update(_unique_years(df_src))
         anos_disponiveis.update(df_src.attrs.get("anos_sheets", []))
@@ -7598,6 +7653,8 @@ def data_frota(params: dict | None = None) -> dict:
         month_frames.append(df_hoteis_base)
     if include_transport_salary:
         month_frames.append(df_salarios_transporte)
+    if include_original_dailies:
+        month_frames.append(df_diarias_equipe)
     if ano is not None:
         month_frames = [_filter_by_period(df, ano=ano) for df in month_frames]
     month_source = [df[["Mes"]] for df in month_frames if not df.empty and "Mes" in df.columns]
@@ -7627,6 +7684,11 @@ def data_frota(params: dict | None = None) -> dict:
         _apply_period(df_salarios_transporte)
         if include_transport_salary
         else _empty(_SALARIOS_TRANSPORTE_COLUMNS)
+    )
+    df_diarias_period = (
+        _apply_period(df_diarias_equipe)
+        if include_original_dailies and not rotas and not placas
+        else _empty(_DIARIAS_EQUIPE_COLUMNS)
     )
 
     def _route_month_scope(df: pd.DataFrame, active_months: set[str]) -> pd.DataFrame:
@@ -7922,6 +7984,7 @@ def data_frota(params: dict | None = None) -> dict:
         (df_diarias, "Custo"),
         (df_salario_costs, "Custo"),
         (df_salario_nao_rateado, "Custo"),
+        (df_diarias_period, "Valor"),
     ]
     if incluir_hoteis:
         mensal_total_frames.append((df_hoteis_costs, "Valor"))
@@ -8020,7 +8083,12 @@ def data_frota(params: dict | None = None) -> dict:
         if not df_salario_costs.empty and {"Data", "PLACA"}.issubset(df_salario_costs.columns)
         else 0
     )
-    total_gasto = total_gasto_placas + total_hoteis + salario_nao_rateado
+    total_diarias_equipe = (
+        float(pd.to_numeric(df_diarias_period.get("Valor"), errors="coerce").fillna(0).sum())
+        if "Valor" in df_diarias_period.columns
+        else 0.0
+    )
+    total_gasto = total_gasto_placas + total_hoteis + salario_nao_rateado + total_diarias_equipe
     total_placas = len(ranking)
     total_dias_na_rota = sum(row["dias_na_rota"] for row in ranking)
     total_manutencao = sum(row["manutencao"] for row in ranking)
@@ -8081,6 +8149,7 @@ def data_frota(params: dict | None = None) -> dict:
             "dias_na_rota": total_dias_na_rota,
             "pedagio": round(sum(row["pedagio"] for row in ranking), 2),
             "gasto_diarias": round(sum(row["gasto_diarias"] for row in ranking), 2),
+            "diarias_equipe": round(total_diarias_equipe, 2),
             "salario_transporte": round(total_salario_transporte, 2),
             "salario_transporte_dias": total_salario_transporte_dias,
             "dias_trabalhados": sum(row["dias_trabalhados"] for row in ranking),

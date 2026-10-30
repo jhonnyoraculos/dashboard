@@ -62,6 +62,7 @@ _backend_features_ready = all(
         "update_route_history_rows",
         "collaborator_name_summary",
         "merge_collaborator_names",
+        "load_diarias_equipe",
     )
 )
 _backend_aluguel_period_ready = {"Inicio", "Fim"}.issubset(
@@ -80,7 +81,7 @@ MUTED = "#6B7280"
 CARD_BORDER = "#c2d2f3"
 LOGO_PATH = Path(__file__).parent / "static" / "logo-jr.png"
 CURRENT_YEAR = date.today().year
-APP_VERSION = "global-groq-assistant-v63"
+APP_VERSION = "rdv-original-dailies-v64"
 LOGGER = logging.getLogger("jr_dashboard.streamlit")
 RANK_ROUTES_ENABLED = True
 ROUTE_CACHE_TTL_SECONDS = max(int(os.environ.get("JR_ROUTE_CACHE_TTL_SECONDS", "180") or 180), 30)
@@ -139,7 +140,7 @@ BRAZIL_STATE_CODES = {
 CITY_COORDINATES_CATALOG_PATH = Path(__file__).parent / "static" / "municipios_brasil_coordinates.json"
 _CITY_COORDINATE_CATALOG: tuple[dict[str, tuple[float, float]], dict[str, tuple[float, float]]] | None = None
 CATEGORY_OPTIONS = ["Transporte", "Freteiro", "Empilhadeira", "Estoque", "Vex", "Equipamento"]
-CADASTRO_TABS = ["Placas", "Rotas", "Empilhadeiras", "Combustível", "KM mensal", "Manutenção", "Pneus", "Hotéis", "Peso", "Velocidade", "Pedágio/Extras", "Aluguel de veículos"]
+CADASTRO_TABS = ["Placas", "Diárias", "Rotas", "Empilhadeiras", "Combustível", "KM mensal", "Manutenção", "Pneus", "Hotéis", "Peso", "Velocidade", "Pedágio/Extras", "Aluguel de veículos"]
 PEDAGIO_TIPO_OPTIONS = ["Pedágio", "Extras", "Táxi", "IPVA", "Seguro", "Licenciamento", "DPVAT", "Outros"]
 PEDAGIO_OPTIONAL_PLATE_TYPES = {"Extras", "Táxi"}
 BACKUP_INTERVAL_DAYS = 7
@@ -151,6 +152,7 @@ BACKUP_TABLES = [
         "salarios_transporte",
         backend.load_salarios_transporte,
     ),
+    ("diarias_equipe", "Diárias da equipe (RDV)", "diarias_equipe", backend.load_diarias_equipe),
     ("combustivel", "Combustível", "combustivel", backend.load_combustivel),
     ("combustivel_km", "KM mensal", "km_mensal", backend.load_combustivel_km),
     ("empilhadeira_horas", "Horas empilhadeiras", "horas_empilhadeiras", backend.load_empilhadeira_horas),
@@ -7598,6 +7600,14 @@ def render_frota() -> None:
                 "#7C3AED",
             )
         )
+    if _ranking_float(totais, "diarias_equipe") > 0:
+        cost_kpis.append(
+            (
+                "Diárias da equipe (RDV)",
+                fmt_brl_big(totais.get("diarias_equipe")),
+                "#0F766E",
+            )
+        )
     if _ranking_float(totais, "salario_transporte") > 0:
         if selected_routes:
             salary_label = (
@@ -10468,6 +10478,150 @@ def _read_fuel_receipt_image(image_bytes: bytes) -> dict[str, object]:
         "confidence": (sum(scores) / len(scores)) if scores else 0.0,
         "line_count": len(lines),
     }
+
+
+@st.cache_data(show_spinner=False, max_entries=24)
+def _read_rdv_document(file_bytes: bytes, file_name: str) -> str:
+    """Extrai texto do RDV sem interpretar os lançamentos internos."""
+    suffix = Path(file_name).suffix.lower()
+    if suffix == ".pdf":
+        from pypdf import PdfReader
+
+        reader = PdfReader(BytesIO(file_bytes))
+        return "\n".join((page.extract_text() or "") for page in reader.pages)
+    return str(_read_fuel_receipt_image(file_bytes).get("text") or "")
+
+
+def _parse_rdv_total_text(raw_text: str, *, file_name: str = "") -> dict[str, object]:
+    """Lê apenas o total do rodapé do RDV; adiantamentos e linhas são ignorados."""
+    text = clean_text(raw_text).replace("\r", "\n")
+    compact = re.sub(r"[ \t]+", " ", text)
+    upper = compact.upper()
+
+    name_match = re.search(
+        r"\bNOME\s*[:.]\s*(.+?)(?=\s+(?:DATA\s+QUINZENA|HOUVE\s+ADIANTAMENTO|DATA\s*$))",
+        compact,
+        flags=re.IGNORECASE,
+    )
+    collaborator = clean_text(name_match.group(1)).strip(" -:") if name_match else ""
+    if collaborator:
+        collaborator = re.split(r"\s{2,}|DATA\s+QUINZENA|HOUVE\s+ADIANTAMENTO", collaborator, maxsplit=1, flags=re.IGNORECASE)[0].strip()
+
+    role = "Ajudante de motorista" if "AJUDANTE" in upper else "Motorista"
+    period_match = re.search(
+        r"DATA\s+QUINZENA[\s\S]{0,100}?(\d{2}/\d{2}/\d{4})\s*(?:A|AT[EÉ]|-)\s*(\d{2}/\d{2}/\d{4})",
+        upper,
+    )
+    if not period_match:
+        dates = re.findall(r"\b\d{2}/\d{2}/\d{4}\b", upper)
+        period_values = dates[:2]
+    else:
+        period_values = [period_match.group(1), period_match.group(2)]
+    inicio = pd.to_datetime(period_values[0], dayfirst=True, errors="coerce") if period_values else pd.NaT
+    fim = pd.to_datetime(period_values[1], dayfirst=True, errors="coerce") if len(period_values) > 1 else inicio
+
+    total_match = re.search(
+        r"TOTAL\s+DA\s+QUINZENA[\s\S]{0,100}?([0-9][0-9. ]*,\s*[0-9]{2})",
+        upper,
+    )
+    total = _parse_brl_number(total_match.group(1).replace(" ", "")) if total_match else None
+    return {
+        "Inicio": inicio.date() if pd.notna(inicio) else None,
+        "Fim": fim.date() if pd.notna(fim) else None,
+        "Mes": f"{fim.year}-{fim.month:02d}" if pd.notna(fim) else "",
+        "Colaborador": collaborator,
+        "Funcao": role,
+        "Valor": total,
+        "Arquivo": file_name,
+    }
+
+
+def _render_rdv_import() -> None:
+    st.markdown("#### Importar diárias originais por RDV")
+    st.caption(
+        "Envie PDF, foto ou imagem do relatório. O sistema usa somente o **Total da quinzena** "
+        "do rodapé; adiantamento, hotel e valores das linhas não são somados novamente."
+    )
+    files = st.file_uploader(
+        "Relatórios de despesas de viagem",
+        type=["pdf", "png", "jpg", "jpeg", "webp"],
+        accept_multiple_files=True,
+        key="cad_rdv_files",
+    )
+    if files:
+        rows: list[dict[str, object]] = []
+        with st.spinner("Lendo os totais dos RDVs..."):
+            for uploaded in files:
+                raw = uploaded.getvalue()
+                parsed = _parse_rdv_total_text(
+                    _read_rdv_document(raw, uploaded.name),
+                    file_name=uploaded.name,
+                )
+                parsed["Hash Documento"] = hashlib.sha256(raw).hexdigest()
+                rows.append(parsed)
+        preview = pd.DataFrame(rows)
+        edited = st.data_editor(
+            preview,
+            width="stretch",
+            hide_index=True,
+            disabled=["Arquivo", "Hash Documento", "Mes"],
+            column_config={
+                "Inicio": st.column_config.DateColumn("Início", format="DD/MM/YYYY"),
+                "Fim": st.column_config.DateColumn("Fim", format="DD/MM/YYYY"),
+                "Mes": st.column_config.TextColumn("Mês"),
+                "Colaborador": st.column_config.TextColumn("Colaborador"),
+                "Funcao": st.column_config.SelectboxColumn(
+                    "Função", options=["Motorista", "Ajudante de motorista"]
+                ),
+                "Valor": _money_col("Total da quinzena"),
+                "Arquivo": st.column_config.TextColumn("Arquivo"),
+                "Hash Documento": None,
+            },
+            key="cad_rdv_preview",
+        )
+        invalid = edited[
+            edited["Colaborador"].astype("string").fillna("").str.strip().eq("")
+            | pd.to_numeric(edited["Valor"], errors="coerce").isna()
+            | pd.to_numeric(edited["Valor"], errors="coerce").le(0)
+        ]
+        if not invalid.empty:
+            st.warning("Revise os documentos destacados: nome e Total da quinzena são obrigatórios.")
+        if st.button(
+            f"Importar {len(edited)} RDV(s)",
+            type="primary",
+            width="stretch",
+            disabled=not invalid.empty,
+            key="cad_rdv_import_button",
+        ):
+            imported_at = datetime.now(timezone.utc)
+            for row in edited.to_dict("records"):
+                end = pd.to_datetime(row.get("Fim"), errors="coerce")
+                row["Mes"] = f"{end.year}-{end.month:02d}" if pd.notna(end) else row.get("Mes")
+                row["Importado Em"] = imported_at
+                backend.save_dashboard_record(
+                    "diarias_equipe",
+                    row,
+                    replace_keys=["Hash Documento"],
+                )
+            clear_cached_reads()
+            st.success(f"{len(edited)} RDV(s) salvo(s). O total já entra na página principal.")
+            st.rerun()
+
+    _render_dataset_editor(
+        "diarias_equipe",
+        backend.load_diarias_equipe,
+        ["Inicio", "Fim", "Mes", "Colaborador", "Funcao", "Valor", "Arquivo", "Hash Documento", "Importado Em"],
+        ["Inicio", "Fim", "Mes", "Colaborador", "Funcao", "Valor", "Arquivo", "Hash Documento"],
+        "cad_diarias_equipe_table",
+        {
+            "Inicio": st.column_config.DateColumn("Início", format="DD/MM/YYYY"),
+            "Fim": st.column_config.DateColumn("Fim", format="DD/MM/YYYY"),
+            "Valor": _money_col("Total original"),
+            "Hash Documento": st.column_config.TextColumn("Identificador", disabled=True),
+            "Importado Em": st.column_config.DatetimeColumn("Importado em", disabled=True),
+        },
+        ["Mes", "Colaborador", "Funcao", "Arquivo"],
+    )
 
 
 @st.cache_data(show_spinner=False, max_entries=16)
@@ -13867,6 +14021,10 @@ def render_cadastro() -> None:
                     _save_plate_sheet(plate_map, edited_plates, plate_daily_map)
             else:
                 st.info("Cadastre a primeira placa para liberar a edição.")
+
+        if active_tab == "Diárias":
+            with st.container(border=True):
+                _render_rdv_import()
 
         if active_tab == "Rotas":
             _render_route_registry(plate_map)

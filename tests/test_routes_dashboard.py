@@ -54,6 +54,23 @@ def sample_payload() -> dict:
 
 
 class RoutesDashboardTests(unittest.TestCase):
+    def test_rdv_parser_uses_only_footer_total(self):
+        text = """
+        RELATÓRIO DE DESPESAS DE VIAGEM - RDV - AJUDANTE DE MOTORISTA
+        NOME: EDER SILVA
+        DATA QUINZENA (INÍCIO E FINAL): 12/10/2026 a 24/10/2026
+        HOUVE ADIANTAMENTO DE DIÁRIA? SIM NO VALOR DE R$ 1.000,00
+        13/10/2026 OURO PRETO HOTEL R$ 180,00 DIÁRIA R$ 100,00
+        TOTAL DA QUINZENA EM R$ -----> R$ 732,00
+        """
+        parsed = dashboard._parse_rdv_total_text(text, file_name="rdv.jpg")
+        self.assertEqual(parsed["Colaborador"], "EDER SILVA")
+        self.assertEqual(parsed["Funcao"], "Ajudante de motorista")
+        self.assertEqual(parsed["Inicio"], date(2026, 10, 12))
+        self.assertEqual(parsed["Fim"], date(2026, 10, 24))
+        self.assertEqual(parsed["Mes"], "2026-10")
+        self.assertEqual(parsed["Valor"], 732.0)
+
     def test_ai_broken_inline_table_is_normalized_for_chat(self):
         raw = "## Projeção | Métrica |---| Valor observado | **Conclusão** custo estável"
         normalized = dashboard._normalize_ai_markdown(raw)
