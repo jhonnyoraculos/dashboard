@@ -80,7 +80,7 @@ MUTED = "#6B7280"
 CARD_BORDER = "#c2d2f3"
 LOGO_PATH = Path(__file__).parent / "static" / "logo-jr.png"
 CURRENT_YEAR = date.today().year
-APP_VERSION = "global-groq-assistant-v58"
+APP_VERSION = "global-groq-assistant-v59"
 LOGGER = logging.getLogger("jr_dashboard.streamlit")
 RANK_ROUTES_ENABLED = True
 ROUTE_CACHE_TTL_SECONDS = max(int(os.environ.get("JR_ROUTE_CACHE_TTL_SECONDS", "180") or 180), 30)
@@ -17766,8 +17766,14 @@ def _render_route_freight_calculator(
             else:
                 best_plate = str(eligible_comparison.iloc[0]["Placa"])
                 best_price = float(eligible_comparison.iloc[0]["Frete sugerido"])
+                highest_row = eligible_comparison.sort_values("Frete sugerido", ascending=False).iloc[0]
+                highest_plate = str(highest_row["Placa"])
+                highest_price = float(highest_row["Frete sugerido"])
+                price_difference = max(highest_price - best_price, 0.0)
                 st.success(
-                    f"Menor frete sugerido neste cenário: {best_plate} — {fmt_brl(best_price)}."
+                    f"Mais econômica: {best_plate} — {fmt_brl(best_price, compact_threshold=float('inf'))}. "
+                    f"Mais cara: {highest_plate} — {fmt_brl(highest_price, compact_threshold=float('inf'))}. "
+                    f"Diferença: {fmt_brl(price_difference, compact_threshold=float('inf'))}."
                 )
                 comparison_chart = metric_bar_chart(
                     eligible_comparison["Placa"].tolist(),
@@ -17777,7 +17783,15 @@ def _render_route_freight_calculator(
                     color="#0F766E",
                 )
                 comparison_chart.update_traces(
-                    text=[fmt_brl(value) for value in eligible_comparison["Frete sugerido"]],
+                    text=[
+                        (
+                            f"{fmt_brl(value, compact_threshold=float('inf'))}"
+                            if abs(float(value) - best_price) < 0.005
+                            else f"{fmt_brl(value, compact_threshold=float('inf'))} "
+                            f"(+{fmt_brl(float(value) - best_price, compact_threshold=float('inf'))})"
+                        )
+                        for value in eligible_comparison["Frete sugerido"]
+                    ],
                     hovertemplate="<b>%{y}</b><br>Frete sugerido: R$ %{x:,.2f}<extra></extra>",
                 )
                 st.plotly_chart(comparison_chart, width="stretch", config=PLOTLY_CONFIG)
