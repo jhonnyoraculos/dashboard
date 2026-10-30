@@ -80,7 +80,7 @@ MUTED = "#6B7280"
 CARD_BORDER = "#c2d2f3"
 LOGO_PATH = Path(__file__).parent / "static" / "logo-jr.png"
 CURRENT_YEAR = date.today().year
-APP_VERSION = "global-groq-assistant-v59"
+APP_VERSION = "global-groq-assistant-v60"
 LOGGER = logging.getLogger("jr_dashboard.streamlit")
 RANK_ROUTES_ENABLED = True
 ROUTE_CACHE_TTL_SECONDS = max(int(os.environ.get("JR_ROUTE_CACHE_TTL_SECONDS", "180") or 180), 30)
@@ -7964,11 +7964,11 @@ def render_calculadora_frete() -> None:
                 driver_daily_rate = st.number_input(
                     "Diária do motorista (R$)",
                     min_value=0.0,
-                    value=0.0,
+                    value=FREIGHT_ASSISTANT_OTHER_DAILY_RATE,
                     step=10.0,
                     format="%.2f",
                     key=f"frete_driver_daily_{selected_plate or 'sem_placa'}",
-                    help="Adicional ao salário e válido somente nesta simulação.",
+                    help="Sem rota selecionada, o padrão é R$ 100. É adicional ao salário e válido somente nesta simulação.",
                 )
             with team_cols[3]:
                 assistant_daily_rate = st.number_input(
@@ -17462,11 +17462,14 @@ def _render_route_freight_calculator(
             driver_daily_rate = st.number_input(
                 "Diária do motorista (R$)",
                 min_value=0.0,
-                value=0.0,
+                value=_freight_assistant_daily_rate(selected_route),
                 step=10.0,
                 format="%.2f",
                 key=f"routes_freight_driver_daily_{route_token}_{plate_token}",
-                help="É adicional ao salário e vale somente para esta simulação.",
+                help=(
+                    "Padrão de R$ 32 para rotas com Divinópolis ou Carmo do Cajuru e R$ 100 para as demais cidades. "
+                    "É adicional ao salário e vale somente para esta simulação."
+                ),
             )
         with team_cols[3]:
             assistant_default_rate = _freight_assistant_daily_rate(selected_route)

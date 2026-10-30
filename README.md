@@ -113,11 +113,11 @@ KM nao e usado: a calculadora aplica a diaria cadastrada da placa aos dias da
 viagem, sempre em dias inteiros: qualquer fracao de dia e arredondada para a
 proxima diaria completa. A diaria cobre os primeiros 120 km; a distancia excedente usa a tarifa
 padrao de R$ 4,60 por km. A diaria e a tarifa excedente podem ser alteradas na
-simulacao sem modificar o cadastro. A diaria de cada ajudante e somada pelos
-mesmos dias inteiros da viagem: o padrao e R$ 32 quando a descricao da rota
+simulacao sem modificar o cadastro. As diarias do motorista e de cada ajudante
+usam os mesmos dias inteiros da viagem: o padrao e R$ 32 quando a descricao da rota
 contem Divinopolis ou Carmo do Cajuru, inclusive prefixos e variacoes como
-`D+0,5 DIVINOPOLIS`; nas demais rotas, o padrao e R$ 100. Esse valor tambem pode
-ser alterado somente para a simulacao. A viagem usa a velocidade media de
+`D+0,5 DIVINOPOLIS`; nas demais rotas, o padrao de ambos e R$ 100. Esses valores
+podem ser alterados separadamente somente para a simulacao. A viagem usa a velocidade media de
 80 km/h, e o peso e convertido em horas de descarga pela produtividade media de
 350 kg por hora. O resultado separa o custo estimado do valor sugerido com a
 margem informada.
