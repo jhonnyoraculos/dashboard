@@ -110,7 +110,8 @@ usuario pode usar a media da frota ou escolher a placa do caminhao; nesse caso,
 o custo direto por km e obtido do historico de combustivel, manutencao,
 pedagio/extras e demais custos da placa. Quando a placa e Freteiro, o custo por
 KM nao e usado: a calculadora aplica a diaria cadastrada da placa aos dias da
-viagem. A diaria cobre os primeiros 120 km; a distancia excedente usa a tarifa
+viagem, sempre em dias inteiros: qualquer fracao de dia e arredondada para a
+proxima diaria completa. A diaria cobre os primeiros 120 km; a distancia excedente usa a tarifa
 padrao de R$ 4,60 por km. A diaria e a tarifa excedente podem ser alteradas na
 simulacao sem modificar o cadastro. Para Freteiro, a diaria de um ajudante e
 somada pelos mesmos dias da viagem: o padrao e R$ 32 quando a descricao da rota
@@ -150,8 +151,8 @@ A calculadora tambem esta disponivel dentro da plataforma de Rotas. Nesse modo,
 o usuario escolhe uma rota concluida e um caminhao; peso e KM sao preenchidos
 com as medias historicas da rota e podem ser ajustados para a simulacao. O custo
 por KM vem do historico do caminhao escolhido. Para Freteiro, a duracao tambem
-vem da media das viagens concluidas da rota e o custo e `diaria x dias medios da
-viagem`; se a diaria cadastrada estiver vazia, o sistema tenta a media historica
+vem da media das viagens concluidas da rota; essa media e arredondada para cima e
+o custo e `diaria x dias inteiros cobrados`. Se a diaria cadastrada estiver vazia, o sistema tenta a media historica
 paga da placa. Hotel so pode ser incluido quando
 a rota possui ao menos uma hospedagem historicamente vinculada; rotas sem hotel
 permanecem com esse custo zerado mesmo quando a operacao simulada passa de dez
