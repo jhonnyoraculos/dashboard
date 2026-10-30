@@ -80,7 +80,7 @@ MUTED = "#6B7280"
 CARD_BORDER = "#c2d2f3"
 LOGO_PATH = Path(__file__).parent / "static" / "logo-jr.png"
 CURRENT_YEAR = date.today().year
-APP_VERSION = "global-groq-assistant-v61"
+APP_VERSION = "global-groq-assistant-v62"
 LOGGER = logging.getLogger("jr_dashboard.streamlit")
 RANK_ROUTES_ENABLED = True
 ROUTE_CACHE_TTL_SECONDS = max(int(os.environ.get("JR_ROUTE_CACHE_TTL_SECONDS", "180") or 180), 30)
@@ -16326,8 +16326,9 @@ def _render_rotas_v4() -> None:
     with cost_tab:
         st.markdown("#### Custos associados às rotas concluídas")
         st.caption(
-            "Combustível é ligado pela placa, período e proximidade do posto. Manutenção e pedágio são rateados entre "
-            "rotas da mesma placa no mesmo dia. Salários usam os dias operacionais; hotéis são vinculados a uma "
+            "Combustível usa o custo histórico real por KM de cada placa. Manutenção e pedágio são rateados entre "
+            "rotas da mesma placa no mesmo dia. As diárias usam cada dia da rota concluída: frota própria recebe "
+            "motorista + ajudante e Freteiro recebe somente ajudante. Salários usam os dias operacionais; hotéis são vinculados a uma "
             "rota específica pela data e pelo nome encontrado como motorista ou ajudante."
         )
         render_kpis(
@@ -16344,6 +16345,7 @@ def _render_rotas_v4() -> None:
         else:
             numeric_cost_columns = [
                 "Combustivel", "Manutencao", "Pedagio", "Hoteis", "Salarios", "Freteiro",
+                "Diaria Motorista", "Diaria Ajudante", "Diarias Equipe",
                 "Custo total", "Ganho entregas", "Resultado", "Custo sobre ganho %",
             ]
             for column in numeric_cost_columns:
@@ -16566,8 +16568,9 @@ def _render_rotas_v4() -> None:
 
             st.markdown("**Todas as viagens e composição dos custos**")
             cost_columns = [
-                "Data", "Rota", "PLACA", "Motorista", "Entregas", "KM Rodados", "Dias Rota", "Combustivel",
-                "Manutencao", "Pedagio", "Hoteis", "Salarios", "Freteiro", "Custo total", "Custo por entrega",
+                "Data", "Rota", "PLACA", "Motorista", "Ajudante", "Entregas", "KM Rodados", "Dias Rota", "Combustivel",
+                "Manutencao", "Pedagio", "Hoteis", "Salarios", "Freteiro", "Diaria Motorista", "Diaria Ajudante",
+                "Diarias Equipe", "Custo total", "Custo por entrega",
                 "Ganho entregas", "Resultado", "Custo sobre ganho %",
             ]
             column_config = {
@@ -16578,6 +16581,9 @@ def _render_rotas_v4() -> None:
                 "Hoteis": _money_col("Hotéis"),
                 "Salarios": _money_col("Salários"),
                 "Freteiro": _money_col("Freteiro"),
+                "Diaria Motorista": _money_col("Diária motorista"),
+                "Diaria Ajudante": _money_col("Diária ajudante"),
+                "Diarias Equipe": _money_col("Diárias da equipe"),
                 "Custo total": _money_col("Custo total"),
                 "Custo por entrega": _money_col("Custo por entrega"),
                 "Ganho entregas": _money_col("Ganho das entregas"),
@@ -17102,7 +17108,7 @@ def _route_executive_kpis(data: dict, comparison: dict | None = None) -> None:
         ("Entregas realizadas", data.get("entregas_total"), comparison.get("entregas_total"), fmt_num(data.get("entregas_total"), 0), "□", "#172554", [row.get("Entregas") for row in monthly], False, "Quantidade de pedidos/entregas pertencentes às rotas concluídas."),
         ("Quilômetros percorridos", data.get("km_total"), comparison.get("km_total"), f"{fmt_num(data.get('km_total'), 1)} km", "↗", "#D97706", [row.get("KM") for row in monthly], False, "Soma dos quilômetros informados nas rotas concluídas; freteiros sem KM não são inventados."),
         ("Peso transportado", data.get("peso_total"), comparison.get("peso_total"), fmt_peso(data.get("peso_total")), "◇", "#7C3AED", [row.get("Peso kg") for row in monthly], False, "Soma dos pesos dos pedidos, nunca o peso de manifesto divergente."),
-        ("Custo operacional", costs.get("total_custo"), previous_costs.get("total_custo"), fmt_brl(costs.get("total_custo")), "R$", "#DC2626", [row.get("Custo total") for row in cost_monthly], True, "Custos atribuídos: combustível, manutenção, pedágio/extras, hotéis, salários e freteiros, conforme disponibilidade."),
+        ("Custo operacional", costs.get("total_custo"), previous_costs.get("total_custo"), fmt_brl(costs.get("total_custo")), "R$", "#DC2626", [row.get("Custo total") for row in cost_monthly], True, "Custos atribuídos: combustível, manutenção, pedágio/extras, hotéis, salários, diárias de motorista/ajudante e freteiros, conforme disponibilidade."),
         ("Resultado operacional", costs.get("resultado"), previous_costs.get("resultado"), fmt_brl(costs.get("resultado")), "Σ", "#0F766E", [row.get("Resultado") for row in cost_monthly], False, "Receita atribuída menos os custos incluídos no painel. Não representa lucro líquido contábil."),
     ]
     cards = []
@@ -17126,7 +17132,8 @@ def _route_financial_frame(data: dict) -> pd.DataFrame:
     if "Rota ID" in columns:
         costs = costs.merge(activity[columns].drop_duplicates("Rota ID"), on="Rota ID", how="left")
     numeric = [
-        "Combustivel", "Manutencao", "Pedagio", "Hoteis", "Salarios", "Freteiro", "Custo total",
+        "Combustivel", "Manutencao", "Pedagio", "Hoteis", "Salarios", "Freteiro",
+        "Diaria Motorista", "Diaria Ajudante", "Diarias Equipe", "Custo total",
         "Combustivel R$/km", "Combustivel Historico", "KM Historico Combustivel",
         "Ganho entregas", "Resultado", "Custo sobre ganho %", "Entregas", "KM Rodados", "Peso Carga", "Dias Rota",
     ]
@@ -18086,10 +18093,10 @@ def _route_cost_change_snapshot(
     *,
     today: date | pd.Timestamp | None = None,
 ) -> dict[str, object]:
-    categories = ["Combustivel", "Manutencao", "Pedagio", "Hoteis", "Salarios", "Freteiro"]
+    categories = ["Combustivel", "Manutencao", "Pedagio", "Hoteis", "Salarios", "Diarias Equipe", "Freteiro"]
     labels = {
         "Combustivel": "Combustível", "Manutencao": "Manutenção", "Pedagio": "Pedágio/extras",
-        "Hoteis": "Hospedagem", "Salarios": "Mão de obra", "Freteiro": "Freteiros",
+        "Hoteis": "Hospedagem", "Salarios": "Salários", "Diarias Equipe": "Diárias da equipe", "Freteiro": "Freteiros",
     }
     if financial.empty or "Data" not in financial.columns:
         return {"disponivel": False, "motivo": "Não há datas financeiras suficientes."}
@@ -18241,12 +18248,13 @@ def _route_management_pdf(data_json: str, period_label: str) -> bytes:
     composition = [
         ("Combustível", "Combustivel", blue), ("Manutenção", "Manutencao", "#7C3AED"),
         ("Pedágio/extras", "Pedagio", orange), ("Hospedagem", "Hoteis", "#0EA5E9"),
-        ("Mão de obra", "Salarios", green), ("Freteiros", "Freteiro", red),
+        ("Salários", "Salarios", green), ("Diárias da equipe", "Diarias Equipe", "#F59E0B"),
+        ("Freteiros", "Freteiro", red),
     ]
     amounts = [float(pd.to_numeric(cost_rows.get(column), errors="coerce").fillna(0).sum()) if column in cost_rows else 0 for _, column, _ in composition]
     maximum_amount = max(amounts or [1]) or 1
     for index, ((label, _column, color), amount) in enumerate(zip(composition, amounts)):
-        y = 646 + index * 72
+        y = 646 + index * 60
         draw.text((58, y), label, font=font(18, bold=True), fill=ink)
         draw.rounded_rectangle((260, y + 2, 1000, y + 30), radius=14, fill="#E8EEF7")
         draw.rounded_rectangle((260, y + 2, 260 + int(740 * amount / maximum_amount), y + 30), radius=14, fill=color)
@@ -18349,13 +18357,13 @@ def _route_summary_table(financial: pd.DataFrame) -> pd.DataFrame:
 
 def _route_composition_chart(costs: dict) -> go.Figure:
     frame = pd.DataFrame(costs.get("rotas") or [])
-    columns = ["Combustivel", "Manutencao", "Pedagio", "Hoteis", "Salarios", "Freteiro"]
-    labels = ["Combustível", "Manutenção", "Pedágio/extras", "Hospedagem", "Mão de obra", "Freteiros"]
+    columns = ["Combustivel", "Manutencao", "Pedagio", "Hoteis", "Salarios", "Diarias Equipe", "Freteiro"]
+    labels = ["Combustível", "Manutenção", "Pedágio/extras", "Hospedagem", "Salários", "Diárias da equipe", "Freteiros"]
     values = [float(pd.to_numeric(frame.get(column), errors="coerce").fillna(0).sum()) if column in frame else 0 for column in columns]
     maximum = max(values or [0.0])
     fig = go.Figure(go.Bar(
         x=values, y=labels, orientation="h",
-        marker={"color": ["#2563EB", "#7C3AED", "#D97706", "#0EA5E9", "#0F766E", "#DC2626"]},
+        marker={"color": ["#2563EB", "#7C3AED", "#D97706", "#0EA5E9", "#0F766E", "#F59E0B", "#DC2626"]},
         text=[fmt_brl(value) for value in values],
         textposition="outside",
         textfont={"size": 12, "color": "#172554"},

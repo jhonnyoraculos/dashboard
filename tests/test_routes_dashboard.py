@@ -1121,6 +1121,56 @@ class RoutesDashboardTests(unittest.TestCase):
         route_cost = result["rotas"][0]
         self.assertAlmostEqual(float(route_cost["Combustivel R$/km"]), 2.5)
         self.assertAlmostEqual(float(route_cost["Combustivel"]), 250.0)
+        self.assertEqual(float(route_cost["Diaria Motorista"]), 100.0)
+        self.assertEqual(float(route_cost["Diaria Ajudante"]), 100.0)
+        self.assertEqual(float(route_cost["Diarias Equipe"]), 200.0)
+        self.assertEqual(float(route_cost["Custo total"]), 450.0)
+
+    def test_general_route_cost_adds_staff_daily_by_route_day_and_category(self):
+        routes = pd.DataFrame(
+            [
+                {
+                    "Rota ID": "own", "Data": pd.Timestamp("2026-10-20"),
+                    "Saida": pd.Timestamp("2026-10-20 07:00"),
+                    "Retorno": pd.Timestamp("2026-10-21 17:00"), "Mes": "2026-10",
+                    "Rota": "D+0,5 DIVINOPOLIS FERRAGENS", "PLACA": "AAA1A11",
+                    "Motorista": "MOTORISTA A", "Ajudante": "AJUDANTE A",
+                    "Categoria": "Transporte", "KM Rodados": 0.0,
+                },
+                {
+                    "Rota ID": "freight", "Data": pd.Timestamp("2026-10-20"),
+                    "Saida": pd.Timestamp("2026-10-20 07:00"),
+                    "Retorno": pd.Timestamp("2026-10-21 17:00"), "Mes": "2026-10",
+                    "Rota": "404 - ITABIRA - GUANHAES", "PLACA": "FRT1A11",
+                    "Motorista": "MOTORISTA F", "Ajudante": "AJUDANTE F",
+                    "Categoria": "Freteiro", "KM Rodados": 0.0,
+                },
+            ]
+        )
+        empty_fuel = pd.DataFrame(columns=["Data", "Mes", "PLACA", "Custo"])
+        empty_mileage = pd.DataFrame(columns=["Mes", "PLACA", "Km Rodados"])
+        empty_salary = pd.DataFrame(columns=["Mes", "Valor"])
+        empty_hotels = pd.DataFrame(columns=["Data", "Valor", "Motorista", "Ajudante"])
+        with (
+            patch.object(backend, "load_combustivel", return_value=empty_fuel),
+            patch.object(backend, "load_combustivel_km", return_value=empty_mileage),
+            patch.object(backend, "load_manutencao", return_value=empty_fuel),
+            patch.object(backend, "load_pedagio", return_value=empty_fuel),
+            patch.object(backend, "load_salarios_transporte", return_value=empty_salary),
+            patch.object(backend, "load_hoteis", return_value=empty_hotels),
+            patch.object(backend, "_ranking_freighter_daily_rates", return_value={"FRT1A11": 700.0}),
+            patch.object(backend, "_apply_plate_categories", side_effect=lambda frame: frame),
+        ):
+            result = backend._route_cost_breakdown(routes, routes, pd.DataFrame())
+
+        costs = {row["Rota ID"]: row for row in result["rotas"]}
+        self.assertEqual(costs["own"]["Diaria Motorista"], 64.0)
+        self.assertEqual(costs["own"]["Diaria Ajudante"], 64.0)
+        self.assertEqual(costs["own"]["Custo total"], 128.0)
+        self.assertEqual(costs["freight"]["Diaria Motorista"], 0.0)
+        self.assertEqual(costs["freight"]["Diaria Ajudante"], 200.0)
+        self.assertEqual(costs["freight"]["Freteiro"], 1_400.0)
+        self.assertEqual(costs["freight"]["Custo total"], 1_600.0)
 
     def test_route_summary_preserves_operational_result_name(self):
         summary = dashboard._route_summary_table(dashboard._route_financial_frame(sample_payload()))

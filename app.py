@@ -60,12 +60,14 @@ DB_TABLES = {
 }
 DB_METADATA_TABLE = "dashboard_metadata"
 BACKEND_BUILD_VERSION = "aluguel-multiplicar-meses-v1"
-ROUTES_BUILD_VERSION = "rotas-colaboradores-v25"
+ROUTES_BUILD_VERSION = "rotas-colaboradores-v26"
 PEDAGIO_CHART_VERSION = "all-types-v1"
 USE_LEGACY_ROUTE_HOTEL_ALLOCATION = False
 BACKUP_METADATA_KEY = "backup.last_downloaded_at"
 COLLABORATOR_ALIASES_METADATA_KEY = "routes.collaborator_aliases"
 ROUTE_ALIASES_METADATA_KEY = "routes.route_aliases"
+ROUTE_STAFF_LOCAL_DAILY_RATE = 32.0
+ROUTE_STAFF_OTHER_DAILY_RATE = 100.0
 _DB_ENGINE = None
 _METADATA_CACHE_SECONDS = float(os.environ.get("JR_METADATA_CACHE_SECONDS", "30") or 30)
 _METADATA_CACHE = {"loaded": False, "loaded_at": 0.0, "values": {}, "lock": threading.Lock()}
@@ -473,6 +475,14 @@ def _route_name_key(value: object) -> str:
     plain = unicodedata.normalize("NFKD", str(value or ""))
     plain = "".join(character for character in plain if not unicodedata.combining(character))
     return re.sub(r"\s+", " ", plain).strip().casefold()
+
+
+def _route_staff_daily_rate(route_name: object) -> float:
+    """Diária individual de motorista/ajudante conforme a cidade contida na rota."""
+    normalized = _route_name_key(route_name).upper()
+    is_divinopolis = "DIVINOPOL" in normalized
+    is_carmo_do_cajuru = "CARMO" in normalized and "CAJURU" in normalized
+    return ROUTE_STAFF_LOCAL_DAILY_RATE if (is_divinopolis or is_carmo_do_cajuru) else ROUTE_STAFF_OTHER_DAILY_RATE
 
 
 def _route_aliases() -> dict[str, str]:
@@ -5853,6 +5863,15 @@ def _route_cost_breakdown(
         if _normalize_category_value(row.get("Categoria")) == "Freteiro":
             add_cost(row.get("Rota ID"), "Freteiro", daily_rates.get(str(row.get("PLACA") or "").strip(), 0.0))
 
+    # Cada linha de selected_days representa um dia de uma rota concluída.
+    # Frota própria recebe uma diária de motorista e uma de ajudante por dia.
+    # No Freteiro, o motorista já está coberto pelo contrato: soma-se somente o ajudante.
+    for _, row in selected_days.iterrows():
+        daily_rate = _route_staff_daily_rate(row.get("Rota"))
+        if _normalize_category_value(row.get("Categoria")) != "Freteiro":
+            add_cost(row.get("Rota ID"), "Diaria Motorista", daily_rate)
+        add_cost(row.get("Rota ID"), "Diaria Ajudante", daily_rate)
+
     try:
         salaries = period_rows(load_salarios_transporte())
         salary_by_month = (
@@ -5920,6 +5939,7 @@ def _route_cost_breakdown(
                 "Rota": route.get("Rota"),
                 "PLACA": route.get("PLACA"),
                 "Motorista": route.get("Motorista"),
+                "Ajudante": route.get("Ajudante"),
                 "Combustivel": round(parts["Combustivel"], 2),
                 "Combustivel R$/km": round(fuel_rate_by_route[str(route_id)], 4)
                 if str(route_id) in fuel_rate_by_route
@@ -5935,6 +5955,9 @@ def _route_cost_breakdown(
                 "Hoteis": round(parts["Hoteis"], 2),
                 "Salarios": round(parts["Salarios"], 2),
                 "Freteiro": round(parts["Freteiro"], 2),
+                "Diaria Motorista": round(parts["Diaria Motorista"], 2),
+                "Diaria Ajudante": round(parts["Diaria Ajudante"], 2),
+                "Diarias Equipe": round(parts["Diaria Motorista"] + parts["Diaria Ajudante"], 2),
                 "Custo total": round(cost, 2),
                 "Ganho entregas": round(gain, 2),
                 "Resultado": round(gain - cost, 2),

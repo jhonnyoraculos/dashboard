@@ -188,7 +188,13 @@ de cada placa ate a data atual. O combustivel de uma rota e esse valor em R$/KM
 multiplicado pelos KM informados na propria rota; nao ha mais associacao por
 proximidade de posto, cidade ou horario. Manutencao e pedagio/extras sao
 rateados entre rotas da mesma placa e dia; hospedagem usa motorista e data;
-salarios usam os dias operacionais; freteiros usam a diaria cadastrada. A
+salarios usam os dias operacionais; freteiros usam a diaria cadastrada. Além
+disso, cada dia de uma rota concluida recebe diaria individual de motorista e
+ajudante: R$ 32 por pessoa para Divinopolis e Carmo do Cajuru e R$ 100 por
+pessoa para as demais cidades. Em rotas de Freteiro, o contrato ja cobre o
+motorista, portanto somente a diaria do ajudante e acrescentada alem da diaria
+do proprio Freteiro. Essas diarias entram no custo geral, rentabilidade,
+rankings e relatorios; nenhum novo salario por hora e estimado. A
 hospedagem e vinculada a uma unica rota pela data e pelo nome encontrado como
 motorista ou ajudante. Quando o nome completo nao coincide, os dois primeiros
 nomes podem identificar o colaborador, desde que apontem para uma unica pessoa
