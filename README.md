@@ -181,6 +181,7 @@ Formulas analiticas adicionais:
 - custo por tonelada = custo atribuido / peso dos pedidos em toneladas;
 - entregas por km = quantidade de entregas / KM informado;
 - custo sobre receita = custo atribuido / receita atribuida;
+- em Frota e veículos, o ranking de veículos mais caros nas viagens soma custos e receitas por placa e ordena pelo maior custo sobre receita;
 - resultado operacional = receita atribuida - custo atribuido.
 
 Divisoes sem base valida, como freteiro sem KM, permanecem sem valor em vez de

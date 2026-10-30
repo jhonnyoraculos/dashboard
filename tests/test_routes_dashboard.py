@@ -144,6 +144,23 @@ class RoutesDashboardTests(unittest.TestCase):
         self.assertTrue(profile["has_hotel"])
         self.assertEqual(profile["hotel_trips"], 1)
 
+    def test_fleet_cost_over_revenue_uses_aggregated_plate_totals(self):
+        financial = pd.DataFrame(
+            [
+                {"Rota ID": "a1", "PLACA": "AAA1A11", "Entregas": 10, "KM Rodados": 100, "Custo total": 200, "Ganho entregas": 400, "Peso Carga": 1_000},
+                {"Rota ID": "a2", "PLACA": "AAA1A11", "Entregas": 10, "KM Rodados": 100, "Custo total": 100, "Ganho entregas": 100, "Peso Carga": 1_000},
+                {"Rota ID": "b1", "PLACA": "BBB1B11", "Entregas": 5, "KM Rodados": 50, "Custo total": 300, "Ganho entregas": 200, "Peso Carga": 500},
+                {"Rota ID": "c1", "PLACA": "CCC1C11", "Entregas": 1, "KM Rodados": 10, "Custo total": 50, "Ganho entregas": 0, "Peso Carga": 100},
+            ]
+        )
+
+        fleet = dashboard._route_fleet_cost_summary(financial).set_index("PLACA")
+
+        self.assertEqual(fleet.loc["AAA1A11", "Custo/receita %"], 60.0)
+        self.assertEqual(fleet.loc["BBB1B11", "Custo/receita %"], 150.0)
+        self.assertTrue(pd.isna(fleet.loc["CCC1C11", "Custo/receita %"]))
+        self.assertTrue(bool(fleet.loc["CCC1C11", "Sem receita"]))
+
     def test_route_without_hotel_keeps_simulated_hotel_at_zero(self):
         data = {
             "tempos_rotas": [

@@ -80,7 +80,7 @@ MUTED = "#6B7280"
 CARD_BORDER = "#c2d2f3"
 LOGO_PATH = Path(__file__).parent / "static" / "logo-jr.png"
 CURRENT_YEAR = date.today().year
-APP_VERSION = "global-groq-assistant-v48"
+APP_VERSION = "global-groq-assistant-v49"
 LOGGER = logging.getLogger("jr_dashboard.streamlit")
 RANK_ROUTES_ENABLED = True
 ROUTE_CACHE_TTL_SECONDS = max(int(os.environ.get("JR_ROUTE_CACHE_TTL_SECONDS", "180") or 180), 30)
@@ -16774,6 +16774,55 @@ def _route_freight_profile(data: dict) -> dict[str, object]:
     }
 
 
+def _route_fleet_cost_summary(financial: pd.DataFrame) -> pd.DataFrame:
+    """Consolida custo e receita das viagens por placa antes de calcular o percentual."""
+    columns = [
+        "PLACA", "Viagens", "Entregas", "KM", "Custo total", "Receita atribuída", "Resultado",
+        "Peso kg", "Custo por km", "Custo por entrega", "Custo/receita %", "Sem receita",
+    ]
+    if financial.empty or "PLACA" not in financial.columns:
+        return pd.DataFrame(columns=columns)
+    work = financial.copy()
+    work["PLACA"] = work["PLACA"].astype("string").fillna("").str.strip()
+    work = work.loc[work["PLACA"].ne("")].copy()
+    if work.empty:
+        return pd.DataFrame(columns=columns)
+    numeric_defaults = {
+        "Entregas": 0.0,
+        "KM Rodados": 0.0,
+        "Custo total": 0.0,
+        "Ganho entregas": 0.0,
+        "Peso Carga": 0.0,
+    }
+    for column, default in numeric_defaults.items():
+        source = work[column] if column in work.columns else pd.Series(default, index=work.index)
+        work[column] = pd.to_numeric(source, errors="coerce").fillna(default)
+    if "Rota ID" not in work.columns:
+        work["Rota ID"] = work.index.astype(str)
+    fleet = work.groupby("PLACA", as_index=False).agg(
+        Viagens=("Rota ID", "nunique"),
+        Entregas=("Entregas", "sum"),
+        KM=("KM Rodados", "sum"),
+        **{
+            "Custo total": ("Custo total", "sum"),
+            "Receita atribuída": ("Ganho entregas", "sum"),
+            "Peso kg": ("Peso Carga", "sum"),
+        },
+    )
+    fleet["Resultado"] = fleet["Receita atribuída"] - fleet["Custo total"]
+    fleet["Custo por km"] = fleet["Custo total"].div(fleet["KM"].replace(0, pd.NA))
+    fleet["Custo por entrega"] = fleet["Custo total"].div(fleet["Entregas"].replace(0, pd.NA))
+    fleet["Custo/receita %"] = fleet["Custo total"].div(
+        fleet["Receita atribuída"].replace(0, pd.NA)
+    ).mul(100)
+    fleet["Sem receita"] = fleet["Receita atribuída"].le(0) & fleet["Custo total"].gt(0)
+    return fleet.sort_values(
+        ["Sem receita", "Custo/receita %", "Custo total"],
+        ascending=[False, False, False],
+        na_position="first",
+    ).reset_index(drop=True)[columns]
+
+
 def _render_route_freight_calculator(
     route_options: list[str],
     global_route: str,
@@ -18475,20 +18524,38 @@ def render_rotas() -> None:
         if financial.empty:
             st.info("Não há custos atribuídos por placa.")
         else:
-            fleet = financial.groupby("PLACA", as_index=False).agg(Viagens=("Rota ID","nunique"), Entregas=("Entregas","sum"), KM=("KM Rodados","sum"), **{"Custo total":("Custo total","sum"), "Peso kg":("Peso Carga","sum")})
-            fleet["Custo por km"] = fleet["Custo total"].div(fleet["KM"].replace(0,pd.NA))
-            fleet["Custo por entrega"] = fleet["Custo total"].div(fleet["Entregas"].replace(0,pd.NA))
-            fleet = fleet.sort_values("Custo por km", ascending=False, na_position="last")
+            fleet = _route_fleet_cost_summary(financial)
             left, right = st.columns(2)
             with left:
-                valid = fleet.dropna(subset=["Custo por km"]).head(15).sort_values("Custo por km")
+                valid = fleet.dropna(subset=["Custo por km"]).nlargest(15, "Custo por km").sort_values("Custo por km")
                 st.markdown("**Veículos mais caros por KM**")
                 st.plotly_chart(metric_bar_chart(valid["PLACA"].tolist(), valid["Custo por km"].tolist(), unit="R$/km", horizontal=True, color="#DC2626"), width="stretch", config=PLOTLY_CONFIG)
             with right:
-                valid = fleet.dropna(subset=["Custo por entrega"]).head(15).sort_values("Custo por entrega")
-                st.markdown("**Veículos mais caros por entrega**")
-                st.plotly_chart(metric_bar_chart(valid["PLACA"].tolist(), valid["Custo por entrega"].tolist(), unit="R$/ent", horizontal=True, color="#D97706"), width="stretch", config=PLOTLY_CONFIG)
-            st.dataframe(fleet, width="stretch", hide_index=True, column_config={"Custo total":_money_col("Custo total"),"Custo por km":_money_col("Custo/km"),"Custo por entrega":_money_col("Custo/entrega")})
+                valid = fleet.dropna(subset=["Custo/receita %"]).nlargest(15, "Custo/receita %").sort_values("Custo/receita %")
+                st.markdown("**Veículos mais caros nas viagens — custo sobre receita**")
+                st.caption("Soma dos custos das viagens da placa ÷ soma da receita atribuída às mesmas viagens.")
+                st.plotly_chart(metric_bar_chart(valid["PLACA"].tolist(), valid["Custo/receita %"].tolist(), unit="%", horizontal=True, color="#D97706"), width="stretch", config=PLOTLY_CONFIG)
+            no_revenue = fleet.loc[fleet["Sem receita"], "PLACA"].tolist()
+            if no_revenue:
+                st.error(
+                    "Pior situação — custo sem receita atribuída: "
+                    + ", ".join(no_revenue)
+                    + ". Essas placas não entram no percentual porque não existe receita para dividir."
+                )
+            visible_fleet = fleet.drop(columns=["Sem receita"])
+            st.dataframe(
+                visible_fleet,
+                width="stretch",
+                hide_index=True,
+                column_config={
+                    "Custo total": _money_col("Custo total"),
+                    "Receita atribuída": _money_col("Receita atribuída"),
+                    "Resultado": _money_col("Resultado"),
+                    "Custo por km": _money_col("Custo/km"),
+                    "Custo por entrega": _money_col("Custo/entrega"),
+                    "Custo/receita %": st.column_config.NumberColumn("Custo/receita", format="%.1f%%"),
+                },
+            )
 
     elif section == "Custos e rentabilidade":
         _route_section_title("Inteligência financeira", "Resultado operacional estimado; não é lucro líquido contábil")
