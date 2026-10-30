@@ -121,6 +121,74 @@ class RoutesDashboardTests(unittest.TestCase):
         self.assertIn("<b>1 dia + 7 horas</b>", annotations)
         self.assertIn("Referência: 1 dia", annotations)
 
+    def test_route_freight_profile_uses_route_averages_and_hotel_history(self):
+        data = {
+            "tempos_rotas": [
+                {"Rota ID": "r1", "Rota": "ROTA TESTE", "Peso Carga": 8_000, "KM Rodados": 400},
+                {"Rota ID": "r2", "Rota": "ROTA TESTE", "Peso Carga": 12_000, "KM Rodados": 600},
+            ],
+            "custos": {
+                "rotas": [
+                    {"Rota ID": "r1", "Rota": "ROTA TESTE", "Hoteis": 0},
+                    {"Rota ID": "r2", "Rota": "ROTA TESTE", "Hoteis": 220},
+                ]
+            },
+        }
+
+        profile = dashboard._route_freight_profile(data)
+
+        self.assertEqual(profile["route"], "ROTA TESTE")
+        self.assertEqual(profile["trip_count"], 2)
+        self.assertEqual(profile["average_weight_kg"], 10_000)
+        self.assertEqual(profile["average_distance_km"], 500)
+        self.assertTrue(profile["has_hotel"])
+        self.assertEqual(profile["hotel_trips"], 1)
+
+    def test_route_without_hotel_keeps_simulated_hotel_at_zero(self):
+        data = {
+            "tempos_rotas": [
+                {"Rota ID": "r1", "Rota": "ROTA SEM HOTEL", "Peso Carga": 10_000, "KM Rodados": 800}
+            ],
+            "custos": {"rotas": [{"Rota ID": "r1", "Rota": "ROTA SEM HOTEL", "Hoteis": 0}]},
+        }
+        profile = dashboard._route_freight_profile(data)
+        quote = dashboard._calculate_freight_quote(
+            {"rate_per_km": 5.0, "hotel_daily_rate": 220.0},
+            weight_kg=10_000,
+            distance_km=800,
+            employees=2,
+            employee_hourly_rate=15.0,
+            margin_percent=10.0,
+            include_hotels=bool(profile["has_hotel"]),
+        )
+
+        self.assertFalse(profile["has_hotel"])
+        self.assertGreater(quote["total_operation_hours"], 10)
+        self.assertEqual(quote["hotel_days"], 0)
+        self.assertEqual(quote["hotel_cost"], 0)
+
+    def test_freight_context_keeps_hotel_out_of_truck_km_rate(self):
+        base_payload = {
+            "totais": {"total": 1_000, "km_total": 100, "salario_transporte": 0},
+            "ranking": [],
+        }
+        hotel_payload = {
+            "totais": {
+                "total": 1_200,
+                "km_total": 100,
+                "hoteis": 200,
+                "hoteis_reservas": 1,
+                "hoteis_media_reserva": 200,
+            },
+            "ranking": [],
+        }
+        with patch.object(dashboard, "route_json", side_effect=[base_payload, hotel_payload]):
+            historical, reference = dashboard._freight_historical_context()
+
+        self.assertIs(historical, base_payload)
+        self.assertEqual(reference["rate_per_km"], 10)
+        self.assertEqual(reference["hotel_daily_rate"], 200)
+
     def test_gauge_context_identifies_result_and_reference_status(self):
         context = dashboard._route_gauge_context_html(
             [("Melhor", "MOTORISTA TESTE"), ("Menor pontuação", "OUTRO MOTORISTA")],

@@ -80,7 +80,7 @@ MUTED = "#6B7280"
 CARD_BORDER = "#c2d2f3"
 LOGO_PATH = Path(__file__).parent / "static" / "logo-jr.png"
 CURRENT_YEAR = date.today().year
-APP_VERSION = "global-groq-assistant-v46"
+APP_VERSION = "global-groq-assistant-v47"
 LOGGER = logging.getLogger("jr_dashboard.streamlit")
 RANK_ROUTES_ENABLED = True
 ROUTE_CACHE_TTL_SECONDS = max(int(os.environ.get("JR_ROUTE_CACHE_TTL_SECONDS", "180") or 180), 30)
@@ -4109,6 +4109,33 @@ def _freight_plate_reference(row: dict, general: dict[str, float]) -> dict[str, 
     }
 
 
+def _freight_historical_context() -> tuple[dict, dict[str, float]]:
+    """Separa a taxa do caminhão da diária de hotel para evitar dupla contagem."""
+    base_historical = route_json(
+        "frota",
+        {
+            "categoria": ["Transporte", "Freteiro"],
+            "incluir_hoteis": False,
+            "incluir_salario": True,
+            "ordenar_por": "total",
+        },
+    )
+    hotel_historical = route_json(
+        "frota",
+        {
+            "categoria": ["Transporte", "Freteiro"],
+            "incluir_hoteis": True,
+            "incluir_salario": True,
+            "ordenar_por": "total",
+        },
+    )
+    general_reference = _freight_reference(base_historical.get("totais") or {})
+    hotel_reference = _freight_reference(hotel_historical.get("totais") or {})
+    for key in ("hotel_cost", "hotel_reservations", "hotel_daily_rate"):
+        general_reference[key] = float(hotel_reference.get(key) or 0.0)
+    return base_historical, general_reference
+
+
 def _calculate_freight_quote(
     reference: dict[str, float],
     *,
@@ -7558,17 +7585,7 @@ def render_calculadora_frete() -> None:
             help="Inclui uma diária média de quarto duplo a cada 10 horas completas de viagem + descarga. O valor já cobre motorista e ajudante.",
         )
 
-        historical = route_json(
-            "frota",
-            {
-                "categoria": ["Transporte", "Freteiro"],
-                "incluir_hoteis": include_hotels,
-                "incluir_salario": True,
-                "ordenar_por": "total",
-            },
-        )
-        totals = historical.get("totais") or {}
-        general_reference = _freight_reference(totals)
+        historical, general_reference = _freight_historical_context()
         ranking = historical.get("ranking") or []
         rows_by_plate = {
             str(row.get("placa") or "").strip(): row
@@ -16687,6 +16704,254 @@ def _route_financial_frame(data: dict) -> pd.DataFrame:
     return costs
 
 
+def _route_freight_profile(data: dict) -> dict[str, object]:
+    """Resume o histórico concluído de uma rota para preencher a simulação."""
+    activity = pd.DataFrame(data.get("tempos_rotas") or [])
+    if activity.empty:
+        activity = pd.DataFrame(data.get("rotas_detalhes") or [])
+
+    def positive_average(column: str) -> float:
+        if activity.empty or column not in activity.columns:
+            return 0.0
+        values = pd.to_numeric(activity[column], errors="coerce")
+        values = values.loc[values.gt(0)]
+        return float(values.mean()) if not values.empty else 0.0
+
+    route_name = ""
+    if not activity.empty and "Rota" in activity.columns:
+        names = activity["Rota"].astype("string").fillna("").str.strip()
+        names = names.loc[names.ne("")]
+        if not names.empty:
+            route_name = str(names.mode().iloc[0] if not names.mode().empty else names.iloc[0])
+
+    financial = pd.DataFrame((data.get("custos") or {}).get("rotas") or [])
+    hotel_trips = 0
+    hotel_total = 0.0
+    if not financial.empty and "Hoteis" in financial.columns:
+        hotels = pd.to_numeric(financial["Hoteis"], errors="coerce").fillna(0.0)
+        hotel_trips = int(hotels.gt(0.005).sum())
+        hotel_total = float(hotels.sum())
+
+    trip_count = 0
+    if not activity.empty:
+        if "Rota ID" in activity.columns:
+            trip_count = int(activity["Rota ID"].astype("string").nunique())
+        else:
+            trip_count = len(activity)
+    return {
+        "route": route_name,
+        "trip_count": trip_count,
+        "average_weight_kg": positive_average("Peso Carga"),
+        "average_distance_km": positive_average("KM Rodados"),
+        "hotel_trips": hotel_trips,
+        "hotel_total": hotel_total,
+        "has_hotel": hotel_trips > 0,
+    }
+
+
+def _render_route_freight_calculator(
+    route_options: list[str],
+    global_route: str,
+    all_routes_label: str,
+) -> None:
+    _route_section_title(
+        "Simulador de frete por rota e caminhão",
+        "Escolha uma rota concluída e aplique nela o custo histórico real do caminhão selecionado.",
+    )
+    available_routes = [str(value) for value in route_options if str(value or "").strip()]
+    if global_route != all_routes_label:
+        available_routes = [global_route] if global_route in available_routes else []
+    if not available_routes:
+        st.info("Não há rotas concluídas disponíveis para simulação.")
+        return
+
+    route_key = "routes_freight_route_v1"
+    if route_key in st.session_state and st.session_state.get(route_key) not in available_routes:
+        st.session_state[route_key] = available_routes[0]
+    selected_route = st.selectbox(
+        "Rota para simular",
+        available_routes,
+        key=route_key,
+        disabled=len(available_routes) == 1,
+        help="Quando o filtro geral de rota estiver ativo, a calculadora respeita essa escolha.",
+    )
+    route_history = route_json("rotas", {"rota": [selected_route]})
+    profile = _route_freight_profile(route_history)
+
+    historical, general_reference = _freight_historical_context()
+    ranking = historical.get("ranking") or []
+    rows_by_plate = {
+        str(row.get("placa") or "").strip(): row
+        for row in ranking
+        if str(row.get("placa") or "").strip()
+    }
+    plate_options = [FREIGHT_FLEET_AVERAGE_LABEL, *sorted(rows_by_plate)]
+    plate_key = "routes_freight_plate_v1"
+    if plate_key in st.session_state and st.session_state.get(plate_key) not in plate_options:
+        st.session_state[plate_key] = plate_options[0]
+    vehicle_choice = st.selectbox(
+        "Caminhão para simular",
+        plate_options,
+        key=plate_key,
+        help="Aplica o custo histórico por KM da placa à distância média ou informada para a rota.",
+    ) or FREIGHT_FLEET_AVERAGE_LABEL
+    selected_plate = None if vehicle_choice == FREIGHT_FLEET_AVERAGE_LABEL else vehicle_choice
+    plate_reference = _freight_plate_reference(
+        rows_by_plate.get(str(selected_plate or ""), {}),
+        general_reference,
+    )
+    missing_selected_plate_rate = bool(
+        selected_plate and plate_reference.get("km_rate_source") != "placa"
+    )
+    if missing_selected_plate_rate:
+        plate_reference["rate_per_km"] = 0.0
+        plate_reference["direct_rate_per_km"] = 0.0
+
+    profile_cols = st.columns(4)
+    profile_cols[0].metric("Viagens usadas na média", fmt_num(profile.get("trip_count"), 0))
+    profile_cols[1].metric("Peso médio da rota", fmt_peso(profile.get("average_weight_kg")))
+    profile_cols[2].metric("KM médio da rota", f"{fmt_num(profile.get('average_distance_km'), 1)} km")
+    profile_cols[3].metric("Viagens com hotel", fmt_num(profile.get("hotel_trips"), 0))
+    st.caption(
+        "Peso e KM são médias das viagens concluídas dessa rota em todo o histórico. Você pode alterá-los abaixo "
+        "para testar outro cenário."
+    )
+    if missing_selected_plate_rate:
+        st.warning(
+            f"A placa {selected_plate} não possui custo próprio por KM calculável. A simulação não usará a média "
+            "da frota no lugar dela; o componente do caminhão ficará em R$ 0,00 até existir histórico suficiente."
+        )
+
+    route_token = hashlib.sha256(str(selected_route).encode("utf-8")).hexdigest()[:10]
+    plate_token = hashlib.sha256(str(vehicle_choice).encode("utf-8")).hexdigest()[:10]
+    default_hourly_rate = float(plate_reference.get("rate_per_employee_hour") or 0.0)
+    has_hotel = bool(profile.get("has_hotel"))
+    with st.container(border=True):
+        st.markdown("#### Dados da simulação")
+        input_cols = st.columns(3)
+        with input_cols[0]:
+            weight_kg = st.number_input(
+                "Peso da carga (kg)",
+                min_value=0.0,
+                value=float(profile.get("average_weight_kg") or 0.0),
+                step=100.0,
+                format="%.2f",
+                key=f"routes_freight_weight_{route_token}",
+            )
+            employees = st.number_input(
+                "Funcionários na descarga",
+                min_value=1,
+                max_value=20,
+                value=2,
+                step=1,
+                key=f"routes_freight_employees_{route_token}",
+            )
+        with input_cols[1]:
+            distance_km = st.number_input(
+                "Distância total — ida e volta (km)",
+                min_value=0.0,
+                value=float(profile.get("average_distance_km") or 0.0),
+                step=10.0,
+                format="%.1f",
+                key=f"routes_freight_distance_{route_token}",
+            )
+            employee_hourly_rate = st.number_input(
+                "Salário por funcionário/hora (R$)",
+                min_value=0.0,
+                value=default_hourly_rate,
+                step=1.0,
+                format="%.2f",
+                key=f"routes_freight_hourly_{route_token}_{plate_token}",
+            )
+        with input_cols[2]:
+            margin_percent = st.number_input(
+                "Margem de segurança (%)",
+                min_value=0.0,
+                max_value=100.0,
+                value=10.0,
+                step=1.0,
+                format="%.1f",
+                key=f"routes_freight_margin_{route_token}",
+            )
+            hotel_key = f"routes_freight_hotel_{route_token}"
+            if not has_hotel and st.session_state.get(hotel_key):
+                st.session_state[hotel_key] = False
+            include_hotels = st.checkbox(
+                "Incluir hotel da dupla",
+                value=has_hotel,
+                disabled=not has_hotel,
+                key=hotel_key,
+                help=(
+                    "Disponível porque essa rota possui hospedagem vinculada no histórico."
+                    if has_hotel
+                    else "Esta rota não possui hospedagem vinculada; hotel não será incluído."
+                ),
+            )
+
+    if not has_hotel:
+        st.info(
+            "Esta rota não possui hotel no histórico. Mesmo que a operação ultrapasse 10 horas, a simulação "
+            "mantém o hotel em R$ 0,00."
+        )
+    elif include_hotels:
+        st.success(
+            f"Hotel habilitado: {fmt_num(profile.get('hotel_trips'), 0)} viagem(ns) dessa rota possuem "
+            "hospedagem vinculada."
+        )
+
+    quote_inputs = {
+        "weight_kg": float(weight_kg),
+        "distance_km": float(distance_km),
+        "employees": int(employees),
+        "employee_hourly_rate": float(employee_hourly_rate),
+        "margin_percent": float(margin_percent),
+        "include_hotels": bool(include_hotels and has_hotel),
+    }
+    quote = _calculate_freight_quote(plate_reference, **quote_inputs)
+    result_plate = selected_plate or FREIGHT_FLEET_AVERAGE_LABEL
+    st.html(
+        f"""
+        <section class="frete-result-hero">
+          <div class="frete-result-grid">
+            <div class="frete-result-item">
+              <p class="frete-result-label">Frete sugerido</p>
+              <p class="frete-result-value">{h(fmt_brl(quote['suggested_freight'], compact_threshold=float('inf')))}</p>
+              <p class="frete-result-note">{h(selected_route)} · {h(result_plate)} · margem de {h(fmt_num(margin_percent, 1))}%.</p>
+            </div>
+            <div class="frete-result-item frete-result-item--cost">
+              <p class="frete-result-label">Custo estimado</p>
+              <p class="frete-result-value frete-result-value--cost">{h(fmt_brl(quote['estimated_cost'], compact_threshold=float('inf')))}</p>
+              <p class="frete-result-note">Caminhão + equipe + hotel permitido pela rota, sem margem.</p>
+            </div>
+          </div>
+        </section>
+        <section class="frete-breakdown">
+          <div class="frete-breakdown-card"><p>Caminhão na distância</p><strong>{h(fmt_brl(quote['distance_component'], compact_threshold=float('inf')))}</strong></div>
+          <div class="frete-breakdown-card"><p>Equipe</p><strong>{h(fmt_brl(quote['team_cost'], compact_threshold=float('inf')))}</strong></div>
+          <div class="frete-breakdown-card"><p>Hotel — {h(fmt_num(quote['hotel_days']))} diária(s)</p><strong>{h(fmt_brl(quote['hotel_cost'], compact_threshold=float('inf')))}</strong></div>
+          <div class="frete-breakdown-card"><p>Tempo de viagem</p><strong>{h(fmt_num(quote['travel_hours'], 2))} h</strong></div>
+          <div class="frete-breakdown-card"><p>Tempo de descarga</p><strong>{h(fmt_num(quote['unload_hours'], 2))} h</strong></div>
+        </section>
+        """
+    )
+    with st.expander("Ver memória e tarifas da simulação", expanded=True):
+        st.markdown(
+            f"**Caminhão:** {fmt_num(distance_km, 1)} km × "
+            f"{fmt_brl(plate_reference['rate_per_km'], compact_threshold=float('inf'))}/km = "
+            f"**{fmt_brl(quote['distance_component'])}**.  \n"
+            f"**Viagem:** {fmt_num(distance_km, 1)} km ÷ 80 km/h = {fmt_num(quote['travel_hours'], 2)} h.  \n"
+            f"**Descarga:** {fmt_num(weight_kg, 2)} kg ÷ 350 kg/h = {fmt_num(quote['unload_hours'], 2)} h.  \n"
+            f"**Equipe:** {fmt_num(quote['employee_hours'], 2)} horas-pessoa × "
+            f"{fmt_brl(employee_hourly_rate, compact_threshold=float('inf'))} = **{fmt_brl(quote['team_cost'])}**.  \n"
+            f"**Hotel:** {fmt_num(quote['hotel_days'])} diária(s) × "
+            f"{fmt_brl(quote['hotel_daily_rate'], compact_threshold=float('inf'))} = **{fmt_brl(quote['hotel_cost'])}**."
+        )
+        st.caption(
+            f"O custo por KM usa {plate_reference['km_rate_source']}. Hotel só é permitido quando há hospedagem "
+            "historicamente vinculada à rota selecionada. Menos de 10 horas não gera diária."
+        )
+
+
 def _route_unprofitable_trips(financial: pd.DataFrame) -> pd.DataFrame:
     """Lista as viagens cujo custo atribuído superou a receita atribuída."""
     columns = [
@@ -17868,7 +18133,7 @@ def render_rotas() -> None:
             [
                 "Visão geral", "Mapa operacional", "Análise de rotas", "Entregas e produtividade", "Motoristas",
                 "Frota e veículos", "Custos e rentabilidade", "Rankings", "Relatórios", "Qualidade dos dados",
-                "Previsões", "Perguntas gerenciais",
+                "Calculadora de frete", "Previsões", "Perguntas gerenciais",
             ],
             key="routes_workspace_section",
         )
@@ -17890,6 +18155,7 @@ def render_rotas() -> None:
         "Rankings": "Comparações transparentes entre os principais grupos",
         "Relatórios": "Documentos gerenciais conforme os filtros aplicados",
         "Qualidade dos dados": "Inconsistências, alertas e cobertura das informações",
+        "Calculadora de frete": "Simulação por rota usando o custo histórico do caminhão escolhido",
         "Previsões": "Demanda, quilômetros e custos projetados com margem de incerteza",
         "Perguntas gerenciais": "Respostas calculadas e auditáveis usando os dados reais",
     }
@@ -17951,7 +18217,7 @@ def render_rotas() -> None:
         comparison = route_json("rotas", previous_params)
 
     period_label = f"{start_date.strftime('%d/%m/%Y')} — {end_date.strftime('%d/%m/%Y')}"
-    if not int(data.get("total_rotas") or 0):
+    if not int(data.get("total_rotas") or 0) and section != "Calculadora de frete":
         st.info("Não há rotas concluídas para este período e estes filtros. Viagens pendentes continuam fora do painel.")
         footer("JR Dashboard • somente rotas concluídas")
         return
@@ -18297,6 +18563,14 @@ def render_rotas() -> None:
                 "Custo por km": _money_col("Custo/km"),
                 "Custo por entrega": _money_col("Custo/entrega"),
             },
+        )
+
+    elif section == "Calculadora de frete":
+        calculator_routes = options.get("rotas") or []
+        _render_route_freight_calculator(
+            [str(value) for value in calculator_routes],
+            global_route,
+            all_routes_label,
         )
 
     elif section == "Rankings":

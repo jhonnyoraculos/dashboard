@@ -131,6 +131,14 @@ O resumo separa o custo direto do caminhao por km, o custo da equipe e o hotel.
 O salario da equipe e calculado pelo tempo de viagem e descarga, quantidade de
 funcionarios e valor por hora. O hotel nao altera o custo por km da placa.
 
+A calculadora tambem esta disponivel dentro da plataforma de Rotas. Nesse modo,
+o usuario escolhe uma rota concluida e um caminhao; peso e KM sao preenchidos
+com as medias historicas da rota e podem ser ajustados para a simulacao. O custo
+por KM vem do historico do caminhao escolhido. Hotel so pode ser incluido quando
+a rota possui ao menos uma hospedagem historicamente vinculada; rotas sem hotel
+permanecem com esse custo zerado mesmo quando a operacao simulada passa de dez
+horas.
+
 ## Plataforma de rotas
 
 O dashboard de Rotas considera exclusivamente viagens concluidas. Registros
