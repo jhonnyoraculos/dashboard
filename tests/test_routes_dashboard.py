@@ -224,6 +224,8 @@ class RoutesDashboardTests(unittest.TestCase):
         self.assertEqual(comparison.loc["FRT1A11", "Custo do veículo"], 2_250)
         self.assertEqual(comparison.loc["FRT1A11", "Ajudante"], 48)
         self.assertEqual(comparison.loc["TRP1A11", "Custo do veículo"], 1_980)
+        self.assertEqual(comparison.loc["TRP1A11", "Motorista"], 0)
+        self.assertEqual(comparison.loc["TRP1A11", "Ajudante"], 0)
         self.assertEqual(comparison.loc["TRP1A11", "Diferença para o menor"], 0)
         self.assertEqual(comparison.loc["FRT1A11", "Diferença para o menor"], 318)
 
@@ -273,6 +275,12 @@ class RoutesDashboardTests(unittest.TestCase):
 
         self.assertFalse(profile["has_hotel"])
         self.assertGreater(quote["total_operation_hours"], 10)
+        self.assertAlmostEqual(quote["driver_labor_cost"], quote["total_operation_hours"] * 15)
+        self.assertAlmostEqual(quote["helper_labor_cost"], quote["total_operation_hours"] * 15)
+        self.assertAlmostEqual(
+            quote["team_cost"],
+            quote["driver_labor_cost"] + quote["helper_labor_cost"],
+        )
         self.assertEqual(quote["hotel_days"], 0)
         self.assertEqual(quote["hotel_cost"], 0)
 

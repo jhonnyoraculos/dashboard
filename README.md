@@ -123,6 +123,13 @@ multiplicados pela quantidade de funcionarios e pelo salario medio por hora,
 que pode ser ajustado na simulacao. O resultado separa o custo estimado do
 valor sugerido com a margem informada.
 
+Na frota propria, a equipe minima e formada por um motorista e um ajudante. O
+mesmo valor por funcionario/hora e aplicado separadamente ao motorista e a cada
+ajudante durante todo o tempo de viagem mais descarga; os dois custos aparecem
+separados na memoria, nos cards e na comparacao. No Freteiro, motorista e
+ajudante principal seguem as regras de diaria, e o campo de equipe por hora
+representa somente pessoas adicionais.
+
 Os resultados usam diretamente os valores atuais dos campos; a calculadora nao
 mantem uma simulacao anterior depois que peso, distancia ou equipe sao
 alterados.
