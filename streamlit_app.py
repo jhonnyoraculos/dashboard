@@ -80,7 +80,7 @@ MUTED = "#6B7280"
 CARD_BORDER = "#c2d2f3"
 LOGO_PATH = Path(__file__).parent / "static" / "logo-jr.png"
 CURRENT_YEAR = date.today().year
-APP_VERSION = "global-groq-assistant-v47"
+APP_VERSION = "global-groq-assistant-v48"
 LOGGER = logging.getLogger("jr_dashboard.streamlit")
 RANK_ROUTES_ENABLED = True
 ROUTE_CACHE_TTL_SECONDS = max(int(os.environ.get("JR_ROUTE_CACHE_TTL_SECONDS", "180") or 180), 30)
@@ -16518,6 +16518,31 @@ def _inject_routes_platform_css(dark_mode: bool) -> None:
         .stApp [data-testid="stDataFrame"] {{ border:1px solid var(--routes-border); border-radius:13px; overflow:hidden; box-shadow:var(--routes-shadow); }}
         .stApp [data-testid="stExpander"] {{ background:var(--routes-surface) !important; border-color:var(--routes-border) !important; }}
         .stApp h1,.stApp h2,.stApp h3,.stApp h4,.stApp p,.stApp label {{ color:var(--routes-text); }}
+        .stApp .frete-result-hero,
+        .stApp .frete-result-hero p,
+        .stApp .frete-result-hero span,
+        .stApp .frete-result-hero strong {{
+          color:#FFFFFF !important;
+          -webkit-text-fill-color:#FFFFFF !important;
+          text-shadow:0 1px 2px rgba(0,0,0,.18) !important;
+        }}
+        .stApp .frete-result-hero .frete-result-label {{
+          color:#FFFFFF !important;
+          -webkit-text-fill-color:#FFFFFF !important;
+          opacity:.92 !important;
+          font-weight:900 !important;
+        }}
+        .stApp .frete-result-hero .frete-result-value,
+        .stApp .frete-result-hero .frete-result-value--cost {{
+          color:#FFFFFF !important;
+          -webkit-text-fill-color:#FFFFFF !important;
+          opacity:1 !important;
+        }}
+        .stApp .frete-result-hero .frete-result-note {{
+          color:rgba(255,255,255,.94) !important;
+          -webkit-text-fill-color:rgba(255,255,255,.94) !important;
+          opacity:1 !important;
+        }}
         .stApp [data-baseweb="tab-list"] {{ gap:5px; background:var(--routes-surface-soft); padding:5px; border-radius:12px; }}
         .stApp [data-baseweb="tab"] {{ border-radius:9px; padding:8px 14px; }}
         .stApp [aria-selected="true"] {{ background:var(--routes-surface); box-shadow:0 2px 8px rgba(15,23,42,.09); }}
