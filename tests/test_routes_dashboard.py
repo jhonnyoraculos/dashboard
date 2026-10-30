@@ -168,6 +168,7 @@ class RoutesDashboardTests(unittest.TestCase):
             freighter_trip_days=1.5,
             freighter_daily_rate_override=800,
             freighter_excess_km_rate=5,
+            assistant_daily_rate=32,
         )
 
         self.assertTrue(reference["is_freighter"])
@@ -180,9 +181,19 @@ class RoutesDashboardTests(unittest.TestCase):
         self.assertEqual(quote["freighter_excess_cost"], 1_050)
         self.assertEqual(quote["freighter_cost"], 2_250)
         self.assertEqual(quote["vehicle_component"], 2_250)
+        self.assertEqual(quote["assistant_days"], 1.5)
+        self.assertEqual(quote["assistant_daily_rate"], 32)
+        self.assertEqual(quote["assistant_cost"], 48)
         self.assertEqual(quote["distance_component"], 0)
-        self.assertEqual(quote["estimated_cost"], 2_250)
-        self.assertEqual(quote["suggested_freight"], 2_475)
+        self.assertEqual(quote["estimated_cost"], 2_298)
+        self.assertEqual(quote["suggested_freight"], 2_527.8)
+
+    def test_assistant_daily_rate_recognizes_city_inside_route_name(self):
+        self.assertEqual(dashboard._freight_assistant_daily_rate("10 - DIVINÓPOLIS"), 32)
+        self.assertEqual(dashboard._freight_assistant_daily_rate("D+0,5 DIVINOPOLIS FERRAGENS"), 32)
+        self.assertEqual(dashboard._freight_assistant_daily_rate("EXTRA CARMO DO CAJURU"), 32)
+        self.assertEqual(dashboard._freight_assistant_daily_rate("D+0,5 CARMO DOO CAJURU"), 32)
+        self.assertEqual(dashboard._freight_assistant_daily_rate("404 - ITABIRA - GUANHÃES"), 100)
 
     def test_plate_comparison_uses_same_scenario_and_each_vehicle_rule(self):
         rows_by_plate = {
@@ -205,14 +216,16 @@ class RoutesDashboardTests(unittest.TestCase):
             },
             average_trip_days=1.5,
             excess_km_rate=5,
+            assistant_daily_rate=32,
             selected_plate="FRT1A11",
             selected_daily_rate=800,
         ).set_index("Placa")
 
         self.assertEqual(comparison.loc["FRT1A11", "Custo do veículo"], 2_250)
+        self.assertEqual(comparison.loc["FRT1A11", "Ajudante"], 48)
         self.assertEqual(comparison.loc["TRP1A11", "Custo do veículo"], 1_980)
         self.assertEqual(comparison.loc["TRP1A11", "Diferença para o menor"], 0)
-        self.assertEqual(comparison.loc["FRT1A11", "Diferença para o menor"], 270)
+        self.assertEqual(comparison.loc["FRT1A11", "Diferença para o menor"], 318)
 
     def test_fleet_cost_over_revenue_uses_aggregated_plate_totals(self):
         financial = pd.DataFrame(

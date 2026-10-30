@@ -112,7 +112,11 @@ pedagio/extras e demais custos da placa. Quando a placa e Freteiro, o custo por
 KM nao e usado: a calculadora aplica a diaria cadastrada da placa aos dias da
 viagem. A diaria cobre os primeiros 120 km; a distancia excedente usa a tarifa
 padrao de R$ 4,60 por km. A diaria e a tarifa excedente podem ser alteradas na
-simulacao sem modificar o cadastro. A viagem usa a velocidade media de
+simulacao sem modificar o cadastro. Para Freteiro, a diaria de um ajudante e
+somada pelos mesmos dias da viagem: o padrao e R$ 32 quando a descricao da rota
+contem Divinopolis ou Carmo do Cajuru, inclusive prefixos e variacoes como
+`D+0,5 DIVINOPOLIS`; nas demais rotas, o padrao e R$ 100. Esse valor tambem pode
+ser alterado somente para a simulacao. A viagem usa a velocidade media de
 80 km/h, e o peso e convertido em horas de descarga pela produtividade media de
 350 kg por hora. O tempo da viagem e o tempo da descarga sao somados e
 multiplicados pela quantidade de funcionarios e pelo salario medio por hora,
