@@ -80,7 +80,7 @@ MUTED = "#6B7280"
 CARD_BORDER = "#c2d2f3"
 LOGO_PATH = Path(__file__).parent / "static" / "logo-jr.png"
 CURRENT_YEAR = date.today().year
-APP_VERSION = "global-groq-assistant-v49"
+APP_VERSION = "global-groq-assistant-v50"
 LOGGER = logging.getLogger("jr_dashboard.streamlit")
 RANK_ROUTES_ENABLED = True
 ROUTE_CACHE_TTL_SECONDS = max(int(os.environ.get("JR_ROUTE_CACHE_TTL_SECONDS", "180") or 180), 30)
@@ -16796,7 +16796,7 @@ def _route_fleet_cost_summary(financial: pd.DataFrame) -> pd.DataFrame:
     }
     for column, default in numeric_defaults.items():
         source = work[column] if column in work.columns else pd.Series(default, index=work.index)
-        work[column] = pd.to_numeric(source, errors="coerce").fillna(default)
+        work[column] = pd.to_numeric(source, errors="coerce").fillna(default).astype("float64")
     if "Rota ID" not in work.columns:
         work["Rota ID"] = work.index.astype(str)
     fleet = work.groupby("PLACA", as_index=False).agg(
@@ -16810,10 +16810,12 @@ def _route_fleet_cost_summary(financial: pd.DataFrame) -> pd.DataFrame:
         },
     )
     fleet["Resultado"] = fleet["Receita atribuída"] - fleet["Custo total"]
-    fleet["Custo por km"] = fleet["Custo total"].div(fleet["KM"].replace(0, pd.NA))
-    fleet["Custo por entrega"] = fleet["Custo total"].div(fleet["Entregas"].replace(0, pd.NA))
+    fleet["Custo por km"] = fleet["Custo total"].div(fleet["KM"].mask(fleet["KM"].eq(0)))
+    fleet["Custo por entrega"] = fleet["Custo total"].div(
+        fleet["Entregas"].mask(fleet["Entregas"].eq(0))
+    )
     fleet["Custo/receita %"] = fleet["Custo total"].div(
-        fleet["Receita atribuída"].replace(0, pd.NA)
+        fleet["Receita atribuída"].mask(fleet["Receita atribuída"].eq(0))
     ).mul(100)
     fleet["Sem receita"] = fleet["Receita atribuída"].le(0) & fleet["Custo total"].gt(0)
     return fleet.sort_values(

@@ -150,7 +150,7 @@ class RoutesDashboardTests(unittest.TestCase):
                 {"Rota ID": "a1", "PLACA": "AAA1A11", "Entregas": 10, "KM Rodados": 100, "Custo total": 200, "Ganho entregas": 400, "Peso Carga": 1_000},
                 {"Rota ID": "a2", "PLACA": "AAA1A11", "Entregas": 10, "KM Rodados": 100, "Custo total": 100, "Ganho entregas": 100, "Peso Carga": 1_000},
                 {"Rota ID": "b1", "PLACA": "BBB1B11", "Entregas": 5, "KM Rodados": 50, "Custo total": 300, "Ganho entregas": 200, "Peso Carga": 500},
-                {"Rota ID": "c1", "PLACA": "CCC1C11", "Entregas": 1, "KM Rodados": 10, "Custo total": 50, "Ganho entregas": 0, "Peso Carga": 100},
+                {"Rota ID": "c1", "PLACA": "CCC1C11", "Entregas": 1, "KM Rodados": 0, "Custo total": 50, "Ganho entregas": 0, "Peso Carga": 100},
             ]
         )
 
@@ -158,6 +158,9 @@ class RoutesDashboardTests(unittest.TestCase):
 
         self.assertEqual(fleet.loc["AAA1A11", "Custo/receita %"], 60.0)
         self.assertEqual(fleet.loc["BBB1B11", "Custo/receita %"], 150.0)
+        self.assertTrue(pd.api.types.is_float_dtype(fleet["Custo por km"]))
+        self.assertTrue(pd.api.types.is_float_dtype(fleet["Custo/receita %"]))
+        self.assertTrue(pd.isna(fleet.loc["CCC1C11", "Custo por km"]))
         self.assertTrue(pd.isna(fleet.loc["CCC1C11", "Custo/receita %"]))
         self.assertTrue(bool(fleet.loc["CCC1C11", "Sem receita"]))
 
