@@ -1135,7 +1135,7 @@ class RoutesDashboardTests(unittest.TestCase):
                     "Retorno": pd.Timestamp("2026-10-21 17:00"), "Mes": "2026-10",
                     "Rota": "D+0,5 DIVINOPOLIS FERRAGENS", "PLACA": "AAA1A11",
                     "Motorista": "MOTORISTA A", "Ajudante": "AJUDANTE A",
-                    "Categoria": "Transporte", "KM Rodados": 0.0,
+                    "Categoria": "Transporte", "KM Rodados": 0.0, "Horas Trabalhadas": 10.0,
                 },
                 {
                     "Rota ID": "freight", "Data": pd.Timestamp("2026-10-20"),
@@ -1143,7 +1143,7 @@ class RoutesDashboardTests(unittest.TestCase):
                     "Retorno": pd.Timestamp("2026-10-21 17:00"), "Mes": "2026-10",
                     "Rota": "404 - ITABIRA - GUANHAES", "PLACA": "FRT1A11",
                     "Motorista": "MOTORISTA F", "Ajudante": "AJUDANTE F",
-                    "Categoria": "Freteiro", "KM Rodados": 0.0,
+                    "Categoria": "Freteiro", "KM Rodados": 0.0, "Horas Trabalhadas": 10.0,
                 },
             ]
         )
@@ -1162,6 +1162,17 @@ class RoutesDashboardTests(unittest.TestCase):
             patch.object(backend, "_apply_plate_categories", side_effect=lambda frame: frame),
         ):
             result = backend._route_cost_breakdown(routes, routes, pd.DataFrame())
+            salary_result = backend._route_cost_breakdown(
+                routes,
+                routes,
+                pd.DataFrame(),
+                staff_costs={
+                    "include_dailies": False,
+                    "include_salaries": True,
+                    "driver_hourly_rate": 20.0,
+                    "helper_hourly_rate": 10.0,
+                },
+            )
 
         costs = {row["Rota ID"]: row for row in result["rotas"]}
         self.assertEqual(costs["own"]["Diaria Motorista"], 64.0)
@@ -1171,6 +1182,15 @@ class RoutesDashboardTests(unittest.TestCase):
         self.assertEqual(costs["freight"]["Diaria Ajudante"], 200.0)
         self.assertEqual(costs["freight"]["Freteiro"], 1_400.0)
         self.assertEqual(costs["freight"]["Custo total"], 1_600.0)
+
+        salary_costs = {row["Rota ID"]: row for row in salary_result["rotas"]}
+        self.assertEqual(salary_costs["own"]["Diarias Equipe"], 0.0)
+        self.assertEqual(salary_costs["own"]["Salario Motorista"], 200.0)
+        self.assertEqual(salary_costs["own"]["Salario Ajudante"], 100.0)
+        self.assertEqual(salary_costs["own"]["Salarios"], 300.0)
+        self.assertEqual(salary_costs["freight"]["Salario Motorista"], 0.0)
+        self.assertEqual(salary_costs["freight"]["Salario Ajudante"], 100.0)
+        self.assertEqual(salary_costs["freight"]["Salarios"], 100.0)
 
     def test_route_summary_preserves_operational_result_name(self):
         summary = dashboard._route_summary_table(dashboard._route_financial_frame(sample_payload()))

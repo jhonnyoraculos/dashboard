@@ -60,7 +60,7 @@ DB_TABLES = {
 }
 DB_METADATA_TABLE = "dashboard_metadata"
 BACKEND_BUILD_VERSION = "aluguel-multiplicar-meses-v1"
-ROUTES_BUILD_VERSION = "rotas-colaboradores-v26"
+ROUTES_BUILD_VERSION = "rotas-colaboradores-v27"
 PEDAGIO_CHART_VERSION = "all-types-v1"
 USE_LEGACY_ROUTE_HOTEL_ALLOCATION = False
 BACKUP_METADATA_KEY = "backup.last_downloaded_at"
@@ -477,12 +477,17 @@ def _route_name_key(value: object) -> str:
     return re.sub(r"\s+", " ", plain).strip().casefold()
 
 
-def _route_staff_daily_rate(route_name: object) -> float:
+def _route_staff_daily_rate(
+    route_name: object,
+    *,
+    local_rate: float = ROUTE_STAFF_LOCAL_DAILY_RATE,
+    other_rate: float = ROUTE_STAFF_OTHER_DAILY_RATE,
+) -> float:
     """Diária individual de motorista/ajudante conforme a cidade contida na rota."""
     normalized = _route_name_key(route_name).upper()
     is_divinopolis = "DIVINOPOL" in normalized
     is_carmo_do_cajuru = "CARMO" in normalized and "CAJURU" in normalized
-    return ROUTE_STAFF_LOCAL_DAILY_RATE if (is_divinopolis or is_carmo_do_cajuru) else ROUTE_STAFF_OTHER_DAILY_RATE
+    return max(float(local_rate if (is_divinopolis or is_carmo_do_cajuru) else other_rate), 0.0)
 
 
 def _route_aliases() -> dict[str, str]:
@@ -5728,7 +5733,17 @@ def _route_cost_breakdown(
     all_completed_routes: pd.DataFrame,
     selected_routes: pd.DataFrame,
     deliveries: pd.DataFrame,
+    staff_costs: dict[str, object] | None = None,
 ) -> dict:
+    staff_costs = staff_costs or {}
+    include_staff_dailies = bool(staff_costs.get("include_dailies", True))
+    include_staff_salaries = bool(staff_costs.get("include_salaries", False))
+    driver_local_daily = max(float(staff_costs.get("driver_local_daily", ROUTE_STAFF_LOCAL_DAILY_RATE) or 0.0), 0.0)
+    helper_local_daily = max(float(staff_costs.get("helper_local_daily", ROUTE_STAFF_LOCAL_DAILY_RATE) or 0.0), 0.0)
+    driver_other_daily = max(float(staff_costs.get("driver_other_daily", ROUTE_STAFF_OTHER_DAILY_RATE) or 0.0), 0.0)
+    helper_other_daily = max(float(staff_costs.get("helper_other_daily", ROUTE_STAFF_OTHER_DAILY_RATE) or 0.0), 0.0)
+    driver_hourly_rate = max(float(staff_costs.get("driver_hourly_rate", 0.0) or 0.0), 0.0)
+    helper_hourly_rate = max(float(staff_costs.get("helper_hourly_rate", 0.0) or 0.0), 0.0)
     empty = {
         "rotas": [],
         "mensal": [],
@@ -5866,35 +5881,27 @@ def _route_cost_breakdown(
     # Cada linha de selected_days representa um dia de uma rota concluída.
     # Frota própria recebe uma diária de motorista e uma de ajudante por dia.
     # No Freteiro, o motorista já está coberto pelo contrato: soma-se somente o ajudante.
-    for _, row in selected_days.iterrows():
-        daily_rate = _route_staff_daily_rate(row.get("Rota"))
-        if _normalize_category_value(row.get("Categoria")) != "Freteiro":
-            add_cost(row.get("Rota ID"), "Diaria Motorista", daily_rate)
-        add_cost(row.get("Rota ID"), "Diaria Ajudante", daily_rate)
-
-    try:
-        salaries = period_rows(load_salarios_transporte())
-        salary_by_month = (
-            salaries.assign(Valor=pd.to_numeric(salaries["Valor"], errors="coerce").fillna(0.0))
-            .groupby("Mes")["Valor"]
-            .sum()
-            .to_dict()
-            if not salaries.empty and {"Mes", "Valor"}.issubset(salaries.columns)
-            else {}
-        )
-        transport_days = all_days[
-            all_days["Categoria"].map(_normalize_category_value).eq("Transporte")
-        ].drop_duplicates(["Rota ID", "Data"])
-        month_day_counts = transport_days.groupby("Mes").size().to_dict()
+    if include_staff_dailies:
         for _, row in selected_days.iterrows():
-            if _normalize_category_value(row.get("Categoria")) != "Transporte":
-                continue
-            month = str(row.get("Mes") or "")
-            divisor = int(month_day_counts.get(month, 0) or 0)
-            if divisor:
-                add_cost(row.get("Rota ID"), "Salarios", float(salary_by_month.get(month, 0.0)) / divisor)
-    except Exception:
-        pass
+            driver_daily = _route_staff_daily_rate(
+                row.get("Rota"), local_rate=driver_local_daily, other_rate=driver_other_daily
+            )
+            helper_daily = _route_staff_daily_rate(
+                row.get("Rota"), local_rate=helper_local_daily, other_rate=helper_other_daily
+            )
+            if _normalize_category_value(row.get("Categoria")) != "Freteiro":
+                add_cost(row.get("Rota ID"), "Diaria Motorista", driver_daily)
+            add_cost(row.get("Rota ID"), "Diaria Ajudante", helper_daily)
+
+    if include_staff_salaries:
+        for _, row in selected_routes.iterrows():
+            hours = pd.to_numeric(pd.Series([row.get("Horas Trabalhadas")]), errors="coerce").iloc[0]
+            if pd.isna(hours):
+                hours = pd.to_numeric(pd.Series([row.get("Horas Operacao")]), errors="coerce").iloc[0]
+            worked_hours = max(float(hours), 0.0) if pd.notna(hours) else 0.0
+            if _normalize_category_value(row.get("Categoria")) != "Freteiro":
+                add_cost(row.get("Rota ID"), "Salario Motorista", worked_hours * driver_hourly_rate)
+            add_cost(row.get("Rota ID"), "Salario Ajudante", worked_hours * helper_hourly_rate)
 
     hotel_links: list[dict] = []
     unmatched_hotels = 0
@@ -5953,7 +5960,9 @@ def _route_cost_breakdown(
                 "Manutencao": round(parts["Manutencao"], 2),
                 "Pedagio": round(parts["Pedagio"], 2),
                 "Hoteis": round(parts["Hoteis"], 2),
-                "Salarios": round(parts["Salarios"], 2),
+                "Salario Motorista": round(parts["Salario Motorista"], 2),
+                "Salario Ajudante": round(parts["Salario Ajudante"], 2),
+                "Salarios": round(parts["Salario Motorista"] + parts["Salario Ajudante"], 2),
                 "Freteiro": round(parts["Freteiro"], 2),
                 "Diaria Motorista": round(parts["Diaria Motorista"], 2),
                 "Diaria Ajudante": round(parts["Diaria Ajudante"], 2),
@@ -6112,7 +6121,22 @@ def data_rotas(params: dict | None = None) -> dict:
         ).fillna(0.0)
         monthly = monthly.sort_values("Mes")
 
-    costs = _route_cost_breakdown(all_routes, routes, filtered_deliveries)
+    def nonnegative_cost_param(key: str, default: float) -> float:
+        parsed = pd.to_numeric(pd.Series([_param(params, key)]), errors="coerce").iloc[0]
+        return max(float(parsed), 0.0) if pd.notna(parsed) else float(default)
+
+    include_dailies_param = _param(params, "incluir_diarias_equipe")
+    staff_costs = {
+        "include_dailies": True if include_dailies_param is None else _truthy_param(include_dailies_param),
+        "include_salaries": _truthy_param(params.get("incluir_salarios_equipe")),
+        "driver_local_daily": nonnegative_cost_param("diaria_motorista_local", ROUTE_STAFF_LOCAL_DAILY_RATE),
+        "helper_local_daily": nonnegative_cost_param("diaria_ajudante_local", ROUTE_STAFF_LOCAL_DAILY_RATE),
+        "driver_other_daily": nonnegative_cost_param("diaria_motorista_outras", ROUTE_STAFF_OTHER_DAILY_RATE),
+        "helper_other_daily": nonnegative_cost_param("diaria_ajudante_outras", ROUTE_STAFF_OTHER_DAILY_RATE),
+        "driver_hourly_rate": nonnegative_cost_param("salario_hora_motorista", 0.0),
+        "helper_hourly_rate": nonnegative_cost_param("salario_hora_ajudante", 0.0),
+    }
+    costs = _route_cost_breakdown(all_routes, routes, filtered_deliveries, staff_costs=staff_costs)
     cost_by_route_id = {
         str(row.get("Rota ID")): row for row in costs.get("rotas", []) if str(row.get("Rota ID") or "").strip()
     }
@@ -6249,6 +6273,7 @@ def data_rotas(params: dict | None = None) -> dict:
         "evolucao_mensal": _route_records(monthly),
         "tempos_rotas": _route_records(time_details),
         "custos": costs,
+        "configuracao_custos_equipe": staff_costs,
         "alertas": alerts,
         "rotas_detalhes": _route_records(routes.sort_values(["Data", "Rota"], ascending=[False, True])),
         "entregas_detalhes": _route_records(delivery_details),

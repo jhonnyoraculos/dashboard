@@ -194,7 +194,12 @@ ajudante: R$ 32 por pessoa para Divinopolis e Carmo do Cajuru e R$ 100 por
 pessoa para as demais cidades. Em rotas de Freteiro, o contrato ja cobre o
 motorista, portanto somente a diaria do ajudante e acrescentada alem da diaria
 do proprio Freteiro. Essas diarias entram no custo geral, rentabilidade,
-rankings e relatorios; nenhum novo salario por hora e estimado. A
+rankings e relatorios. O painel permite ativar/desativar as diarias e editar
+separadamente os quatro valores: motorista/ajudante local e motorista/ajudante
+de outras cidades. Os salarios por hora de motorista e ajudante possuem outro
+controle, separado das diarias, e ficam desativados por padrao. Quando ativados,
+usam as horas trabalhadas da rota; em Freteiro, somente o salario do ajudante e
+acrescentado. A
 hospedagem e vinculada a uma unica rota pela data e pelo nome encontrado como
 motorista ou ajudante. Quando o nome completo nao coincide, os dois primeiros
 nomes podem identificar o colaborador, desde que apontem para uma unica pessoa

@@ -80,7 +80,7 @@ MUTED = "#6B7280"
 CARD_BORDER = "#c2d2f3"
 LOGO_PATH = Path(__file__).parent / "static" / "logo-jr.png"
 CURRENT_YEAR = date.today().year
-APP_VERSION = "global-groq-assistant-v62"
+APP_VERSION = "global-groq-assistant-v63"
 LOGGER = logging.getLogger("jr_dashboard.streamlit")
 RANK_ROUTES_ENABLED = True
 ROUTE_CACHE_TTL_SECONDS = max(int(os.environ.get("JR_ROUTE_CACHE_TTL_SECONDS", "180") or 180), 30)
@@ -16328,7 +16328,7 @@ def _render_rotas_v4() -> None:
         st.caption(
             "Combustível usa o custo histórico real por KM de cada placa. Manutenção e pedágio são rateados entre "
             "rotas da mesma placa no mesmo dia. As diárias usam cada dia da rota concluída: frota própria recebe "
-            "motorista + ajudante e Freteiro recebe somente ajudante. Salários usam os dias operacionais; hotéis são vinculados a uma "
+            "motorista + ajudante e Freteiro recebe somente ajudante. Quando ativados, os salários usam as horas trabalhadas; hotéis são vinculados a uma "
             "rota específica pela data e pelo nome encontrado como motorista ou ajudante."
         )
         render_kpis(
@@ -16345,6 +16345,7 @@ def _render_rotas_v4() -> None:
         else:
             numeric_cost_columns = [
                 "Combustivel", "Manutencao", "Pedagio", "Hoteis", "Salarios", "Freteiro",
+                "Salario Motorista", "Salario Ajudante",
                 "Diaria Motorista", "Diaria Ajudante", "Diarias Equipe",
                 "Custo total", "Ganho entregas", "Resultado", "Custo sobre ganho %",
             ]
@@ -16569,7 +16570,8 @@ def _render_rotas_v4() -> None:
             st.markdown("**Todas as viagens e composição dos custos**")
             cost_columns = [
                 "Data", "Rota", "PLACA", "Motorista", "Ajudante", "Entregas", "KM Rodados", "Dias Rota", "Combustivel",
-                "Manutencao", "Pedagio", "Hoteis", "Salarios", "Freteiro", "Diaria Motorista", "Diaria Ajudante",
+                "Manutencao", "Pedagio", "Hoteis", "Salario Motorista", "Salario Ajudante", "Salarios", "Freteiro",
+                "Diaria Motorista", "Diaria Ajudante",
                 "Diarias Equipe", "Custo total", "Custo por entrega",
                 "Ganho entregas", "Resultado", "Custo sobre ganho %",
             ]
@@ -16580,6 +16582,8 @@ def _render_rotas_v4() -> None:
                 "Pedagio": _money_col("Pedágio"),
                 "Hoteis": _money_col("Hotéis"),
                 "Salarios": _money_col("Salários"),
+                "Salario Motorista": _money_col("Salário motorista"),
+                "Salario Ajudante": _money_col("Salário ajudante"),
                 "Freteiro": _money_col("Freteiro"),
                 "Diaria Motorista": _money_col("Diária motorista"),
                 "Diaria Ajudante": _money_col("Diária ajudante"),
@@ -17133,6 +17137,7 @@ def _route_financial_frame(data: dict) -> pd.DataFrame:
         costs = costs.merge(activity[columns].drop_duplicates("Rota ID"), on="Rota ID", how="left")
     numeric = [
         "Combustivel", "Manutencao", "Pedagio", "Hoteis", "Salarios", "Freteiro",
+        "Salario Motorista", "Salario Ajudante",
         "Diaria Motorista", "Diaria Ajudante", "Diarias Equipe", "Custo total",
         "Combustivel R$/km", "Combustivel Historico", "KM Historico Combustivel",
         "Ganho entregas", "Resultado", "Custo sobre ganho %", "Entregas", "KM Rodados", "Peso Carga", "Dias Rota",
@@ -19113,7 +19118,73 @@ def render_rotas() -> None:
             with f3:
                 drivers = st.multiselect("Motorista", options.get("motoristas") or [], key="routes_drivers_v5")
 
-    params: dict[str, object] = {"data_inicio": start_date.isoformat(), "data_fim": end_date.isoformat()}
+        with st.expander("Custos da equipe — ativar, desativar e editar", expanded=False):
+            toggle_daily_col, toggle_salary_col = st.columns(2)
+            with toggle_daily_col:
+                include_staff_dailies = st.toggle(
+                    "Incluir diárias de motorista e ajudante",
+                    value=True,
+                    key="routes_include_staff_dailies_v1",
+                )
+            with toggle_salary_col:
+                include_staff_salaries = st.toggle(
+                    "Incluir salários por hora",
+                    value=False,
+                    key="routes_include_staff_salaries_v1",
+                )
+
+            st.markdown("**Diárias por pessoa e por dia de rota**")
+            daily_cols = st.columns(4)
+            with daily_cols[0]:
+                driver_local_daily = st.number_input(
+                    "Motorista — Divinópolis/Carmo (R$)", min_value=0.0, value=32.0, step=1.0,
+                    format="%.2f", disabled=not include_staff_dailies, key="routes_driver_local_daily_v1",
+                )
+            with daily_cols[1]:
+                helper_local_daily = st.number_input(
+                    "Ajudante — Divinópolis/Carmo (R$)", min_value=0.0, value=32.0, step=1.0,
+                    format="%.2f", disabled=not include_staff_dailies, key="routes_helper_local_daily_v1",
+                )
+            with daily_cols[2]:
+                driver_other_daily = st.number_input(
+                    "Motorista — outras cidades (R$)", min_value=0.0, value=100.0, step=1.0,
+                    format="%.2f", disabled=not include_staff_dailies, key="routes_driver_other_daily_v1",
+                )
+            with daily_cols[3]:
+                helper_other_daily = st.number_input(
+                    "Ajudante — outras cidades (R$)", min_value=0.0, value=100.0, step=1.0,
+                    format="%.2f", disabled=not include_staff_dailies, key="routes_helper_other_daily_v1",
+                )
+
+            st.markdown("**Salários separados por hora trabalhada**")
+            salary_cols = st.columns(2)
+            with salary_cols[0]:
+                driver_hourly_cost = st.number_input(
+                    "Salário do motorista por hora (R$)", min_value=0.0, value=0.0, step=1.0,
+                    format="%.2f", disabled=not include_staff_salaries, key="routes_driver_hourly_cost_v1",
+                )
+            with salary_cols[1]:
+                helper_hourly_cost = st.number_input(
+                    "Salário do ajudante por hora (R$)", min_value=0.0, value=0.0, step=1.0,
+                    format="%.2f", disabled=not include_staff_salaries, key="routes_helper_hourly_cost_v1",
+                )
+            st.caption(
+                "Na frota própria entram motorista e ajudante. No Freteiro, o contrato cobre o motorista: "
+                "somente os custos do ajudante são acrescentados. Alterações atualizam todas as abas."
+            )
+
+    params: dict[str, object] = {
+        "data_inicio": start_date.isoformat(),
+        "data_fim": end_date.isoformat(),
+        "incluir_diarias_equipe": bool(include_staff_dailies),
+        "incluir_salarios_equipe": bool(include_staff_salaries),
+        "diaria_motorista_local": float(driver_local_daily),
+        "diaria_ajudante_local": float(helper_local_daily),
+        "diaria_motorista_outras": float(driver_other_daily),
+        "diaria_ajudante_outras": float(helper_other_daily),
+        "salario_hora_motorista": float(driver_hourly_cost),
+        "salario_hora_ajudante": float(helper_hourly_cost),
+    }
     if categories: params["categoria"] = categories
     if plates: params["placa"] = plates
     if drivers: params["motorista"] = drivers
