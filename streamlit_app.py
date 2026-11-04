@@ -79,7 +79,7 @@ if not _backend_features_ready or not _backend_aluguel_period_ready or not _back
 # O Streamlit também pode manter módulos auxiliares em memória após o deploy.
 # A versão impede que o leitor antigo do rastreador continue usando a coluna
 # imediatamente anterior ao KM como se fosse o endereço final.
-if getattr(route_tracker, "TRACKER_BUILD_VERSION", "") != "data-dentro-do-ciclo-v4":
+if getattr(route_tracker, "TRACKER_BUILD_VERSION", "") != "ciclo-base-estrito-v5":
     route_tracker = importlib.reload(route_tracker)
 match_tracker_cycles = route_tracker.match_tracker_cycles
 parse_tracker_report = route_tracker.parse_tracker_report
@@ -91,7 +91,7 @@ MUTED = "#6B7280"
 CARD_BORDER = "#c2d2f3"
 LOGO_PATH = Path(__file__).parent / "static" / "logo-jr.png"
 CURRENT_YEAR = date.today().year
-APP_VERSION = "rotas-rastreador-v75"
+APP_VERSION = "rotas-rastreador-v76"
 LOGGER = logging.getLogger("jr_dashboard.streamlit")
 RANK_ROUTES_ENABLED = True
 ROUTE_CACHE_TTL_SECONDS = max(int(os.environ.get("JR_ROUTE_CACHE_TTL_SECONDS", "1800") or 1800), 120)
@@ -13390,9 +13390,8 @@ def _render_route_tracker_import() -> None:
         )
         st.caption(
             "Quando a mesma placa possui vários manifestos pendentes no dia, eles representam a mesma viagem: "
-            "recebem os mesmos horários e jornadas, e o KM total do rastreador é dividido igualmente. Quando o "
-            "rastreio forma um ciclo de vários dias, também são consideradas as rotas cuja data esteja dentro "
-            "desse período."
+            "recebem os mesmos horários e jornadas, e o KM total do rastreador é dividido igualmente. A data da "
+            "rota precisa ser a data em que o caminhão saiu da base; dias intermediários não criam outra viagem."
         )
 
         journey_rows = []

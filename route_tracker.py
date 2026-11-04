@@ -9,7 +9,7 @@ from typing import Iterable
 import pandas as pd
 
 
-TRACKER_BUILD_VERSION = "data-dentro-do-ciclo-v4"
+TRACKER_BUILD_VERSION = "ciclo-base-estrito-v5"
 
 
 def _ascii(value: object) -> str:
@@ -372,46 +372,21 @@ def match_tracker_cycles(cycles: Iterable[dict], routes: pd.DataFrame) -> list[d
     route_frame["_Data"] = route_dates.dt.normalize()
 
     cycle_list = list(cycles)
-    complete_cycles = [cycle for cycle in cycle_list if bool(cycle.get("Completa"))]
-    assigned_route_indices: dict[int, list[int]] = defaultdict(list)
-    for route_index, route in route_frame.iterrows():
-        route_plate = str(route.get("_Placa") or "")
-        route_date = route.get("_Data")
-        if not route_plate or pd.isna(route_date):
-            continue
-        possible: list[tuple[int, dict]] = []
-        for cycle_index, cycle in enumerate(cycle_list):
-            if not bool(cycle.get("Completa")) or str(cycle.get("Placa") or "") != route_plate:
-                continue
-            cycle_start = pd.Timestamp(cycle["Saida"]).normalize()
-            cycle_stop = pd.Timestamp(cycle["Retorno"]).normalize()
-            if cycle_start <= route_date <= cycle_stop:
-                possible.append((cycle_index, cycle))
-        if not possible:
-            continue
-        # Se mais de um ciclo tocar a mesma data, priorize o que começou mais
-        # perto dela. Assim cada pendência é atribuída uma única vez.
-        possible.sort(
-            key=lambda item: (
-                abs((route_date - pd.Timestamp(item[1]["Saida"]).normalize()).days),
-                pd.Timestamp(item[1]["Retorno"]) - pd.Timestamp(item[1]["Saida"]),
-            )
-        )
-        assigned_route_indices[possible[0][0]].append(route_index)
-
     matches: list[dict] = []
-    for cycle_index, cycle in enumerate(cycle_list):
+    for cycle in cycle_list:
         plate = str(cycle.get("Placa") or "")
-        candidate_indices = assigned_route_indices.get(cycle_index, [])
-        candidates = route_frame.loc[candidate_indices].copy() if candidate_indices else route_frame.iloc[0:0].copy()
+        departure_date = pd.Timestamp(cycle["Saida"]).normalize()
+        candidates = route_frame.loc[
+            route_frame["_Placa"].eq(plate) & route_frame["_Data"].eq(departure_date)
+        ].copy()
         complete = bool(cycle.get("Completa"))
         if not complete:
             correspondence = "Viagem parcial — sem retorno à base"
             candidates = candidates.iloc[0:0]
         elif candidates.empty:
-            correspondence = "Nenhuma rota pendente para a placa no período da viagem"
+            correspondence = "Nenhuma rota pendente para a placa na data de saída da base"
         else:
-            correspondence = f"{len(candidates)} rota(s) pendente(s) encontrada(s) no período"
+            correspondence = f"{len(candidates)} rota(s) pendente(s) encontrada(s) na saída da base"
 
         route_ids = candidates.get("Rota ID", pd.Series(dtype="string")).astype("string").tolist()
         route_names = candidates.get("Rota", pd.Series(dtype="string")).astype("string").tolist()
