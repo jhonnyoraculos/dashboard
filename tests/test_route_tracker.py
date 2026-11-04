@@ -23,6 +23,32 @@ def tracker_workbook() -> bytes:
     return buffer.getvalue()
 
 
+def tracker_workbook_with_initial_and_final_locations() -> bytes:
+    rows = [
+        [None, "Relatório completo", None, None, None, None, None, None],
+        [
+            None,
+            "Placa",
+            "Ign",
+            "Data/Hora Inicial",
+            "Localização Inicial",
+            "Data/Hora Final",
+            "Localização Final",
+            "Distância Percorrida (KM)",
+        ],
+        [None, "BBB-2B22", "Desligado", "07/11/2026 05:00:00", "Av. Marginal - Divinópolis-MG", "07/11/2026 06:00:00", "Av. Marginal - Divinópolis-MG", "0,00"],
+        [None, "BBB-2B22", "Ligado", "07/11/2026 06:00:00", "Av. Marginal - Divinópolis-MG", "07/11/2026 08:00:00", "Cliente A - Pará de Minas-MG", "80,00"],
+        [None, "BBB-2B22", "Desligado", "07/11/2026 08:00:00", "Cliente A - Pará de Minas-MG", "07/11/2026 08:30:00", "Cliente A - Pará de Minas-MG", "0,00"],
+        [None, "BBB-2B22", "Ligado", "07/11/2026 08:30:00", "Cliente A - Pará de Minas-MG", "07/11/2026 10:00:00", "Av. Marginal - Divinópolis-MG", "75,00"],
+        [None, "BBB-2B22", "Ligado", "07/11/2026 13:00:00", "Av. Marginal - Divinópolis-MG", "07/11/2026 14:00:00", "Cliente B - Itaúna-MG", "40,00"],
+        # A chegada pode aparecer em uma linha desligada e com KM zero.
+        [None, "BBB-2B22", "Desligado", "07/11/2026 14:00:00", "Cliente B - Itaúna-MG", "07/11/2026 15:00:00", "Av. Marginal - Divinópolis-MG", "0,00"],
+    ]
+    buffer = BytesIO()
+    pd.DataFrame(rows).to_excel(buffer, index=False, header=False, engine="openpyxl")
+    return buffer.getvalue()
+
+
 class RouteTrackerTests(unittest.TestCase):
     def test_tracker_builds_daily_journeys_without_counting_the_night(self):
         cycles, events, warnings = parse_tracker_report(tracker_workbook(), "rastreador.xlsx")
@@ -57,6 +83,21 @@ class RouteTrackerTests(unittest.TestCase):
         self.assertEqual(matches[0]["Quantidade rotas"], 2)
         self.assertEqual(matches[0]["KM por rota"], 150.0)
         self.assertNotIn("r3", matches[0]["Rota IDs"])
+
+    def test_tracker_uses_both_locations_and_consolidates_same_day_departures(self):
+        cycles, events, warnings = parse_tracker_report(tracker_workbook_with_initial_and_final_locations())
+        self.assertEqual(warnings, [])
+        self.assertIn("LocalizacaoInicial", events.columns)
+        self.assertIn("LocalizacaoFinal", events.columns)
+        self.assertEqual(len(cycles), 1)
+        cycle = cycles[0]
+        self.assertEqual(cycle["Placa"], "BBB2B22")
+        self.assertEqual(cycle["Saida"], pd.Timestamp("2026-11-07 06:00:00"))
+        self.assertEqual(cycle["Retorno"], pd.Timestamp("2026-11-07 15:00:00"))
+        self.assertEqual(cycle["KM total"], 195.0)
+        self.assertEqual(cycle["Dias"], 1)
+        self.assertAlmostEqual(cycle["Horas trabalhadas"], 9.0)
+        self.assertIn("2 saída(s)", cycle["Situação"])
 
 
 if __name__ == "__main__":

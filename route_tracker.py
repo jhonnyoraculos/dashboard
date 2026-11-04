@@ -134,21 +134,33 @@ def _extract_cycles(events: pd.DataFrame) -> list[dict]:
         previous_location = ""
         seen_home = False
         for _, row in group.sort_values(["Inicio", "Fim"]).iterrows():
-            location = str(row.get("Localizacao") or "").strip()
+            initial_location = str(row.get("LocalizacaoInicial") or "").strip()
+            location = str(row.get("LocalizacaoFinal") or row.get("Localizacao") or "").strip()
             distance = float(row.get("KM") or 0.0)
             moving = _is_on(row.get("Ign")) and distance > 0.01
             starts_moving = _is_on(row.get("Ign")) and distance >= 0.5
+            has_explicit_locations = bool(initial_location)
             previous_is_home = (
                 _is_base(previous_location)
                 or _is_home_city(previous_location)
                 or (seen_home and _is_exit_reference(previous_location))
             )
+            initial_is_base = _is_base(initial_location)
+            initial_is_exit = _is_exit_reference(initial_location)
             destination_is_base = _is_base(location)
             destination_is_home = _is_home_city(location)
 
             if active is None:
-                starts_at_home = previous_is_home and not destination_is_base
-                starts_at_exit = seen_home and not previous_location and _is_exit_reference(location)
+                starts_at_home = (
+                    (initial_is_base and not destination_is_base)
+                    if has_explicit_locations
+                    else (previous_is_home and not destination_is_base)
+                )
+                starts_at_exit = (
+                    seen_home and initial_is_exit and not destination_is_base
+                    if has_explicit_locations
+                    else (seen_home and not previous_location and _is_exit_reference(location))
+                )
                 if starts_moving and (starts_at_home or starts_at_exit):
                     movement = row.to_dict()
                     active = {
@@ -166,11 +178,20 @@ def _extract_cycles(events: pd.DataFrame) -> list[dict]:
                 if not destination_is_home or _is_exit_reference(location):
                     active["left_home"] = True
 
-                returned_from_outside = bool(active["left_home"] and destination_is_home)
-                returned_local_to_base = bool(not active["left_home"] and destination_is_base)
-                if len(active["movements"]) > 1 and (returned_from_outside or returned_local_to_base):
-                    cycles.append(_finish_cycle(active, complete=True, reason="Retorno à base identificado"))
-                    active = None
+            returned_from_outside = bool(active["left_home"] and destination_is_home)
+            returned_local_to_base = bool(not active["left_home"] and destination_is_base)
+            returned = (
+                destination_is_base
+                if has_explicit_locations
+                else (returned_from_outside or returned_local_to_base)
+            )
+            if returned and active["movements"]:
+                # Alguns rastreadores registram a chegada à Av. Marginal na linha
+                # "Desligado", com KM zero. A linha ainda determina o retorno real.
+                if not moving:
+                    active["movements"].append(row.to_dict())
+                cycles.append(_finish_cycle(active, complete=True, reason="Retorno à base identificado"))
+                active = None
             if destination_is_base or destination_is_home:
                 seen_home = True
             previous_location = location or previous_location
@@ -178,6 +199,41 @@ def _extract_cycles(events: pd.DataFrame) -> list[dict]:
         if active is not None:
             cycles.append(_finish_cycle(active, complete=False, reason="Sem retorno à base no relatório"))
     return cycles
+
+
+def _merge_same_day_cycles(cycles: list[dict]) -> list[dict]:
+    """Consolida as várias saídas da mesma placa em uma operação diária."""
+    grouped: dict[tuple[str, pd.Timestamp], list[dict]] = defaultdict(list)
+    incomplete: list[dict] = []
+    for cycle in cycles:
+        if not cycle.get("Completa"):
+            incomplete.append(cycle)
+            continue
+        key = (str(cycle.get("Placa") or ""), pd.Timestamp(cycle["Data rota"]).normalize())
+        grouped[key].append(cycle)
+
+    merged: list[dict] = []
+    for (_plate, _day), day_cycles in grouped.items():
+        day_cycles.sort(key=lambda row: pd.Timestamp(row["Saida"]))
+        if len(day_cycles) == 1:
+            merged.append(day_cycles[0])
+            continue
+        movements = [
+            movement
+            for cycle in day_cycles
+            for movement in list(cycle.get("_Movements") or [])
+        ]
+        merged.append(
+            _finish_cycle(
+                {"plate": day_cycles[0]["Placa"], "movements": movements},
+                complete=True,
+                reason=f"{len(day_cycles)} saída(s) da base consolidadas no dia",
+            )
+        )
+    return sorted(
+        [*merged, *incomplete],
+        key=lambda row: (str(row.get("Placa") or ""), pd.Timestamp(row["Saida"])),
+    )
 
 
 def _extend_returns_to_exact_base(cycles: list[dict], events: pd.DataFrame) -> list[dict]:
@@ -231,8 +287,16 @@ def parse_tracker_report(content: bytes, file_name: str = "relatorio.xlsx") -> t
     start_index = _column_index(headers, lambda value: "DATAHORA INICIAL" in value, "Data/Hora Inicial")
     stop_index = _column_index(headers, lambda value: "DATAHORA FINAL" in value, "Data/Hora Final")
     distance_index = _column_index(headers, lambda value: "DIST" in value and "KM" in value, "Distância Percorrida")
-    location_index = distance_index - 1
-    if location_index <= stop_index:
+    initial_location_index = next(
+        (index for index, value in enumerate(headers) if "LOCALIZACAO INICIAL" in value),
+        None,
+    )
+    final_location_index = next(
+        (index for index, value in enumerate(headers) if "LOCALIZACAO FINAL" in value),
+        None,
+    )
+    legacy_location_index = distance_index - 1
+    if final_location_index is None and legacy_location_index <= stop_index:
         raise ValueError("Não foi possível identificar a coluna de localização.")
 
     body = raw.iloc[header_row + 1 :].copy()
@@ -242,10 +306,20 @@ def parse_tracker_report(content: bytes, file_name: str = "relatorio.xlsx") -> t
             "Ign": body.iloc[:, ignition_index].astype("string").fillna(""),
             "Inicio": pd.to_datetime(body.iloc[:, start_index], dayfirst=True, errors="coerce"),
             "Fim": pd.to_datetime(body.iloc[:, stop_index], dayfirst=True, errors="coerce"),
-            "Localizacao": body.iloc[:, location_index].astype("string").fillna("").replace("<NA>", ""),
+            "LocalizacaoInicial": (
+                body.iloc[:, initial_location_index].astype("string").fillna("").replace("<NA>", "")
+                if initial_location_index is not None
+                else ""
+            ),
+            "LocalizacaoFinal": (
+                body.iloc[:, final_location_index].astype("string").fillna("").replace("<NA>", "")
+                if final_location_index is not None
+                else body.iloc[:, legacy_location_index].astype("string").fillna("").replace("<NA>", "")
+            ),
             "KM": body.iloc[:, distance_index].map(_number),
         }
     )
+    events["Localizacao"] = events["LocalizacaoFinal"]
     events = events.loc[
         events["Placa"].ne("")
         & events["Inicio"].notna()
@@ -255,7 +329,7 @@ def parse_tracker_report(content: bytes, file_name: str = "relatorio.xlsx") -> t
     if events.empty:
         raise ValueError("Nenhum evento válido foi encontrado no relatório.")
 
-    cycles = _extend_returns_to_exact_base(_extract_cycles(events), events)
+    cycles = _merge_same_day_cycles(_extend_returns_to_exact_base(_extract_cycles(events), events))
     warnings: list[str] = []
     incomplete = sum(not bool(cycle.get("Completa")) for cycle in cycles)
     if incomplete:

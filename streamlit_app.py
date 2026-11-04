@@ -13416,8 +13416,13 @@ def _render_route_tracker_import() -> None:
             )
 
         with st.expander(f"Ver {len(events)} evento(s) lido(s) do rastreador"):
-            event_preview = events.rename(
-                columns={"Inicio": "Início", "Fim": "Fim", "Localizacao": "Localização"}
+            event_preview = events.drop(columns=["Localizacao"], errors="ignore").rename(
+                columns={
+                    "Inicio": "Início",
+                    "Fim": "Fim",
+                    "LocalizacaoInicial": "Localização inicial",
+                    "LocalizacaoFinal": "Localização final",
+                }
             )
             st.dataframe(
                 event_preview,
