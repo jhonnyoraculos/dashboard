@@ -40,7 +40,7 @@ from ai_assistant import (
     numeric_metrics,
 )
 from route_pdf import parse_route_pdf
-from route_tracker import match_tracker_cycles, parse_tracker_report
+import route_tracker
 
 # O Streamlit pode recarregar este arquivo sem reiniciar o processo Python.
 # Nesse intervalo, o modulo ``app`` pode continuar em memoria na versao anterior
@@ -76,6 +76,14 @@ _backend_routes_ready = getattr(backend, "ROUTES_BUILD_VERSION", "") == "rotas-r
 if not _backend_features_ready or not _backend_aluguel_period_ready or not _backend_aluguel_monthly_ready or not _backend_pedagio_chart_ready or not _backend_routes_ready:
     backend = importlib.reload(backend)
 
+# O Streamlit também pode manter módulos auxiliares em memória após o deploy.
+# A versão impede que o leitor antigo do rastreador continue usando a coluna
+# imediatamente anterior ao KM como se fosse o endereço final.
+if getattr(route_tracker, "TRACKER_BUILD_VERSION", "") != "enderecos-inicial-final-v2":
+    route_tracker = importlib.reload(route_tracker)
+match_tracker_cycles = route_tracker.match_tracker_cycles
+parse_tracker_report = route_tracker.parse_tracker_report
+
 
 JR_BLUE = "#1C2D6B"
 JR_RED = "#BE1E2D"
@@ -83,7 +91,7 @@ MUTED = "#6B7280"
 CARD_BORDER = "#c2d2f3"
 LOGO_PATH = Path(__file__).parent / "static" / "logo-jr.png"
 CURRENT_YEAR = date.today().year
-APP_VERSION = "rotas-rastreador-v72"
+APP_VERSION = "rotas-rastreador-v73"
 LOGGER = logging.getLogger("jr_dashboard.streamlit")
 RANK_ROUTES_ENABLED = True
 ROUTE_CACHE_TTL_SECONDS = max(int(os.environ.get("JR_ROUTE_CACHE_TTL_SECONDS", "1800") or 1800), 120)

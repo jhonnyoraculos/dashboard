@@ -9,6 +9,9 @@ from typing import Iterable
 import pandas as pd
 
 
+TRACKER_BUILD_VERSION = "enderecos-inicial-final-v2"
+
+
 def _ascii(value: object) -> str:
     text = "" if value is None else str(value)
     text = unicodedata.normalize("NFKD", text).encode("ascii", "ignore").decode("ascii")
