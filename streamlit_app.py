@@ -91,7 +91,7 @@ MUTED = "#6B7280"
 CARD_BORDER = "#c2d2f3"
 LOGO_PATH = Path(__file__).parent / "static" / "logo-jr.png"
 CURRENT_YEAR = date.today().year
-APP_VERSION = "rotas-linhas-situacao-v79"
+APP_VERSION = "calculadora-descarga-historica-v80"
 LOGGER = logging.getLogger("jr_dashboard.streamlit")
 RANK_ROUTES_ENABLED = True
 ROUTE_CACHE_TTL_SECONDS = max(int(os.environ.get("JR_ROUTE_CACHE_TTL_SECONDS", "1800") or 1800), 120)
@@ -4203,9 +4203,11 @@ def _calculate_freight_quote(
     own_trip_days: float | None = None,
     driver_hourly_rate: float | None = None,
     helper_hourly_rate: float | None = None,
+    unload_kg_per_hour: float = FREIGHT_UNLOAD_KG_PER_HOUR,
 ) -> dict[str, float]:
     employee_count = max(int(employees), 1)
-    unload_hours = max(weight_kg, 0.0) / FREIGHT_UNLOAD_KG_PER_HOUR
+    applied_unload_kg_per_hour = max(float(unload_kg_per_hour), 1.0)
+    unload_hours = max(weight_kg, 0.0) / applied_unload_kg_per_hour
     travel_hours = max(distance_km, 0.0) / FREIGHT_AVERAGE_SPEED_KMH
     total_operation_hours = unload_hours + travel_hours
     unload_employee_hours = unload_hours * employee_count
@@ -4323,6 +4325,7 @@ def _calculate_freight_quote(
         "hotel_daily_rate": hotel_daily_rate,
         "hotel_cost": hotel_cost,
         "unload_hours": unload_hours,
+        "unload_kg_per_hour": applied_unload_kg_per_hour,
         "travel_hours": travel_hours,
         "total_operation_hours": total_operation_hours,
         "employee_hours": employee_hours,
@@ -4376,6 +4379,9 @@ def _freight_plate_comparison(
             own_trip_days=average_trip_days if not is_freighter else None,
             driver_hourly_rate=driver_hourly_rate,
             helper_hourly_rate=helper_hourly_rate,
+            unload_kg_per_hour=float(
+                quote_inputs.get("unload_kg_per_hour") or FREIGHT_UNLOAD_KG_PER_HOUR
+            ),
         )
         if is_freighter:
             basis = (
@@ -7843,7 +7849,7 @@ def render_calculadora_frete() -> None:
             """
             <section class="frete-intro">
               <h2>Quanto cobrar pelo frete?</h2>
-              <p>Use a média da frota ou escolha um caminhão específico. O tempo da viagem considera velocidade média de 80 km/h, a descarga considera a produtividade média de 350 kg por hora e o hotel da dupla conta uma diária a cada 10 horas completas de operação.</p>
+              <p>Use a média da frota ou escolha um caminhão específico. O tempo da viagem considera velocidade média de 80 km/h, a produtividade da descarga pode ser ajustada e o hotel da dupla conta uma diária a cada 10 horas completas de operação.</p>
             </section>
             """
         )
@@ -7927,15 +7933,32 @@ def render_calculadora_frete() -> None:
                     format="%.2f",
                     key="frete_weight_kg",
                 )
-                helper_count_input = st.number_input(
-                    "Quantidade de ajudantes",
-                    min_value=1,
-                    max_value=19,
-                    value=1,
-                    step=1,
-                    key=f"frete_helpers_{selected_plate or 'sem_placa'}",
-                    help="Quantidade de ajudantes além do motorista.",
+                individual_trip = st.checkbox(
+                    "Viagem individual — somente motorista",
+                    value=False,
+                    key=f"frete_individual_{selected_plate or 'sem_placa'}",
+                    help="Ao ativar, a quantidade e todos os custos de ajudantes ficam zerados.",
                 )
+                if individual_trip:
+                    helper_count_input = st.number_input(
+                        "Quantidade de ajudantes",
+                        min_value=0,
+                        max_value=19,
+                        value=0,
+                        step=1,
+                        disabled=True,
+                        key=f"frete_helpers_individual_{selected_plate or 'sem_placa'}",
+                    )
+                else:
+                    helper_count_input = st.number_input(
+                        "Quantidade de ajudantes",
+                        min_value=0,
+                        max_value=19,
+                        value=1,
+                        step=1,
+                        key=f"frete_helpers_{selected_plate or 'sem_placa'}",
+                        help="Quantidade de ajudantes além do motorista.",
+                    )
             with input_cols[1]:
                 distance_km = st.number_input(
                     "Distância total (km)",
@@ -7946,6 +7969,15 @@ def render_calculadora_frete() -> None:
                     key="frete_distance_km",
                 )
                 st.caption("A distância deve conter ida e volta.")
+                unload_kg_per_hour = st.number_input(
+                    "Produtividade da descarga (kg/h)",
+                    min_value=1.0,
+                    value=FREIGHT_UNLOAD_KG_PER_HOUR,
+                    step=10.0,
+                    format="%.2f",
+                    key="frete_unload_kg_per_hour",
+                    help="Valor editável usado para transformar o peso em tempo de descarga.",
+                )
             with input_cols[2]:
                 margin_percent = st.number_input(
                     "Margem de segurança (%)",
@@ -7983,6 +8015,7 @@ def render_calculadora_frete() -> None:
                     step=1.0,
                     format="%.2f",
                     key=f"frete_helper_hourly_{selected_plate or 'sem_placa'}",
+                    disabled=bool(individual_trip),
                 )
             with team_cols[2]:
                 driver_daily_rate = st.number_input(
@@ -8002,6 +8035,7 @@ def render_calculadora_frete() -> None:
                     step=1.0,
                     format="%.2f",
                     key=f"frete_assistant_daily_{selected_plate or 'sem_placa'}",
+                    disabled=bool(individual_trip),
                     help="Sem rota selecionada, o padrão é R$ 100. É adicional ao salário.",
                 )
             st.caption(
@@ -8055,6 +8089,7 @@ def render_calculadora_frete() -> None:
             "freighter_excess_km_rate": float(freighter_excess_km_rate),
             "assistant_daily_rate": float(assistant_daily_rate),
             "driver_daily_rate": float(driver_daily_rate),
+            "unload_kg_per_hour": float(unload_kg_per_hour),
         }
         quote = _calculate_freight_quote(plate_reference, **quote_inputs)
         vehicle_cost_label = (
@@ -8136,10 +8171,10 @@ def render_calculadora_frete() -> None:
               {labor_breakdown_html}
               <div class="frete-breakdown-card"><p>Hotel da dupla — {h(fmt_num(quote['hotel_days']))} diária(s)</p><strong>{h(fmt_brl(quote['hotel_cost'], compact_threshold=float('inf')))}</strong></div>
               <div class="frete-breakdown-card"><p>Tempo de viagem a 80 km/h</p><strong>{h(fmt_num(quote['travel_hours'], 2))} h</strong></div>
-              <div class="frete-breakdown-card"><p>Tempo de descarga a 350 kg/h</p><strong>{h(fmt_num(quote['unload_hours'], 2))} h</strong></div>
+              <div class="frete-breakdown-card"><p>Tempo de descarga a {h(fmt_num(quote['unload_kg_per_hour'], 2))} kg/h</p><strong>{h(fmt_num(quote['unload_hours'], 2))} h</strong></div>
             </section>
             <div class="frete-memory">
-              <strong>Memória do cálculo:</strong> {vehicle_memory} Viagem: {h(fmt_num(quote_inputs['distance_km'], 1))} km ÷ 80 km/h = {h(fmt_num(quote['travel_hours'], 2))} h. Descarga: {h(fmt_num(quote_inputs['weight_kg'], 2))} kg ÷ 350 kg/h = {h(fmt_num(quote['unload_hours'], 2))} h. Tempo total: {h(fmt_num(quote['total_operation_hours'], 2))} h. {labor_memory} Hotel da dupla: {h(fmt_num(quote['hotel_days']))} diária(s) completa(s) de 10 h × {h(fmt_brl(quote['hotel_daily_rate'], compact_threshold=float('inf')))} = {h(fmt_brl(quote['hotel_cost'], compact_threshold=float('inf')))}. A diária de hotel já cobre o quarto duplo, sem multiplicar pelo número de funcionários. Somando todos os componentes, o custo estimado é {h(fmt_brl(quote['estimated_cost'], compact_threshold=float('inf')))}; a margem acrescenta {h(fmt_brl(quote['margin_value'], compact_threshold=float('inf')))}.
+              <strong>Memória do cálculo:</strong> {vehicle_memory} Viagem: {h(fmt_num(quote_inputs['distance_km'], 1))} km ÷ 80 km/h = {h(fmt_num(quote['travel_hours'], 2))} h. Descarga: {h(fmt_num(quote_inputs['weight_kg'], 2))} kg ÷ {h(fmt_num(quote['unload_kg_per_hour'], 2))} kg/h = {h(fmt_num(quote['unload_hours'], 2))} h. Tempo total: {h(fmt_num(quote['total_operation_hours'], 2))} h. {labor_memory} Hotel da dupla: {h(fmt_num(quote['hotel_days']))} diária(s) completa(s) de 10 h × {h(fmt_brl(quote['hotel_daily_rate'], compact_threshold=float('inf')))} = {h(fmt_brl(quote['hotel_cost'], compact_threshold=float('inf')))}. A diária de hotel já cobre o quarto duplo, sem multiplicar pelo número de funcionários. Somando todos os componentes, o custo estimado é {h(fmt_brl(quote['estimated_cost'], compact_threshold=float('inf')))}; a margem acrescenta {h(fmt_brl(quote['margin_value'], compact_threshold=float('inf')))}.
             </div>
             """
         )
@@ -8215,7 +8250,8 @@ def render_calculadora_frete() -> None:
                 f"Hotéis {('incluídos por tempo' if include_hotels else 'excluídos')}; "
                 f"histórico de hospedagens: {fmt_brl(general_reference['hotel_cost'])} em {fmt_num(general_reference['hotel_reservations'])} reservas da dupla. "
                 f"A tarifa por hora usa {plate_reference['hourly_rate_source']}, jornada de 8 horas e equipe histórica "
-                "de motorista + ajudante. Velocidade média: 80 km/h. Produtividade média da descarga: 350 kg por hora."
+                f"de motorista + ajudante. Velocidade média: 80 km/h. Produtividade usada na descarga: "
+                f"{fmt_num(quote['unload_kg_per_hour'], 2)} kg por hora."
             )
 
     footer("Estimativa calculada com o histórico operacional do Neon. Confira pedágios e condições especiais antes de fechar. © JR")
@@ -17612,6 +17648,51 @@ def _route_financial_frame(data: dict) -> pd.DataFrame:
     return costs
 
 
+def _route_unload_productivity(activity: pd.DataFrame) -> dict[str, object]:
+    """Calcula kg/h de descarga com viagens concluídas e tempos operacionais reais."""
+    fallback = {
+        "kg_per_hour": FREIGHT_UNLOAD_KG_PER_HOUR,
+        "sample_count": 0,
+        "unload_hours": 0.0,
+        "source": "padrão do sistema",
+    }
+    if activity.empty or "Peso Carga" not in activity.columns:
+        return fallback
+
+    weights = pd.to_numeric(activity["Peso Carga"], errors="coerce")
+    direct_column = next(
+        (
+            column
+            for column in ("Tempo Descarga Horas", "Horas Descarga", "Tempo de Descarga")
+            if column in activity.columns
+        ),
+        None,
+    )
+    if direct_column:
+        unload_hours = pd.to_numeric(activity[direct_column], errors="coerce")
+        source = "tempo de descarga registrado nas rotas"
+    elif "Horas Trabalhadas" in activity.columns and "KM Rodados" in activity.columns:
+        worked_hours = pd.to_numeric(activity["Horas Trabalhadas"], errors="coerce")
+        distance = pd.to_numeric(activity["KM Rodados"], errors="coerce")
+        unload_hours = worked_hours - distance.div(FREIGHT_AVERAGE_SPEED_KMH)
+        source = "horas trabalhadas menos o tempo estimado de deslocamento"
+    else:
+        return fallback
+
+    valid = weights.gt(0) & unload_hours.gt(0)
+    valid_weights = weights.loc[valid]
+    valid_hours = unload_hours.loc[valid]
+    if valid_weights.empty or float(valid_hours.sum()) <= 0:
+        return fallback
+
+    return {
+        "kg_per_hour": float(valid_weights.sum() / valid_hours.sum()),
+        "sample_count": int(valid.sum()),
+        "unload_hours": float(valid_hours.sum()),
+        "source": source,
+    }
+
+
 def _route_freight_profile(data: dict) -> dict[str, object]:
     """Resume o histórico concluído de uma rota para preencher a simulação."""
     activity = pd.DataFrame(data.get("tempos_rotas") or [])
@@ -17646,6 +17727,7 @@ def _route_freight_profile(data: dict) -> dict[str, object]:
             trip_count = int(activity["Rota ID"].astype("string").nunique())
         else:
             trip_count = len(activity)
+    unload_productivity = _route_unload_productivity(activity)
     return {
         "route": route_name,
         "trip_count": trip_count,
@@ -17655,6 +17737,10 @@ def _route_freight_profile(data: dict) -> dict[str, object]:
         "hotel_trips": hotel_trips,
         "hotel_total": hotel_total,
         "has_hotel": hotel_trips > 0,
+        "unload_kg_per_hour": unload_productivity["kg_per_hour"],
+        "unload_sample_count": unload_productivity["sample_count"],
+        "unload_hours_observed": unload_productivity["unload_hours"],
+        "unload_productivity_source": unload_productivity["source"],
     }
 
 
@@ -17842,6 +17928,10 @@ def _render_route_freight_calculator(
     plate_token = hashlib.sha256(str(vehicle_choice).encode("utf-8")).hexdigest()[:10]
     default_hourly_rate = float(plate_reference.get("rate_per_employee_hour") or 0.0)
     has_hotel = bool(profile.get("has_hotel"))
+    historical_unload_rate = max(
+        float(profile.get("unload_kg_per_hour") or FREIGHT_UNLOAD_KG_PER_HOUR),
+        1.0,
+    )
     with st.container(border=True):
         st.markdown("#### Dados da simulação")
         input_cols = st.columns(3)
@@ -17854,15 +17944,32 @@ def _render_route_freight_calculator(
                 format="%.2f",
                 key=f"routes_freight_weight_{route_token}",
             )
-            helper_count_input = st.number_input(
-                "Quantidade de ajudantes",
-                min_value=1,
-                max_value=19,
-                value=1,
-                step=1,
-                key=f"routes_freight_helpers_{route_token}_{plate_token}",
-                help="Quantidade de ajudantes além do motorista. Cada ajudante recebe salário e diária próprios.",
+            individual_trip = st.checkbox(
+                "Viagem individual — somente motorista",
+                value=False,
+                key=f"routes_freight_individual_{route_token}_{plate_token}",
+                help="Ao ativar, a quantidade e todos os custos de ajudantes ficam zerados.",
             )
+            if individual_trip:
+                helper_count_input = st.number_input(
+                    "Quantidade de ajudantes",
+                    min_value=0,
+                    max_value=19,
+                    value=0,
+                    step=1,
+                    disabled=True,
+                    key=f"routes_freight_helpers_individual_{route_token}_{plate_token}",
+                )
+            else:
+                helper_count_input = st.number_input(
+                    "Quantidade de ajudantes",
+                    min_value=0,
+                    max_value=19,
+                    value=1,
+                    step=1,
+                    key=f"routes_freight_helpers_{route_token}_{plate_token}",
+                    help="Quantidade de ajudantes além do motorista. Cada ajudante recebe salário e diária próprios.",
+                )
         with input_cols[1]:
             distance_km = st.number_input(
                 "Distância total — ida e volta (km)",
@@ -17873,6 +17980,23 @@ def _render_route_freight_calculator(
                 key=f"routes_freight_distance_{route_token}",
             )
             st.caption("A distância deve conter ida e volta.")
+            unload_kg_per_hour = st.number_input(
+                "Produtividade da descarga (kg/h)",
+                min_value=1.0,
+                value=historical_unload_rate,
+                step=10.0,
+                format="%.2f",
+                key=f"routes_freight_unload_rate_{route_token}",
+                help="Valor editável. O padrão é calculado com as viagens concluídas da rota.",
+            )
+            unload_samples = int(profile.get("unload_sample_count") or 0)
+            if unload_samples:
+                st.caption(
+                    f"Média real de {unload_samples} viagem(ns): peso total ÷ "
+                    f"{fmt_num(profile.get('unload_hours_observed'), 2)} h de descarga estimada."
+                )
+            else:
+                st.caption("Sem tempo histórico calculável nesta rota; usando 350 kg/h como padrão editável.")
         with input_cols[2]:
             margin_percent = st.number_input(
                 "Margem de segurança (%)",
@@ -17918,6 +18042,7 @@ def _render_route_freight_calculator(
                 step=1.0,
                 format="%.2f",
                 key=f"routes_freight_helper_hourly_{route_token}_{plate_token}",
+                disabled=bool(individual_trip),
             )
         with team_cols[2]:
             driver_daily_rate = st.number_input(
@@ -17941,6 +18066,7 @@ def _render_route_freight_calculator(
                 step=1.0,
                 format="%.2f",
                 key=f"routes_freight_assistant_daily_{route_token}",
+                disabled=bool(individual_trip),
                 help=(
                     "Padrão de R$ 32 para qualquer rota cujo nome contenha Divinópolis ou Carmo do Cajuru; "
                     "R$ 100 para as demais. É adicional ao salário."
@@ -18016,6 +18142,7 @@ def _render_route_freight_calculator(
         "freighter_excess_km_rate": float(freighter_excess_km_rate),
         "assistant_daily_rate": float(assistant_daily_rate),
         "driver_daily_rate": float(driver_daily_rate),
+        "unload_kg_per_hour": float(unload_kg_per_hour),
         "own_trip_days": (
             float(profile.get("average_trip_days") or 0.0)
             if not is_freighter
@@ -18096,7 +18223,7 @@ def _render_route_freight_calculator(
           {labor_breakdown_html}
           <div class="frete-breakdown-card"><p>Hotel — {h(fmt_num(quote['hotel_days']))} diária(s)</p><strong>{h(fmt_brl(quote['hotel_cost'], compact_threshold=float('inf')))}</strong></div>
           <div class="frete-breakdown-card"><p>Tempo de viagem</p><strong>{h(fmt_num(quote['travel_hours'], 2))} h</strong></div>
-          <div class="frete-breakdown-card"><p>Tempo de descarga</p><strong>{h(fmt_num(quote['unload_hours'], 2))} h</strong></div>
+          <div class="frete-breakdown-card"><p>Tempo de descarga a {h(fmt_num(quote['unload_kg_per_hour'], 2))} kg/h</p><strong>{h(fmt_num(quote['unload_hours'], 2))} h</strong></div>
         </section>
         """
     )
@@ -18168,7 +18295,7 @@ def _render_route_freight_calculator(
         st.markdown(
             f"{vehicle_memory}  \n"
             f"**Viagem:** {fmt_num(distance_km, 1)} km ÷ 80 km/h = {fmt_num(quote['travel_hours'], 2)} h.  \n"
-            f"**Descarga:** {fmt_num(weight_kg, 2)} kg ÷ 350 kg/h = {fmt_num(quote['unload_hours'], 2)} h.  \n"
+            f"**Descarga:** {fmt_num(weight_kg, 2)} kg ÷ {fmt_num(quote['unload_kg_per_hour'], 2)} kg/h = {fmt_num(quote['unload_hours'], 2)} h.  \n"
             f"{labor_memory}  \n"
             f"**Hotel:** {fmt_num(quote['hotel_days'])} diária(s) × "
             f"{fmt_brl(quote['hotel_daily_rate'], compact_threshold=float('inf'))} = **{fmt_brl(quote['hotel_cost'])}**."

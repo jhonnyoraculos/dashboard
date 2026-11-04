@@ -205,6 +205,53 @@ class RoutesDashboardTests(unittest.TestCase):
         self.assertTrue(profile["has_hotel"])
         self.assertEqual(profile["hotel_trips"], 1)
 
+    def test_route_freight_profile_calculates_unload_productivity_from_completed_routes(self):
+        data = {
+            "tempos_rotas": [
+                {
+                    "Rota ID": "r1", "Rota": "ROTA TESTE", "Peso Carga": 2_000,
+                    "KM Rodados": 160, "Horas Trabalhadas": 6,
+                },
+                {
+                    "Rota ID": "r2", "Rota": "ROTA TESTE", "Peso Carga": 3_000,
+                    "KM Rodados": 240, "Horas Trabalhadas": 9,
+                },
+            ],
+            "custos": {"rotas": []},
+        }
+
+        profile = dashboard._route_freight_profile(data)
+
+        # Deslocamento: 5 h no total. Descarga estimada: 10 h. 5.000 kg / 10 h.
+        self.assertEqual(profile["unload_sample_count"], 2)
+        self.assertEqual(profile["unload_hours_observed"], 10)
+        self.assertEqual(profile["unload_kg_per_hour"], 500)
+        self.assertIn("horas trabalhadas", profile["unload_productivity_source"])
+
+    def test_freight_quote_uses_editable_unload_rate_and_individual_trip_has_no_helper(self):
+        quote = dashboard._calculate_freight_quote(
+            {"rate_per_km": 5.0, "hotel_daily_rate": 0.0, "is_freighter": False},
+            weight_kg=1_000,
+            distance_km=80,
+            employees=1,
+            employee_hourly_rate=0,
+            driver_hourly_rate=20,
+            helper_hourly_rate=10,
+            driver_daily_rate=100,
+            assistant_daily_rate=100,
+            unload_kg_per_hour=500,
+            margin_percent=0,
+            include_hotels=False,
+        )
+
+        self.assertEqual(quote["unload_kg_per_hour"], 500)
+        self.assertEqual(quote["unload_hours"], 2)
+        self.assertEqual(quote["total_operation_hours"], 3)
+        self.assertEqual(quote["helper_count"], 0)
+        self.assertEqual(quote["helper_salary_cost"], 0)
+        self.assertEqual(quote["helper_daily_cost"], 0)
+        self.assertEqual(quote["driver_salary_cost"], 60)
+
     def test_freighter_quote_uses_daily_rate_and_route_average_days(self):
         reference = dashboard._freight_plate_reference(
             {
