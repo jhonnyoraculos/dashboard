@@ -88,6 +88,32 @@ class RouteTrackerTests(unittest.TestCase):
         self.assertEqual(matches[0]["KM por rota"], 150.0)
         self.assertNotIn("r3", matches[0]["Rota IDs"])
 
+    def test_tracker_matches_route_date_inside_a_multiday_cycle(self):
+        cycle = {
+            "Placa": "SHF2B15",
+            "Saida": pd.Timestamp("2026-10-25 06:10:32"),
+            "Retorno": pd.Timestamp("2026-10-31 22:57:58"),
+            "Data rota": pd.Timestamp("2026-10-25"),
+            "KM total": 1322.89,
+            "Completa": True,
+            "Jornadas": [],
+        }
+        routes = pd.DataFrame(
+            [
+                {
+                    "Rota ID": "r27",
+                    "Status": "Pendente",
+                    "PLACA": "SHF2B15",
+                    "Data": "2026-10-27",
+                    "Rota": "41 - ITAUNA",
+                    "Carga": "6902",
+                }
+            ]
+        )
+        matches = match_tracker_cycles([cycle], routes)
+        self.assertEqual(matches[0]["Rota IDs"], ["r27"])
+        self.assertTrue(matches[0]["Pode importar"])
+
     def test_tracker_uses_both_locations_and_consolidates_same_day_departures(self):
         cycles, events, warnings = parse_tracker_report(tracker_workbook_with_initial_and_final_locations())
         self.assertEqual(warnings, [])
