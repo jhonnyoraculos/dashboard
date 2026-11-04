@@ -1301,6 +1301,65 @@ class RoutesDashboardTests(unittest.TestCase):
         self.assertEqual(salary_costs["freight"]["Salario Ajudante"], 100.0)
         self.assertEqual(salary_costs["freight"]["Salarios"], 100.0)
 
+    def test_shared_plate_interval_counts_hours_and_team_cost_only_once(self):
+        routes = pd.DataFrame(
+            [
+                {
+                    "Rota ID": "r1", "Data": pd.Timestamp("2026-10-20"),
+                    "Saida": pd.Timestamp("2026-10-20 07:00"), "Retorno": pd.Timestamp("2026-10-20 17:00"),
+                    "Mes": "2026-10", "Rota": "ROTA 1", "PLACA": "AAA1A11", "Motorista": "MOTORISTA A",
+                    "Ajudante": "AJUDANTE A", "Categoria": "Transporte", "KM Rodados": 50.0,
+                    "Tempo Viagem Horas": 10.0, "Horas Trabalhadas": 10.0, "Dias Rota": 1,
+                    "Entregas": 2, "Peso Carga": 1_000.0,
+                },
+                {
+                    "Rota ID": "r2", "Data": pd.Timestamp("2026-10-20"),
+                    "Saida": pd.Timestamp("2026-10-20 07:00"), "Retorno": pd.Timestamp("2026-10-20 17:00"),
+                    "Mes": "2026-10", "Rota": "ROTA 2", "PLACA": "AAA1A11", "Motorista": "MOTORISTA A",
+                    "Ajudante": "AJUDANTE A", "Categoria": "Transporte", "KM Rodados": 50.0,
+                    "Tempo Viagem Horas": 10.0, "Horas Trabalhadas": 10.0, "Dias Rota": 1,
+                    "Entregas": 3, "Peso Carga": 2_000.0,
+                },
+            ]
+        )
+        metrics = backend._route_metric_source(routes, pd.DataFrame())
+        self.assertEqual(float(metrics["Horas Trabalhadas"].sum()), 10.0)
+        self.assertEqual(float(metrics["Tempo Viagem Horas"].sum()), 10.0)
+        self.assertEqual(float(metrics["Dias Rota"].sum()), 1.0)
+        self.assertEqual(float(metrics["Entregas"].sum()), 5.0)
+        self.assertTrue(metrics["Rotas na Operacao"].eq(2.0).all())
+
+        empty_costs = pd.DataFrame(columns=["Data", "Mes", "PLACA", "Custo"])
+        empty_salary = pd.DataFrame(columns=["Mes", "Valor"])
+        empty_hotels = pd.DataFrame(columns=["Data", "Valor", "Motorista", "Ajudante"])
+        with (
+            patch.object(backend, "load_combustivel", return_value=empty_costs),
+            patch.object(backend, "load_combustivel_km", return_value=pd.DataFrame(columns=["Mes", "PLACA", "Km Rodados"])),
+            patch.object(backend, "load_manutencao", return_value=empty_costs),
+            patch.object(backend, "load_pedagio", return_value=empty_costs),
+            patch.object(backend, "load_salarios_transporte", return_value=empty_salary),
+            patch.object(backend, "load_hoteis", return_value=empty_hotels),
+            patch.object(backend, "_ranking_freighter_daily_rates", return_value={}),
+            patch.object(backend, "_apply_plate_categories", side_effect=lambda frame: frame),
+        ):
+            daily_result = backend._route_cost_breakdown(routes, routes, pd.DataFrame())
+            salary_result = backend._route_cost_breakdown(
+                routes,
+                routes,
+                pd.DataFrame(),
+                staff_costs={
+                    "include_dailies": False,
+                    "include_salaries": True,
+                    "driver_hourly_rate": 20.0,
+                    "helper_hourly_rate": 10.0,
+                },
+            )
+
+        self.assertEqual(sum(row["Diaria Motorista"] for row in daily_result["rotas"]), 100.0)
+        self.assertEqual(sum(row["Diaria Ajudante"] for row in daily_result["rotas"]), 100.0)
+        self.assertEqual(sum(row["Salario Motorista"] for row in salary_result["rotas"]), 200.0)
+        self.assertEqual(sum(row["Salario Ajudante"] for row in salary_result["rotas"]), 100.0)
+
     def test_maintenance_uses_plate_daily_average_and_splits_shared_day(self):
         routes = pd.DataFrame(
             [

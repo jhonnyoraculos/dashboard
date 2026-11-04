@@ -61,7 +61,7 @@ DB_TABLES = {
 }
 DB_METADATA_TABLE = "dashboard_metadata"
 BACKEND_BUILD_VERSION = "aluguel-multiplicar-meses-v1"
-ROUTES_BUILD_VERSION = "rotas-rastreador-v31"
+ROUTES_BUILD_VERSION = "rotas-horas-operacao-unica-v32"
 PEDAGIO_CHART_VERSION = "all-types-v1"
 USE_LEGACY_ROUTE_HOTEL_ALLOCATION = False
 BACKUP_METADATA_KEY = "backup.last_downloaded_at"
@@ -5234,6 +5234,37 @@ def _completed_route_rows(routes: pd.DataFrame) -> pd.DataFrame:
     return routes.loc[complete].copy()
 
 
+def _allocate_shared_route_time(routes: pd.DataFrame) -> pd.DataFrame:
+    """Conta uma única jornada quando várias rotas usam a mesma operação da placa."""
+    source = routes.copy()
+    if source.empty:
+        return source
+    for column in ("Horas Trabalhadas", "Tempo Viagem Horas", "Dias Rota"):
+        raw_values = source[column] if column in source.columns else pd.Series(0.0, index=source.index)
+        values = pd.to_numeric(raw_values, errors="coerce").fillna(0.0).clip(lower=0)
+        source[f"{column} Operacao"] = values
+        source[column] = values
+
+    plate = source.get("PLACA", pd.Series("", index=source.index)).map(_normalize_plate_value)
+    start = pd.to_datetime(source.get("Saida", pd.Series(pd.NaT, index=source.index)), errors="coerce")
+    stop = pd.to_datetime(source.get("Retorno", pd.Series(pd.NaT, index=source.index)), errors="coerce")
+    route_ids = source.get("Rota ID", pd.Series("", index=source.index)).astype("string").fillna("")
+    valid = plate.notna() & plate.astype("string").ne("") & start.notna() & stop.notna() & route_ids.ne("")
+    source["Rotas na Operacao"] = 1.0
+    if valid.any():
+        keys = pd.DataFrame(
+            {"_Placa": plate.loc[valid], "_Saida": start.loc[valid], "_Retorno": stop.loc[valid], "_Rota ID": route_ids.loc[valid]},
+            index=source.index[valid],
+        )
+        divisor = keys.groupby(["_Placa", "_Saida", "_Retorno"])["_Rota ID"].transform("nunique").clip(lower=1)
+        source.loc[valid, "Rotas na Operacao"] = divisor.astype(float)
+
+    divisor = pd.to_numeric(source["Rotas na Operacao"], errors="coerce").fillna(1.0).clip(lower=1.0)
+    for column in ("Horas Trabalhadas", "Tempo Viagem Horas", "Dias Rota"):
+        source[column] = source[f"{column} Operacao"].div(divisor).fillna(0.0)
+    return source
+
+
 def _route_metric_source(routes: pd.DataFrame, deliveries: pd.DataFrame) -> pd.DataFrame:
     source = routes.copy()
     if source.empty:
@@ -5251,6 +5282,8 @@ def _route_metric_source(routes: pd.DataFrame, deliveries: pd.DataFrame) -> pd.D
         if column not in source.columns:
             source[column] = 0.0
         source[column] = pd.to_numeric(source[column], errors="coerce").fillna(0.0).clip(lower=0)
+
+    source = _allocate_shared_route_time(source)
 
     if not deliveries.empty and "Rota ID" in deliveries.columns:
         delivery_source = deliveries.copy()
@@ -5982,6 +6015,14 @@ def _route_cost_breakdown(
         return empty
 
     route_meta = selected_routes.set_index("Rota ID")
+    shared_time_routes = _allocate_shared_route_time(selected_routes)
+    operation_divisor_by_route = {
+        str(route_id): max(float(value or 1.0), 1.0)
+        for route_id, value in zip(
+            shared_time_routes.get("Rota ID", pd.Series(dtype="string")),
+            shared_time_routes.get("Rotas na Operacao", pd.Series(dtype="float64")),
+        )
+    }
     cost_parts: dict[str, defaultdict[str, float]] = {
         str(route_id): defaultdict(float) for route_id in selected_ids
     }
@@ -6201,25 +6242,31 @@ def _route_cost_breakdown(
     daily_rates = cost_sources.get("freighter_rates") or {}
     for _, row in selected_days.iterrows():
         if _normalize_category_value(row.get("Categoria")) == "Freteiro":
-            add_cost(row.get("Rota ID"), "Freteiro", daily_rates.get(str(row.get("PLACA") or "").strip(), 0.0))
+            divisor = operation_divisor_by_route.get(str(row.get("Rota ID")), 1.0)
+            add_cost(
+                row.get("Rota ID"),
+                "Freteiro",
+                daily_rates.get(str(row.get("PLACA") or "").strip(), 0.0) / divisor,
+            )
 
     # Cada linha de selected_days representa um dia de uma rota concluída.
     # Frota própria recebe uma diária de motorista e uma de ajudante por dia.
     # No Freteiro, o motorista já está coberto pelo contrato: soma-se somente o ajudante.
     if include_staff_dailies:
         for _, row in selected_days.iterrows():
+            divisor = operation_divisor_by_route.get(str(row.get("Rota ID")), 1.0)
             driver_daily = _route_staff_daily_rate(
                 row.get("Rota"), local_rate=driver_local_daily, other_rate=driver_other_daily
-            )
+            ) / divisor
             helper_daily = _route_staff_daily_rate(
                 row.get("Rota"), local_rate=helper_local_daily, other_rate=helper_other_daily
-            )
+            ) / divisor
             if _normalize_category_value(row.get("Categoria")) != "Freteiro":
                 add_cost(row.get("Rota ID"), "Diaria Motorista", driver_daily)
             add_cost(row.get("Rota ID"), "Diaria Ajudante", helper_daily)
 
     if include_staff_salaries:
-        for _, row in selected_routes.iterrows():
+        for _, row in shared_time_routes.iterrows():
             hours = pd.to_numeric(pd.Series([row.get("Horas Trabalhadas")]), errors="coerce").iloc[0]
             if pd.isna(hours):
                 hours = pd.to_numeric(pd.Series([row.get("Horas Operacao")]), errors="coerce").iloc[0]
