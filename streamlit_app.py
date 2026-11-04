@@ -91,7 +91,7 @@ MUTED = "#6B7280"
 CARD_BORDER = "#c2d2f3"
 LOGO_PATH = Path(__file__).parent / "static" / "logo-jr.png"
 CURRENT_YEAR = date.today().year
-APP_VERSION = "rotas-horas-operacao-unica-v78"
+APP_VERSION = "rotas-linhas-situacao-v79"
 LOGGER = logging.getLogger("jr_dashboard.streamlit")
 RANK_ROUTES_ENABLED = True
 ROUTE_CACHE_TTL_SECONDS = max(int(os.environ.get("JR_ROUTE_CACHE_TTL_SECONDS", "1800") or 1800), 120)
@@ -17001,7 +17001,7 @@ def _render_rotas_v4() -> None:
                 "Agrupado pelo nome da rota. O ranking começa pelo pior resultado; assim, o que precisa de ação aparece primeiro."
             )
             st.dataframe(
-                route_summary,
+                _style_route_status_rows(route_summary),
                 width="stretch",
                 hide_index=True,
                 column_config={
@@ -17020,7 +17020,7 @@ def _render_rotas_v4() -> None:
                 "Manutencao", "Manutencao R$/dia", "Pedagio", "Hoteis", "Salario Motorista", "Salario Ajudante", "Salarios", "Freteiro",
                 "Diaria Motorista", "Diaria Ajudante",
                 "Diarias Equipe", "Custo total", "Custo por entrega",
-                "Ganho entregas", "Resultado", "Custo sobre ganho %",
+                "Ganho entregas", "Resultado", "Custo sobre ganho %", "Situação",
             ]
             column_config = {
                 "Data": _date_col(),
@@ -17041,8 +17041,9 @@ def _render_rotas_v4() -> None:
                 "Ganho entregas": _money_col("Ganho das entregas"),
                 "Resultado": _money_col("Resultado"),
             }
+            cost_table = cost_df[[column for column in cost_columns if column in cost_df.columns]]
             st.dataframe(
-                cost_df[[column for column in cost_columns if column in cost_df.columns]],
+                _style_route_status_rows(cost_table),
                 width="stretch",
                 hide_index=True,
                 column_config=column_config,
@@ -18846,6 +18847,30 @@ def _route_summary_table(financial: pd.DataFrame) -> pd.DataFrame:
     return summary.sort_values(["Resultado operacional", "Custo total"], ascending=[True, False])
 
 
+def _route_status_row_style(row: pd.Series) -> list[str]:
+    status = (
+        unicodedata.normalize("NFKD", clean_text(row.get("Situação", "")))
+        .encode("ascii", "ignore")
+        .decode("ascii")
+        .casefold()
+    )
+    if "saudavel" in status:
+        css = "background-color: #BBF7D0; color: #14532D;"
+    elif "atencao" in status:
+        css = "background-color: #FED7AA; color: #9A3412;"
+    elif any(marker in status for marker in ("critico", "nao vale", "sem receita")):
+        css = "background-color: #FECACA; color: #991B1B;"
+    else:
+        css = ""
+    return [css] * len(row)
+
+
+def _style_route_status_rows(frame: pd.DataFrame):
+    if frame.empty or "Situação" not in frame.columns:
+        return frame
+    return frame.style.apply(_route_status_row_style, axis=1)
+
+
 def _route_composition_chart(costs: dict) -> go.Figure:
     frame = pd.DataFrame(costs.get("rotas") or [])
     columns = ["Combustivel", "Manutencao", "Pedagio", "Hoteis", "Salarios", "Diarias Equipe", "Freteiro"]
@@ -19513,7 +19538,9 @@ def _render_route_management_questions(data: dict, financial: pd.DataFrame, rout
                 f"{fmt_brl(leader.get('Custo total'))} de custo = **{fmt_brl(leader.get('Resultado operacional'))}**."
             )
         st.dataframe(
-            worst[["Rota", "Viagens", "Custo total", "Receita atribuída", "Resultado operacional", "Custo/receita %", "Situação"]],
+            _style_route_status_rows(
+                worst[["Rota", "Viagens", "Custo total", "Receita atribuída", "Resultado operacional", "Custo/receita %", "Situação"]]
+            ),
             width="stretch", hide_index=True,
             column_config={
                 "Custo total": _money_col("Custo"), "Receita atribuída": _money_col("Receita"),
@@ -19849,7 +19876,7 @@ def render_rotas() -> None:
         else:
             show = route_summary.copy()
             st.dataframe(
-                show,
+                _style_route_status_rows(show),
                 width="stretch", hide_index=True,
                 column_config={
                     "Custo total": _money_col("Custo total"), "Receita atribuída": _money_col("Receita atribuída"),

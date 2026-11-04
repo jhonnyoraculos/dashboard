@@ -1427,6 +1427,21 @@ class RoutesDashboardTests(unittest.TestCase):
         self.assertEqual(worst["Situação"], "Não vale a pena")
         self.assertAlmostEqual(float(worst["Resultado operacional"]), -1_000.0)
 
+    def test_route_status_colors_the_entire_row(self):
+        frame = pd.DataFrame(
+            [
+                {"Rota": "BOA", "Situação": "Saudável"},
+                {"Rota": "ATENCAO", "Situação": "Atenção"},
+                {"Rota": "CRITICA", "Situação": "Não vale a pena"},
+            ]
+        )
+        healthy = dashboard._route_status_row_style(frame.iloc[0])
+        attention = dashboard._route_status_row_style(frame.iloc[1])
+        critical = dashboard._route_status_row_style(frame.iloc[2])
+        self.assertTrue(all("#BBF7D0" in css for css in healthy))
+        self.assertTrue(all("#FED7AA" in css for css in attention))
+        self.assertTrue(all("#FECACA" in css for css in critical))
+
     def test_period_presets_are_deterministic(self):
         minimum, maximum = date(2026, 1, 1), date(2026, 10, 27)
         start, end = dashboard._route_period_dates("Todo o período", minimum, maximum, None)
