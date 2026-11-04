@@ -40,6 +40,7 @@ from ai_assistant import (
     numeric_metrics,
 )
 from route_pdf import parse_route_pdf
+from route_tracker import match_tracker_cycles, parse_tracker_report
 
 # O Streamlit pode recarregar este arquivo sem reiniciar o processo Python.
 # Nesse intervalo, o modulo ``app`` pode continuar em memoria na versao anterior
@@ -58,6 +59,7 @@ _backend_features_ready = all(
         "import_route_manifests",
         "auto_complete_freighter_routes",
         "update_route_operation",
+        "import_route_tracker_operations",
         "update_route_collaborators",
         "update_route_history_rows",
         "collaborator_name_summary",
@@ -70,7 +72,7 @@ _backend_aluguel_period_ready = {"Inicio", "Fim"}.issubset(
 )
 _backend_aluguel_monthly_ready = getattr(backend, "BACKEND_BUILD_VERSION", "") == "aluguel-multiplicar-meses-v1"
 _backend_pedagio_chart_ready = getattr(backend, "PEDAGIO_CHART_VERSION", "") == "all-types-v1"
-_backend_routes_ready = getattr(backend, "ROUTES_BUILD_VERSION", "") == "rotas-manutencao-mensal-v30"
+_backend_routes_ready = getattr(backend, "ROUTES_BUILD_VERSION", "") == "rotas-rastreador-v31"
 if not _backend_features_ready or not _backend_aluguel_period_ready or not _backend_aluguel_monthly_ready or not _backend_pedagio_chart_ready or not _backend_routes_ready:
     backend = importlib.reload(backend)
 
@@ -81,7 +83,7 @@ MUTED = "#6B7280"
 CARD_BORDER = "#c2d2f3"
 LOGO_PATH = Path(__file__).parent / "static" / "logo-jr.png"
 CURRENT_YEAR = date.today().year
-APP_VERSION = "rotas-mapa-gastos-v71"
+APP_VERSION = "rotas-rastreador-v72"
 LOGGER = logging.getLogger("jr_dashboard.streamlit")
 RANK_ROUTES_ENABLED = True
 ROUTE_CACHE_TTL_SECONDS = max(int(os.environ.get("JR_ROUTE_CACHE_TTL_SECONDS", "1800") or 1800), 120)
@@ -13303,6 +13305,171 @@ def _render_route_pdf_import(plate_map: dict[str, str]) -> None:
 
 
 @st.fragment
+def _render_route_tracker_import() -> None:
+    with st.expander("Importar horários e KM pelo relatório do rastreador", expanded=False):
+        st.caption(
+            "Envie o Excel do rastreador. O sistema identifica os ciclos de saída e retorno à base pela placa, "
+            "data, ignição, localização e KM. Somente rotas pendentes são preenchidas; rotas concluídas nunca "
+            "são alteradas. Em viagens de vários dias, a primeira saída e a última parada de cada dia formam "
+            "as horas trabalhadas, sem contar os intervalos noturnos."
+        )
+        if message := st.session_state.pop("route_tracker_import_message", None):
+            st.success(message)
+        uploaded = st.file_uploader(
+            "Selecione o relatório do rastreador",
+            type=["xlsx", "xlsm"],
+            key="cad_route_tracker_file_v1",
+            help="O relatório deve conter Placa, Ign, Data/Hora Inicial, Data/Hora Final, localização e distância.",
+        )
+        if uploaded is None:
+            return
+
+        content = uploaded.getvalue()
+        file_hash = hashlib.sha256(content).hexdigest()[:12]
+        try:
+            with st.spinner("Identificando saídas, paradas, retornos e quilômetros..."):
+                cycles, events, warnings = parse_tracker_report(content, uploaded.name)
+                routes = backend.load_rotas()
+                matches = match_tracker_cycles(cycles, routes)
+        except Exception as exc:
+            st.error(f"Não foi possível ler o relatório do rastreador: {exc}")
+            return
+
+        for warning in warnings:
+            st.warning(warning)
+        matched = [row for row in matches if row.get("Pode importar")]
+        matched_route_count = sum(int(row.get("Quantidade rotas") or 0) for row in matched)
+        incomplete_count = sum(not bool(row.get("Completa")) for row in matches)
+        unmatched_count = sum(bool(row.get("Completa")) and not bool(row.get("Pode importar")) for row in matches)
+        metric_cols = st.columns(4)
+        metric_cols[0].metric("Ciclos encontrados", fmt_num(len(matches)))
+        metric_cols[1].metric("Rotas pendentes encontradas", fmt_num(matched_route_count))
+        metric_cols[2].metric("Sem correspondência", fmt_num(unmatched_count))
+        metric_cols[3].metric("Viagens parciais", fmt_num(incomplete_count))
+
+        preview_rows = []
+        for row in matches:
+            preview_rows.append(
+                {
+                    "Importar": bool(row.get("Pode importar")),
+                    "Placa": row.get("Placa"),
+                    "Saída": row.get("Saida"),
+                    "Retorno": row.get("Retorno"),
+                    "Dias": row.get("Dias"),
+                    "Horas trabalhadas": row.get("Horas trabalhadas"),
+                    "KM total": row.get("KM total"),
+                    "Rotas pendentes": row.get("Rotas encontradas"),
+                    "Cargas": row.get("Cargas"),
+                    "Quantidade": row.get("Quantidade rotas"),
+                    "KM por rota": row.get("KM por rota"),
+                    "Resultado": row.get("Correspondência"),
+                }
+            )
+        preview = pd.DataFrame(preview_rows)
+        st.markdown("#### Prévia da conciliação")
+        st.dataframe(
+            preview,
+            width="stretch",
+            hide_index=True,
+            column_config={
+                "Importar": st.column_config.CheckboxColumn("Pronta"),
+                "Saída": _datetime_col("Saída real"),
+                "Retorno": _datetime_col("Retorno real"),
+                "Horas trabalhadas": _number_col("Horas trabalhadas", format="%.2f"),
+                "KM total": _number_col("KM do rastreador", format="%.2f"),
+                "KM por rota": _number_col("KM por manifesto", format="%.2f"),
+            },
+        )
+        st.caption(
+            "Quando a mesma placa possui vários manifestos pendentes no dia, eles representam a mesma viagem: "
+            "recebem os mesmos horários e jornadas, e o KM total do rastreador é dividido igualmente."
+        )
+
+        journey_rows = []
+        for row in matches:
+            for day_index, journey in enumerate(row.get("Jornadas") or [], start=1):
+                journey_rows.append(
+                    {
+                        "Placa": row.get("Placa"),
+                        "Viagem iniciada em": row.get("Saida"),
+                        "Dia": day_index,
+                        "Data": journey.get("data"),
+                        "Início trabalhado": journey.get("saida"),
+                        "Parada trabalhada": journey.get("parada"),
+                        "Horas do dia": journey.get("horas"),
+                        "Rotas pendentes": row.get("Rotas encontradas"),
+                    }
+                )
+        with st.expander(f"Ver início e parada dos {len(journey_rows)} dia(s) calculado(s)"):
+            journey_frame = pd.DataFrame(journey_rows)
+            st.dataframe(
+                journey_frame,
+                width="stretch",
+                hide_index=True,
+                column_config={
+                    "Viagem iniciada em": _datetime_col("Início da viagem"),
+                    "Data": _date_col("Data"),
+                    "Início trabalhado": _datetime_col("Início trabalhado"),
+                    "Parada trabalhada": _datetime_col("Parada trabalhada"),
+                    "Horas do dia": _number_col("Horas do dia", format="%.2f"),
+                },
+            )
+
+        with st.expander(f"Ver {len(events)} evento(s) lido(s) do rastreador"):
+            event_preview = events.rename(
+                columns={"Inicio": "Início", "Fim": "Fim", "Localizacao": "Localização"}
+            )
+            st.dataframe(
+                event_preview,
+                width="stretch",
+                hide_index=True,
+                column_config={
+                    "Início": _datetime_col("Início"),
+                    "Fim": _datetime_col("Fim"),
+                    "KM": _number_col("KM", format="%.2f"),
+                },
+            )
+
+        if not matched:
+            st.info(
+                "Nenhuma rota pendente pôde ser preenchida automaticamente. Confira placa, data e se o relatório "
+                "contém a saída e o retorno completos."
+            )
+            return
+
+        if st.button(
+            f"Preencher {matched_route_count} rota(s) pendente(s) pelo rastreador",
+            type="primary",
+            width="stretch",
+            key=f"cad_route_tracker_apply_{file_hash}",
+        ):
+            operations = [
+                {
+                    "route_ids": row.get("Rota IDs") or [],
+                    "placa": row.get("Placa"),
+                    "saida": row.get("Saida"),
+                    "retorno": row.get("Retorno"),
+                    "jornadas": row.get("Jornadas") or [],
+                    "km_total": row.get("KM total"),
+                    "arquivo": uploaded.name,
+                }
+                for row in matched
+            ]
+            try:
+                result = backend.import_route_tracker_operations(operations)
+            except Exception as exc:
+                st.error(f"Não foi possível salvar os dados do rastreador no Neon: {exc}")
+                return
+            clear_cached_reads()
+            st.session_state["route_tracker_import_message"] = (
+                f"Rastreador importado: {int(result.get('updated', 0))} rota(s) concluída(s), "
+                f"{fmt_num(result.get('km_total'), 2)} km distribuídos. "
+                f"{int(result.get('ignored', 0))} rota(s) já concluída(s) ou alterada(s) foram preservadas."
+            )
+            st.rerun()
+
+
+@st.fragment
 def _render_route_collaborator_import() -> None:
     with st.expander("Adicionar motorista e ajudante por imagem", expanded=False):
         st.caption(
@@ -13959,6 +14126,8 @@ def _render_route_history(plate_map: dict[str, str]) -> None:
 def _render_route_registry(plate_map: dict[str, str]) -> None:
     with st.container(border=True):
         _render_route_pdf_import(plate_map)
+    with st.container(border=True):
+        _render_route_tracker_import()
     with st.container(border=True):
         _render_route_collaborator_import()
     with st.container(border=True):

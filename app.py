@@ -61,7 +61,7 @@ DB_TABLES = {
 }
 DB_METADATA_TABLE = "dashboard_metadata"
 BACKEND_BUILD_VERSION = "aluguel-multiplicar-meses-v1"
-ROUTES_BUILD_VERSION = "rotas-manutencao-mensal-v30"
+ROUTES_BUILD_VERSION = "rotas-rastreador-v31"
 PEDAGIO_CHART_VERSION = "all-types-v1"
 USE_LEGACY_ROUTE_HOTEL_ALLOCATION = False
 BACKUP_METADATA_KEY = "backup.last_downloaded_at"
@@ -2539,6 +2539,122 @@ def update_route_operation(
         "horas_operacao": operation_hours,
         "tempo_viagem_horas": max((retorno_dt - saida_dt).total_seconds() / 3600.0, 0.0),
         "dias_operacao": operation_days,
+    }
+
+
+def import_route_tracker_operations(operations: list[dict]) -> dict:
+    """Conclui somente rotas ainda pendentes usando ciclos apurados no rastreador."""
+    if not operations:
+        raise ValueError("Nenhuma rota pendente foi conciliada com o relatório do rastreador.")
+
+    from sqlalchemy import text
+
+    route_table = _quote_identifier(DB_TABLES["rotas"])
+    updated_at = datetime.now(timezone.utc)
+    version = updated_at.isoformat()
+    updated = 0
+    ignored = 0
+    total_km = 0.0
+    processed_ids: set[str] = set()
+
+    with _db_engine().begin() as conn:
+        _ensure_dataset_table(conn, "rotas")
+        for operation in operations:
+            requested_ids = [
+                str(value or "").strip()
+                for value in operation.get("route_ids", [])
+                if str(value or "").strip() and str(value or "").strip() not in processed_ids
+            ]
+            if not requested_ids:
+                continue
+            plate = _normalize_plate_value(operation.get("placa"))
+            if not _is_plate_or_asset_identifier(plate):
+                raise ValueError("O relatório possui uma placa inválida.")
+            stored = list(
+                conn.execute(
+                    text(
+                        f"""
+                        SELECT "Rota ID", "Status", "PLACA"
+                        FROM {route_table}
+                        WHERE "Rota ID" = ANY(:route_ids)
+                        """
+                    ),
+                    {"route_ids": requested_ids},
+                ).mappings()
+            )
+            pending_ids = []
+            for row in stored:
+                stored_plate = _normalize_plate_value(row.get("PLACA"))
+                if (
+                    str(row.get("Status") or "").strip().casefold() == "pendente"
+                    and not pd.isna(stored_plate)
+                    and str(stored_plate) == str(plate)
+                ):
+                    pending_ids.append(str(row["Rota ID"]))
+            ignored += max(len(requested_ids) - len(pending_ids), 0)
+            if not pending_ids:
+                continue
+
+            start = pd.to_datetime(operation.get("saida"), errors="coerce")
+            stop = pd.to_datetime(operation.get("retorno"), errors="coerce")
+            if pd.isna(start) or pd.isna(stop) or stop <= start:
+                raise ValueError("O rastreador gerou uma saída ou retorno inválido.")
+            journeys_json, operation_hours, start, stop, _operation_days = _prepare_route_journeys(
+                operation.get("jornadas"), start, stop
+            )
+            km_total = pd.to_numeric(pd.Series([operation.get("km_total")]), errors="coerce").iloc[0]
+            if pd.isna(km_total) or float(km_total) <= 0:
+                raise ValueError("O ciclo do rastreador precisa possuir KM maior que zero.")
+            km_per_route = float(km_total) / len(pending_ids)
+            file_name = str(operation.get("arquivo") or "relatório do rastreador").strip()
+            note = f"Dados operacionais importados do rastreador ({file_name})."
+
+            result = conn.execute(
+                text(
+                    f"""
+                    UPDATE {route_table}
+                    SET "Saida" = :saida,
+                        "Retorno" = :retorno,
+                        "Jornadas" = :jornadas,
+                        "Horas Operacao" = :horas_operacao,
+                        "KM Rodados" = :km,
+                        "Status" = 'Concluída',
+                        "Atualizado Em" = :updated_at,
+                        "Observacao" = CASE
+                            WHEN NULLIF(TRIM(COALESCE("Observacao", '')), '') IS NULL THEN :note
+                            ELSE "Observacao" || CHR(10) || :note
+                        END
+                    WHERE "Rota ID" = ANY(:route_ids)
+                      AND LOWER(TRIM(COALESCE("Status", ''))) = 'pendente'
+                    """
+                ),
+                {
+                    "saida": start.to_pydatetime(),
+                    "retorno": stop.to_pydatetime(),
+                    "jornadas": journeys_json,
+                    "horas_operacao": operation_hours,
+                    "km": km_per_route,
+                    "updated_at": updated_at,
+                    "note": note,
+                    "route_ids": pending_ids,
+                },
+            )
+            changed = int(result.rowcount or 0)
+            updated += changed
+            total_km += km_per_route * changed
+            processed_ids.update(pending_ids)
+
+        if updated:
+            _write_metadata(conn, "rotas.version", version)
+            _write_metadata(conn, "import.version", version)
+
+    if updated:
+        _clear_dataset_cache("rotas")
+    return {
+        "updated": updated,
+        "ignored": ignored,
+        "km_total": round(total_km, 3),
+        "version": version,
     }
 
 
