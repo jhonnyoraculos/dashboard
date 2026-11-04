@@ -91,7 +91,7 @@ MUTED = "#6B7280"
 CARD_BORDER = "#c2d2f3"
 LOGO_PATH = Path(__file__).parent / "static" / "logo-jr.png"
 CURRENT_YEAR = date.today().year
-APP_VERSION = "rotas-rastreador-v76"
+APP_VERSION = "rotas-mes-anterior-v77"
 LOGGER = logging.getLogger("jr_dashboard.streamlit")
 RANK_ROUTES_ENABLED = True
 ROUTE_CACHE_TTL_SECONDS = max(int(os.environ.get("JR_ROUTE_CACHE_TTL_SECONDS", "1800") or 1800), 120)
@@ -3305,7 +3305,7 @@ def _ai_current_filters(page: str) -> dict[str, object]:
             raw_maximum = pd.to_datetime(options.get("data_max"), errors="coerce")
             minimum = raw_minimum.date() if pd.notna(raw_minimum) else date.today().replace(month=1, day=1)
             maximum = raw_maximum.date() if pd.notna(raw_maximum) else date.today()
-            mode = st.session_state.get("routes_period_mode_v5", "Todo o período")
+            mode = st.session_state.get("routes_period_mode_v6", "Mês anterior")
             custom = st.session_state.get("routes_custom_dates_v5", (minimum, maximum))
             start, end = _route_period_dates(mode, minimum, maximum, custom)
             filters.update({"data_inicio": start.isoformat(), "data_fim": end.isoformat()})
@@ -19576,7 +19576,8 @@ def render_rotas() -> None:
         "Perguntas gerenciais": "Respostas calculadas e auditáveis usando os dados reais",
     }
 
-    header_mode = st.session_state.get("routes_period_mode_v5", "Todo o período")
+    st.session_state.setdefault("routes_period_mode_v6", "Mês anterior")
+    header_mode = st.session_state.get("routes_period_mode_v6", "Mês anterior")
     header_custom = st.session_state.get("routes_custom_dates_v5", (minimum, maximum))
     header_start, header_end = _route_period_dates(header_mode, minimum, maximum, header_custom)
     header_period_label = f"{header_start.strftime('%d/%m/%Y')} — {header_end.strftime('%d/%m/%Y')}"
@@ -19593,7 +19594,7 @@ def render_rotas() -> None:
             period_mode = st.selectbox(
                 "Período analisado",
                 ["Todo o período", "Hoje", "Últimos 7 dias", "Últimos 30 dias", "Mês atual", "Mês anterior", "Ano atual", "Intervalo personalizado"],
-                key="routes_period_mode_v5",
+                key="routes_period_mode_v6",
             )
         with custom_col:
             custom_dates = st.date_input(
