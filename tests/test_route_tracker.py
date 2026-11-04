@@ -3,7 +3,7 @@ from io import BytesIO
 
 import pandas as pd
 
-from route_tracker import match_tracker_cycles, parse_tracker_report
+from route_tracker import match_tracker_cycles, normalize_tracker_plate, parse_tracker_report
 
 
 def tracker_workbook() -> bytes:
@@ -50,6 +50,10 @@ def tracker_workbook_with_initial_and_final_locations() -> bytes:
 
 
 class RouteTrackerTests(unittest.TestCase):
+    def test_old_brazilian_plate_matches_mercosur_plate(self):
+        self.assertEqual(normalize_tracker_plate("HHB-9476"), "HHB9E76")
+        self.assertEqual(normalize_tracker_plate("HHB9E76"), "HHB9E76")
+
     def test_tracker_builds_daily_journeys_without_counting_the_night(self):
         cycles, events, warnings = parse_tracker_report(tracker_workbook(), "rastreador.xlsx")
         self.assertEqual(len(events), 7)

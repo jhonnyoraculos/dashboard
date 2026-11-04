@@ -9,7 +9,7 @@ from typing import Iterable
 import pandas as pd
 
 
-TRACKER_BUILD_VERSION = "enderecos-inicial-final-v2"
+TRACKER_BUILD_VERSION = "placa-antiga-mercosul-v3"
 
 
 def _ascii(value: object) -> str:
@@ -19,7 +19,14 @@ def _ascii(value: object) -> str:
 
 
 def normalize_tracker_plate(value: object) -> str:
-    return re.sub(r"[^A-Z0-9]", "", _ascii(value))
+    plate = re.sub(r"[^A-Z0-9]", "", _ascii(value))
+    # A mesma placa pode vir do rastreador no padrão antigo ABC-1234 e
+    # dos manifestos no padrão Mercosul ABC1C34. O segundo algarismo do
+    # bloco numérico é convertido de 0..9 para A..J.
+    if re.fullmatch(r"[A-Z]{3}[0-9]{4}", plate):
+        digit_to_letter = "ABCDEFGHIJ"
+        plate = f"{plate[:4]}{digit_to_letter[int(plate[4])]}{plate[5:]}"
+    return plate
 
 
 def _number(value: object) -> float:

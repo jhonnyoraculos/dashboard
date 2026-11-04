@@ -79,7 +79,7 @@ if not _backend_features_ready or not _backend_aluguel_period_ready or not _back
 # O Streamlit também pode manter módulos auxiliares em memória após o deploy.
 # A versão impede que o leitor antigo do rastreador continue usando a coluna
 # imediatamente anterior ao KM como se fosse o endereço final.
-if getattr(route_tracker, "TRACKER_BUILD_VERSION", "") != "enderecos-inicial-final-v2":
+if getattr(route_tracker, "TRACKER_BUILD_VERSION", "") != "placa-antiga-mercosul-v3":
     route_tracker = importlib.reload(route_tracker)
 match_tracker_cycles = route_tracker.match_tracker_cycles
 parse_tracker_report = route_tracker.parse_tracker_report
@@ -91,7 +91,7 @@ MUTED = "#6B7280"
 CARD_BORDER = "#c2d2f3"
 LOGO_PATH = Path(__file__).parent / "static" / "logo-jr.png"
 CURRENT_YEAR = date.today().year
-APP_VERSION = "rotas-rastreador-v73"
+APP_VERSION = "rotas-rastreador-v74"
 LOGGER = logging.getLogger("jr_dashboard.streamlit")
 RANK_ROUTES_ENABLED = True
 ROUTE_CACHE_TTL_SECONDS = max(int(os.environ.get("JR_ROUTE_CACHE_TTL_SECONDS", "1800") or 1800), 120)
