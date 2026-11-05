@@ -91,7 +91,7 @@ MUTED = "#6B7280"
 CARD_BORDER = "#c2d2f3"
 LOGO_PATH = Path(__file__).parent / "static" / "logo-jr.png"
 CURRENT_YEAR = date.today().year
-APP_VERSION = "calculadora-descarga-placas-v83"
+APP_VERSION = "rdv-cabecalho-nome-opcional-v84"
 LOGGER = logging.getLogger("jr_dashboard.streamlit")
 RANK_ROUTES_ENABLED = True
 ROUTE_CACHE_TTL_SECONDS = max(int(os.environ.get("JR_ROUTE_CACHE_TTL_SECONDS", "1800") or 1800), 120)
@@ -10786,11 +10786,19 @@ def _parse_rdv_total_text(raw_text: str, *, file_name: str = "") -> dict[str, ob
     compact = re.sub(r"[ \t]+", " ", text)
     upper = compact.upper()
 
+    # Prioriza o nome digitado no cabeçalho. A assinatura manuscrita no rodapé
+    # não é usada para identificar o colaborador.
     name_match = re.search(
-        r"\bNOME\s*[:.]\s*(.+?)(?=\s+(?:DATA\s+QUINZENA|HOUVE\s+ADIANTAMENTO|NO\s+VALOR|CIDADE|ASSINATURA|DATA\s*$))",
-        compact,
-        flags=re.IGNORECASE,
+        r"^\s*NOME\s*[:.;-]\s*([^\r\n]{2,100})",
+        text,
+        flags=re.IGNORECASE | re.MULTILINE,
     )
+    if not name_match:
+        name_match = re.search(
+            r"\bNOME\s*[:.]\s*(.+?)(?=\s+(?:DATA\s+QUINZENA|HOUVE\s+ADIANTAMENTO|NO\s+VALOR|CIDADE|ASSINATURA|DATA\s*$))",
+            compact,
+            flags=re.IGNORECASE,
+        )
     collaborator = clean_text(name_match.group(1)).strip(" -:") if name_match else ""
     if collaborator:
         collaborator = re.split(r"\s{2,}|DATA\s+QUINZENA|HOUVE\s+ADIANTAMENTO", collaborator, maxsplit=1, flags=re.IGNORECASE)[0].strip()
@@ -10802,7 +10810,15 @@ def _parse_rdv_total_text(raw_text: str, *, file_name: str = "") -> dict[str, ob
     )
     if not period_match:
         dates = re.findall(r"\b\d{2}/\d{2}/\d{4}\b", upper)
-        period_values = dates[:2]
+        parsed_dates = pd.to_datetime(pd.Series(dates), dayfirst=True, errors="coerce").dropna()
+        # Em PDFs girados, o OCR pode devolver as linhas da tabela de baixo para
+        # cima e nem sempre reconhecer o rótulo DATA QUINZENA. Nesse caso, usa
+        # os limites das datas encontradas em vez das duas primeiras linhas.
+        period_values = (
+            [parsed_dates.min().strftime("%d/%m/%Y"), parsed_dates.max().strftime("%d/%m/%Y")]
+            if not parsed_dates.empty
+            else []
+        )
     else:
         period_values = [period_match.group(1), period_match.group(2)]
     inicio = pd.to_datetime(period_values[0], dayfirst=True, errors="coerce") if period_values else pd.NaT
@@ -10857,11 +10873,21 @@ def _parse_rdv_total_text(raw_text: str, *, file_name: str = "") -> dict[str, ob
     }
 
 
+def _rdv_import_valid_mask(frame: pd.DataFrame) -> pd.Series:
+    """Valida o RDV pelos campos essenciais; o nome do colaborador é opcional."""
+    return (
+        pd.to_numeric(frame["Valor"], errors="coerce").gt(0)
+        & pd.to_datetime(frame["Inicio"], errors="coerce").notna()
+        & pd.to_datetime(frame["Fim"], errors="coerce").notna()
+    )
+
+
 def _render_rdv_import() -> None:
     st.markdown("#### Importar diárias originais por RDV")
     st.caption(
         "Envie PDF, foto ou imagem do relatório. O sistema usa somente o **Total da quinzena** "
-        "do rodapé; adiantamento, hotel e valores das linhas não são somados novamente."
+        "do rodapé; adiantamento, hotel e valores das linhas não são somados novamente. "
+        "O nome impresso no cabeçalho é lido quando possível, mas não é obrigatório para importar."
     )
     files = st.file_uploader(
         "Relatórios de despesas de viagem",
@@ -10909,17 +10935,12 @@ def _render_rdv_import() -> None:
             },
             key="cad_rdv_preview",
         )
-        valid_mask = (
-            edited["Colaborador"].astype("string").fillna("").str.strip().ne("")
-            & pd.to_numeric(edited["Valor"], errors="coerce").gt(0)
-            & pd.to_datetime(edited["Inicio"], errors="coerce").notna()
-            & pd.to_datetime(edited["Fim"], errors="coerce").notna()
-        )
+        valid_mask = _rdv_import_valid_mask(edited)
         valid_rows = edited.loc[valid_mask].copy()
         invalid = edited.loc[~valid_mask].copy()
         if not invalid.empty:
             st.warning(
-                f"{len(invalid)} página(s) precisam de revisão manual em nome, período ou Total da quinzena. "
+                f"{len(invalid)} página(s) precisam de revisão manual no período ou Total da quinzena. "
                 f"As outras {len(valid_rows)} já podem ser importadas."
             )
         if st.button(

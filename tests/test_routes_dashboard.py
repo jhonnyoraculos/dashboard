@@ -114,6 +114,35 @@ class RoutesDashboardTests(unittest.TestCase):
         ).format(value="ignored")
         self.assertEqual(dashboard._parse_rdv_total_text(compact_label)["Valor"], 288.0)
 
+    def test_rdv_parser_prioritizes_typed_header_name_and_reversed_period(self):
+        text = """
+        ASSINATURA DO COLABORADOR
+        Leandro Coelho Pimentel
+        TOTAL DA QUINZENA EM R$ > R$ 632,00
+        24/10/2026
+        23/10/2026
+        13/10/2026
+        12/10/2026
+        NOME: LEANDRO COELHO PIMENTEL
+        RELATÓRIO DE DESPESAS DE VIAGEM - RDV - AJUDANTE DE MOTORISTA
+        """
+        parsed = dashboard._parse_rdv_total_text(text)
+        self.assertEqual(parsed["Colaborador"], "LEANDRO COELHO PIMENTEL")
+        self.assertEqual(parsed["Inicio"], date(2026, 10, 12))
+        self.assertEqual(parsed["Fim"], date(2026, 10, 24))
+        self.assertEqual(parsed["Valor"], 632.0)
+
+    def test_rdv_import_accepts_blank_collaborator(self):
+        rows = pd.DataFrame(
+            [{
+                "Inicio": date(2026, 10, 12),
+                "Fim": date(2026, 10, 24),
+                "Colaborador": "",
+                "Valor": 632.0,
+            }]
+        )
+        self.assertTrue(dashboard._rdv_import_valid_mask(rows).iloc[0])
+
     def test_ai_broken_inline_table_is_normalized_for_chat(self):
         raw = "## Projeção | Métrica |---| Valor observado | **Conclusão** custo estável"
         normalized = dashboard._normalize_ai_markdown(raw)
