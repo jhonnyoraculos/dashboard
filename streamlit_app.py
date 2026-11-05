@@ -91,7 +91,7 @@ MUTED = "#6B7280"
 CARD_BORDER = "#c2d2f3"
 LOGO_PATH = Path(__file__).parent / "static" / "logo-jr.png"
 CURRENT_YEAR = date.today().year
-APP_VERSION = "home-ganho-custo-percentual-v86"
+APP_VERSION = "home-cards-secundarios-compactos-v87"
 LOGGER = logging.getLogger("jr_dashboard.streamlit")
 RANK_ROUTES_ENABLED = True
 ROUTE_CACHE_TTL_SECONDS = max(int(os.environ.get("JR_ROUTE_CACHE_TTL_SECONDS", "1800") or 1800), 120)
@@ -1580,6 +1580,22 @@ def inject_css() -> None:
           color: #4B5563;
           font-size: 14px;
           line-height: 1.55;
+        }}
+
+        .home-total-grid--compact .home-total-card {{
+          min-height: 116px;
+          padding: 14px 20px;
+        }}
+
+        .home-total-grid--compact .home-total-card:not(.home-total-card--km) .home-total-value {{
+          margin-top: 5px;
+          font-size: clamp(20px, 1.65vw, 26px);
+        }}
+
+        .home-total-grid--compact .home-total-card:not(.home-total-card--km) .home-total-status {{
+          margin-top: 5px;
+          font-size: 12px;
+          line-height: 1.4;
         }}
 
         .home-total-card--km .home-total-label,
@@ -4841,7 +4857,7 @@ def render_home_totals(cards: list[tuple[str, str, str]]) -> None:
     if km_body:
         html_parts.append(f'<div class="home-km-strip">{"".join(km_body)}</div>')
     if regular_after:
-        html_parts.append(f'<div class="home-total-grid">{"".join(regular_after)}</div>')
+        html_parts.append(f'<div class="home-total-grid home-total-grid--compact">{"".join(regular_after)}</div>')
     st.markdown(f'<div class="home-total-stack">{"".join(html_parts)}</div>', unsafe_allow_html=True)
 
 
