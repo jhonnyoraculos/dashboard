@@ -91,7 +91,7 @@ MUTED = "#6B7280"
 CARD_BORDER = "#c2d2f3"
 LOGO_PATH = Path(__file__).parent / "static" / "logo-jr.png"
 CURRENT_YEAR = date.today().year
-APP_VERSION = "home-resultado-separado-v88"
+APP_VERSION = "home-percentual-descricao-v89"
 LOGGER = logging.getLogger("jr_dashboard.streamlit")
 RANK_ROUTES_ENABLED = True
 ROUTE_CACHE_TTL_SECONDS = max(int(os.environ.get("JR_ROUTE_CACHE_TTL_SECONDS", "1800") or 1800), 120)
@@ -8606,7 +8606,7 @@ def render_home() -> None:
         (
             "Custo sobre ganho total",
             fmt_percent(overview.get("custo_sobre_ganho_percentual"), 2),
-            "Gasto consolidado ÷ ganho das entregas × 100.",
+            "Percentual do custo em relação ao ganho das entregas.",
         ),
     ]
 
