@@ -91,7 +91,7 @@ MUTED = "#6B7280"
 CARD_BORDER = "#c2d2f3"
 LOGO_PATH = Path(__file__).parent / "static" / "logo-jr.png"
 CURRENT_YEAR = date.today().year
-APP_VERSION = "home-cards-secundarios-compactos-v87"
+APP_VERSION = "home-resultado-separado-v88"
 LOGGER = logging.getLogger("jr_dashboard.streamlit")
 RANK_ROUTES_ENABLED = True
 ROUTE_CACHE_TTL_SECONDS = max(int(os.environ.get("JR_ROUTE_CACHE_TTL_SECONDS", "1800") or 1800), 120)
@@ -1349,6 +1349,27 @@ def inject_css() -> None:
           gap: 16px;
         }}
 
+        .home-result-section {{
+          margin-top: 4px;
+          padding-top: 16px;
+          border-top: 1px solid rgba(21,128,61,.20);
+        }}
+
+        .home-result-title {{
+          margin: 0 0 10px;
+          color: #166534;
+          font-size: 12px;
+          font-weight: 900;
+          letter-spacing: .06em;
+          text-transform: uppercase;
+        }}
+
+        .home-result-grid {{
+          display: grid;
+          grid-template-columns: repeat(2, minmax(0, 1fr));
+          gap: 14px;
+        }}
+
         .home-km-strip {{
           display: grid;
           grid-template-columns: repeat(3, minmax(0, 1fr));
@@ -1618,6 +1639,10 @@ def inject_css() -> None:
 
         @media (max-width: 760px) {{
           .home-km-strip {{
+            grid-template-columns: 1fr;
+          }}
+
+          .home-result-grid {{
             grid-template-columns: 1fr;
           }}
 
@@ -4814,8 +4839,10 @@ def render_kpis(items: list[tuple]) -> None:
 
 def render_home_totals(cards: list[tuple[str, str, str]]) -> None:
     compact_km_labels = {"KM total", "Transporte", "Vex"}
+    result_labels = {"Ganho das entregas", "Custo sobre ganho total"}
     regular_before: list[str] = []
     regular_after: list[str] = []
+    result_body: list[str] = []
     km_body: list[str] = []
     seen_km = False
 
@@ -4846,6 +4873,8 @@ def render_home_totals(cards: list[tuple[str, str, str]]) -> None:
         if label in compact_km_labels:
             seen_km = True
             km_body.append(_home_card(label, value, status, km=True))
+        elif label in result_labels:
+            result_body.append(_home_card(label, value, status))
         elif seen_km:
             regular_after.append(_home_card(label, value, status))
         else:
@@ -4858,6 +4887,13 @@ def render_home_totals(cards: list[tuple[str, str, str]]) -> None:
         html_parts.append(f'<div class="home-km-strip">{"".join(km_body)}</div>')
     if regular_after:
         html_parts.append(f'<div class="home-total-grid home-total-grid--compact">{"".join(regular_after)}</div>')
+    if result_body:
+        html_parts.append(
+            '<section class="home-result-section">'
+            '<p class="home-result-title">Resultado das entregas</p>'
+            f'<div class="home-result-grid home-total-grid--compact">{"".join(result_body)}</div>'
+            '</section>'
+        )
     st.markdown(f'<div class="home-total-stack">{"".join(html_parts)}</div>', unsafe_allow_html=True)
 
 
