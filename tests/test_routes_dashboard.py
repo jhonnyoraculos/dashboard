@@ -252,6 +252,48 @@ class RoutesDashboardTests(unittest.TestCase):
         self.assertEqual(quote["helper_daily_cost"], 0)
         self.assertEqual(quote["driver_salary_cost"], 60)
 
+    def test_freight_calculator_without_route_uses_only_selected_plate_history(self):
+        no_route = "Sem rota — usar média da placa"
+
+        plate_params = dashboard._route_freight_history_params(no_route, no_route, "ABC1D23")
+        fleet_params = dashboard._route_freight_history_params(no_route, no_route, None)
+        route_params = dashboard._route_freight_history_params("10 - DIVINÓPOLIS", no_route, "ABC1D23")
+
+        self.assertEqual(plate_params["placa"], ["ABC1D23"])
+        self.assertNotIn("rota", plate_params)
+        self.assertTrue(plate_params["incluir_custos"])
+        self.assertNotIn("placa", fleet_params)
+        self.assertFalse(fleet_params["incluir_custos"])
+        self.assertEqual(route_params["rota"], ["10 - DIVINÓPOLIS"])
+        self.assertNotIn("placa", route_params)
+        self.assertFalse(route_params["incluir_detalhes"])
+
+    def test_freight_profile_counts_simultaneous_manifests_as_one_trip(self):
+        data = {
+            "tempos_rotas": [
+                {
+                    "Rota ID": "r1", "Rota": "ROTA A", "PLACA": "ABC1D23",
+                    "Saida": "2026-10-10T07:00:00", "Retorno": "2026-10-10T17:00:00",
+                    "Peso Carga": 1_000, "KM Rodados": 40, "Horas Trabalhadas": 5, "Dias Rota": 0.5,
+                },
+                {
+                    "Rota ID": "r2", "Rota": "ROTA B", "PLACA": "ABC1D23",
+                    "Saida": "2026-10-10T07:00:00", "Retorno": "2026-10-10T17:00:00",
+                    "Peso Carga": 2_000, "KM Rodados": 40, "Horas Trabalhadas": 5, "Dias Rota": 0.5,
+                },
+            ],
+            "custos": {"rotas": []},
+        }
+
+        profile = dashboard._route_freight_profile(data)
+
+        self.assertEqual(profile["trip_count"], 1)
+        self.assertEqual(profile["average_weight_kg"], 3_000)
+        self.assertEqual(profile["average_distance_km"], 80)
+        self.assertEqual(profile["average_trip_days"], 1)
+        self.assertEqual(profile["unload_hours_observed"], 9)
+        self.assertAlmostEqual(profile["unload_kg_per_hour"], 3_000 / 9)
+
     def test_freighter_quote_uses_daily_rate_and_route_average_days(self):
         reference = dashboard._freight_plate_reference(
             {

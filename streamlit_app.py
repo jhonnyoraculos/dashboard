@@ -91,7 +91,7 @@ MUTED = "#6B7280"
 CARD_BORDER = "#c2d2f3"
 LOGO_PATH = Path(__file__).parent / "static" / "logo-jr.png"
 CURRENT_YEAR = date.today().year
-APP_VERSION = "calculadora-descarga-historica-v80"
+APP_VERSION = "calculadora-sem-rota-v81"
 LOGGER = logging.getLogger("jr_dashboard.streamlit")
 RANK_ROUTES_ENABLED = True
 ROUTE_CACHE_TTL_SECONDS = max(int(os.environ.get("JR_ROUTE_CACHE_TTL_SECONDS", "1800") or 1800), 120)
@@ -17693,16 +17693,55 @@ def _route_unload_productivity(activity: pd.DataFrame) -> dict[str, object]:
     }
 
 
+def _freight_operation_average_source(activity: pd.DataFrame) -> pd.DataFrame:
+    """Reúne manifestos simultâneos da mesma placa em uma única viagem física."""
+    required = {"PLACA", "Saida", "Retorno"}
+    if activity.empty or not required.issubset(activity.columns):
+        return activity.copy()
+    source = activity.copy()
+    source["_Placa Operacao"] = source["PLACA"].astype("string").fillna("").str.strip()
+    source["_Saida Operacao"] = pd.to_datetime(source["Saida"], errors="coerce")
+    source["_Retorno Operacao"] = pd.to_datetime(source["Retorno"], errors="coerce")
+    valid = (
+        source["_Placa Operacao"].ne("")
+        & source["_Saida Operacao"].notna()
+        & source["_Retorno Operacao"].notna()
+    )
+    if not valid.any():
+        return activity.copy()
+    numeric_columns = [
+        column
+        for column in (
+            "Peso Carga", "KM Rodados", "Horas Trabalhadas", "Tempo Viagem Horas",
+            "Dias Rota", "Tempo Descarga Horas", "Horas Descarga", "Tempo de Descarga",
+        )
+        if column in source.columns
+    ]
+    if not numeric_columns:
+        return activity.copy()
+    for column in numeric_columns:
+        source[column] = pd.to_numeric(source[column], errors="coerce").fillna(0.0)
+    grouped = (
+        source.loc[valid]
+        .groupby(["_Placa Operacao", "_Saida Operacao", "_Retorno Operacao"], as_index=False)[numeric_columns]
+        .sum()
+    )
+    invalid_rows = source.loc[~valid, numeric_columns].copy()
+    return pd.concat([grouped[numeric_columns], invalid_rows], ignore_index=True, sort=False)
+
+
 def _route_freight_profile(data: dict) -> dict[str, object]:
     """Resume o histórico concluído de uma rota para preencher a simulação."""
     activity = pd.DataFrame(data.get("tempos_rotas") or [])
     if activity.empty:
         activity = pd.DataFrame(data.get("rotas_detalhes") or [])
 
+    average_source = _freight_operation_average_source(activity)
+
     def positive_average(column: str) -> float:
-        if activity.empty or column not in activity.columns:
+        if average_source.empty or column not in average_source.columns:
             return 0.0
-        values = pd.to_numeric(activity[column], errors="coerce")
+        values = pd.to_numeric(average_source[column], errors="coerce")
         values = values.loc[values.gt(0)]
         return float(values.mean()) if not values.empty else 0.0
 
@@ -17722,12 +17761,9 @@ def _route_freight_profile(data: dict) -> dict[str, object]:
         hotel_total = float(hotels.sum())
 
     trip_count = 0
-    if not activity.empty:
-        if "Rota ID" in activity.columns:
-            trip_count = int(activity["Rota ID"].astype("string").nunique())
-        else:
-            trip_count = len(activity)
-    unload_productivity = _route_unload_productivity(activity)
+    if not average_source.empty:
+        trip_count = len(average_source)
+    unload_productivity = _route_unload_productivity(average_source)
     return {
         "route": route_name,
         "trip_count": trip_count,
@@ -17742,6 +17778,23 @@ def _route_freight_profile(data: dict) -> dict[str, object]:
         "unload_hours_observed": unload_productivity["unload_hours"],
         "unload_productivity_source": unload_productivity["source"],
     }
+
+
+def _route_freight_history_params(
+    selected_route: str,
+    no_route_label: str,
+    selected_plate: str | None,
+) -> dict[str, object]:
+    """Seleciona somente o histórico concluído que deve preencher a simulação."""
+    without_route = selected_route == no_route_label
+    params: dict[str, object]
+    if without_route:
+        params = {"placa": [selected_plate]} if selected_plate else {}
+    else:
+        params = {"rota": [selected_route]}
+    params["incluir_detalhes"] = False
+    params["incluir_custos"] = bool(selected_plate or not without_route)
+    return params
 
 
 def _route_fleet_cost_summary(financial: pd.DataFrame) -> pd.DataFrame:
@@ -17840,29 +17893,29 @@ def _render_route_freight_calculator(
     global_route: str,
     all_routes_label: str,
 ) -> None:
+    no_route_label = "Sem rota — usar média da placa"
     _route_section_title(
         "Simulador de frete por rota e caminhão",
-        "Escolha uma rota concluída e aplique nela o custo histórico real do caminhão selecionado.",
+        "Escolha uma rota concluída ou simule sem rota usando as médias históricas da placa selecionada.",
     )
     available_routes = [str(value) for value in route_options if str(value or "").strip()]
     if global_route != all_routes_label:
         available_routes = [global_route] if global_route in available_routes else []
-    if not available_routes:
-        st.info("Não há rotas concluídas disponíveis para simulação.")
-        return
+    simulation_routes = [no_route_label, *available_routes]
 
-    route_key = "routes_freight_route_v1"
-    if route_key in st.session_state and st.session_state.get(route_key) not in available_routes:
-        st.session_state[route_key] = available_routes[0]
+    route_key = "routes_freight_route_v2"
+    if route_key in st.session_state and st.session_state.get(route_key) not in simulation_routes:
+        st.session_state[route_key] = no_route_label
     selected_route = st.selectbox(
         "Rota para simular",
-        available_routes,
+        simulation_routes,
         key=route_key,
-        disabled=len(available_routes) == 1,
-        help="Quando o filtro geral de rota estiver ativo, a calculadora respeita essa escolha.",
+        help=(
+            "Sem rota, os dados iniciais vêm das viagens concluídas da placa escolhida. "
+            "Quando o filtro geral de rota estiver ativo, as demais opções respeitam essa escolha."
+        ),
     )
-    route_history = route_json("rotas", {"rota": [selected_route]})
-    profile = _route_freight_profile(route_history)
+    without_route = selected_route == no_route_label
 
     historical, general_reference = _freight_historical_context()
     ranking = historical.get("ranking") or []
@@ -17882,6 +17935,17 @@ def _render_route_freight_calculator(
         help="Frota própria usa custo histórico por KM. Freteiro usa a diária da placa multiplicada pela duração média da rota.",
     ) or FREIGHT_FLEET_AVERAGE_LABEL
     selected_plate = None if vehicle_choice == FREIGHT_FLEET_AVERAGE_LABEL else vehicle_choice
+    history_params = _route_freight_history_params(
+        str(selected_route),
+        no_route_label,
+        selected_plate,
+    )
+    route_history = route_json("rotas", history_params)
+    profile = _route_freight_profile(route_history)
+    if without_route and not selected_plate and general_reference.get("hotel_reservations", 0) > 0:
+        profile["has_hotel"] = True
+        profile["hotel_trips"] = int(general_reference["hotel_reservations"])
+        profile["hotel_total"] = float(general_reference.get("hotel_cost") or 0.0)
     plate_reference = _freight_plate_reference(
         rows_by_plate.get(str(selected_plate or ""), {}),
         general_reference,
@@ -17897,15 +17961,18 @@ def _render_route_freight_calculator(
         plate_reference["rate_per_km"] = 0.0
         plate_reference["direct_rate_per_km"] = 0.0
 
+    average_basis = (
+        "placa selecionada" if selected_plate else "frota concluída"
+    ) if without_route else "rota selecionada"
     profile_cols = st.columns(5)
     profile_cols[0].metric("Viagens usadas na média", fmt_num(profile.get("trip_count"), 0))
-    profile_cols[1].metric("Peso médio da rota", fmt_peso(profile.get("average_weight_kg")))
-    profile_cols[2].metric("KM médio da rota", f"{fmt_num(profile.get('average_distance_km'), 1)} km")
+    profile_cols[1].metric(f"Peso médio da {average_basis}", fmt_peso(profile.get("average_weight_kg")))
+    profile_cols[2].metric(f"KM médio da {average_basis}", f"{fmt_num(profile.get('average_distance_km'), 1)} km")
     profile_cols[3].metric("Duração média", _format_days_hours(profile.get("average_trip_days")))
     profile_cols[4].metric("Viagens com hotel", fmt_num(profile.get("hotel_trips"), 0))
     st.caption(
-        "Peso, KM e duração são médias das viagens concluídas dessa rota em todo o histórico. Você pode alterar peso e KM abaixo "
-        "para testar outro cenário."
+        f"Peso, KM, duração e produtividade são médias das viagens concluídas da {average_basis} em todo o histórico. "
+        "Você pode alterar os valores abaixo para testar outro cenário."
     )
     if missing_selected_plate_rate:
         st.warning(
@@ -17920,11 +17987,12 @@ def _render_route_freight_calculator(
     elif is_freighter:
         st.info(
             f"Freteiro: diária de {fmt_brl(plate_reference.get('freighter_daily_rate'))} × "
-            f"{_format_days_hours(profile.get('average_trip_days'))} de duração média da rota, mais os KM que "
+            f"{_format_days_hours(profile.get('average_trip_days'))} de duração média do cenário, mais os KM que "
             "ultrapassarem 120 km. Os dois valores podem ser alterados abaixo somente para esta simulação."
         )
 
-    route_token = hashlib.sha256(str(selected_route).encode("utf-8")).hexdigest()[:10]
+    profile_token = f"{selected_route}|{vehicle_choice}" if without_route else str(selected_route)
+    route_token = hashlib.sha256(profile_token.encode("utf-8")).hexdigest()[:10]
     plate_token = hashlib.sha256(str(vehicle_choice).encode("utf-8")).hexdigest()[:10]
     default_hourly_rate = float(plate_reference.get("rate_per_employee_hour") or 0.0)
     has_hotel = bool(profile.get("has_hotel"))
@@ -17987,7 +18055,7 @@ def _render_route_freight_calculator(
                 step=10.0,
                 format="%.2f",
                 key=f"routes_freight_unload_rate_{route_token}",
-                help="Valor editável. O padrão é calculado com as viagens concluídas da rota.",
+                help=f"Valor editável. O padrão é calculado com as viagens concluídas da {average_basis}.",
             )
             unload_samples = int(profile.get("unload_sample_count") or 0)
             if unload_samples:
@@ -17996,7 +18064,7 @@ def _render_route_freight_calculator(
                     f"{fmt_num(profile.get('unload_hours_observed'), 2)} h de descarga estimada."
                 )
             else:
-                st.caption("Sem tempo histórico calculável nesta rota; usando 350 kg/h como padrão editável.")
+                st.caption(f"Sem tempo histórico calculável na {average_basis}; usando 350 kg/h como padrão editável.")
         with input_cols[2]:
             margin_percent = st.number_input(
                 "Margem de segurança (%)",
@@ -18016,9 +18084,9 @@ def _render_route_freight_calculator(
                 disabled=not has_hotel,
                 key=hotel_key,
                 help=(
-                    "Disponível porque essa rota possui hospedagem vinculada no histórico."
+                    f"Disponível porque a {average_basis} possui hospedagem vinculada no histórico."
                     if has_hotel
-                    else "Esta rota não possui hospedagem vinculada; hotel não será incluído."
+                    else f"A {average_basis} não possui hospedagem vinculada; hotel não será incluído."
                 ),
             )
 
@@ -18113,12 +18181,12 @@ def _render_route_freight_calculator(
 
     if not has_hotel:
         st.info(
-            "Esta rota não possui hotel no histórico. Mesmo que a operação ultrapasse 10 horas, a simulação "
+            f"A {average_basis} não possui hotel no histórico. Mesmo que a operação ultrapasse 10 horas, a simulação "
             "mantém o hotel em R$ 0,00."
         )
     elif include_hotels:
         st.success(
-            f"Hotel habilitado: {fmt_num(profile.get('hotel_trips'), 0)} viagem(ns) dessa rota possuem "
+            f"Hotel habilitado: {fmt_num(profile.get('hotel_trips'), 0)} viagem(ns) da {average_basis} possuem "
             "hospedagem vinculada."
         )
 
@@ -18177,9 +18245,9 @@ def _render_route_freight_calculator(
         else "Caminhão na distância"
     )
     vehicle_cost_note = (
-        "Freteiro + salário e diária do(s) ajudante(s) + hotel permitido pela rota, sem margem."
+        "Freteiro + salário e diária do(s) ajudante(s) + hotel permitido pelo histórico, sem margem."
         if is_freighter
-        else "Caminhão + salários + diárias da equipe + hotel permitido pela rota, sem margem."
+        else "Caminhão + salários + diárias da equipe + hotel permitido pelo histórico, sem margem."
     )
     assistant_breakdown_html = (
         f'<div class="frete-breakdown-card"><p>Diária do(s) ajudante(s) — {h(fmt_num(quote["helper_count"], 0))} × {h(fmt_num(quote["assistant_days"], 0))} dia(s)</p>'
@@ -18251,7 +18319,7 @@ def _render_route_freight_calculator(
             elif automatic_recommendation.get("is_selected"):
                 st.success(f"A placa selecionada já é a mais econômica neste cenário: {recommendation_text}")
             else:
-                st.success(f"Melhor opção calculável para esta rota: {recommendation_text}")
+                st.success(f"Melhor opção calculável para este cenário: {recommendation_text}")
             valid_count = int(all_plate_comparison["Base calculável"].fillna(False).sum())
             invalid_count = int(len(all_plate_comparison) - valid_count)
             st.caption(
@@ -18301,12 +18369,12 @@ def _render_route_freight_calculator(
             f"{fmt_brl(quote['hotel_daily_rate'], compact_threshold=float('inf'))} = **{fmt_brl(quote['hotel_cost'])}**."
         )
         st.caption(
-            f"{('O Freteiro usa a diária da placa e a duração média histórica da rota.' if is_freighter else 'O caminhão usa custo por KM; motorista e ajudante usam diárias inteiras da rota.')} Hotel só é permitido quando há hospedagem "
-            "historicamente vinculada à rota selecionada. Menos de 10 horas não gera diária."
+            f"{('O Freteiro usa a diária da placa e a duração média histórica do cenário.' if is_freighter else 'O caminhão usa custo por KM; motorista e ajudante usam diárias inteiras do cenário.')} Hotel só é permitido quando há hospedagem "
+            f"historicamente vinculada à {average_basis}. Menos de 10 horas não gera diária."
         )
 
     with st.container(border=True):
-        st.markdown("### Comparar placas nesta rota")
+        st.markdown("### Comparar placas neste cenário")
         st.caption(
             "Todas as placas usam o mesmo peso, distância, equipe, hotel e margem informados acima. "
             "Frota própria usa custo por KM; Freteiro usa diária e KM excedente acima de 120 km."
@@ -19725,7 +19793,7 @@ def render_rotas() -> None:
         "Rankings": "Comparações transparentes entre os principais grupos",
         "Relatórios": "Documentos gerenciais conforme os filtros aplicados",
         "Qualidade dos dados": "Inconsistências, alertas e cobertura das informações",
-        "Calculadora de frete": "Simulação por rota usando o custo histórico do caminhão escolhido",
+        "Calculadora de frete": "Simulação com ou sem rota usando o custo histórico do caminhão escolhido",
         "Previsões": "Demanda, quilômetros e custos projetados com margem de incerteza",
         "Perguntas gerenciais": "Respostas calculadas e auditáveis usando os dados reais",
     }
