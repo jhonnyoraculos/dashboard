@@ -91,7 +91,7 @@ MUTED = "#6B7280"
 CARD_BORDER = "#c2d2f3"
 LOGO_PATH = Path(__file__).parent / "static" / "logo-jr.png"
 CURRENT_YEAR = date.today().year
-APP_VERSION = "calculadora-sem-rota-v81"
+APP_VERSION = "calculadora-unificada-v82"
 LOGGER = logging.getLogger("jr_dashboard.streamlit")
 RANK_ROUTES_ENABLED = True
 ROUTE_CACHE_TTL_SECONDS = max(int(os.environ.get("JR_ROUTE_CACHE_TTL_SECONDS", "1800") or 1800), 120)
@@ -7849,33 +7849,26 @@ def render_calculadora_frete() -> None:
             """
             <section class="frete-intro">
               <h2>Quanto cobrar pelo frete?</h2>
-              <p>Use a média da frota ou escolha um caminhão específico. O tempo da viagem considera velocidade média de 80 km/h, a produtividade da descarga pode ser ajustada e o hotel da dupla conta uma diária a cada 10 horas completas de operação.</p>
+              <p>Simule livremente ou escolha uma rota concluída. O caminhão usa seu custo histórico e sua média real de descarga; peso, KM, produtividade e demais tarifas continuam editáveis somente para o cálculo.</p>
             </section>
             """
         )
 
-        mode_cols = st.columns(2)
-        with mode_cols[0]:
-            st.html(
-                '<div class="frete-mode-active">Base histórica do dashboard <span>Ativa</span></div>'
-            )
-        with mode_cols[1], st.container(key="frete_mode_disabled"):
-            st.button(
-                "Outra modalidade — em breve",
-                disabled=True,
-                width="stretch",
-                key="frete_other_mode",
-                help="Esta modalidade permanece desativada.",
-            )
-
-        include_hotels = st.checkbox(
-            "Incluir hotéis no cálculo",
-            value=True,
-            key="frete_include_hotels",
-            help="Inclui uma diária média de quarto duplo a cada 10 horas completas de viagem + descarga. O valor já cobre motorista e ajudante.",
+        simulation_mode = st.radio(
+            "Modo da simulação",
+            ["Sem rota", "Por rota concluída"],
+            horizontal=True,
+            key="frete_simulation_mode_v2",
+            help="Sem rota usa a média da placa. Por rota usa peso, KM, duração e hotel do histórico da rota escolhida.",
         )
 
         historical, general_reference = _freight_historical_context()
+        route_options_payload = route_json("rotas", {"somente_opcoes": True})
+        route_options = [
+            str(value).strip()
+            for value in (route_options_payload.get("rotas") or [])
+            if str(value or "").strip()
+        ]
         ranking = historical.get("ranking") or []
         rows_by_plate = {
             str(row.get("placa") or "").strip(): row
@@ -7886,6 +7879,19 @@ def render_calculadora_frete() -> None:
 
         with st.container(key="frete_form"):
             st.markdown("### Dados do frete")
+            use_route = simulation_mode == "Por rota concluída" and bool(route_options)
+            if simulation_mode == "Por rota concluída" and not route_options:
+                st.warning("Ainda não há rotas concluídas para preencher a simulação. O modo sem rota será usado.")
+            selected_route = (
+                st.selectbox(
+                    "Rota para simular",
+                    route_options,
+                    key="frete_route_v2",
+                    help="Somente rotas com dados operacionais concluídos aparecem nesta lista.",
+                )
+                if use_route
+                else None
+            )
             vehicle_choice = st.selectbox(
                 "Base de cálculo do caminhão",
                 plate_options,
@@ -7898,10 +7904,62 @@ def render_calculadora_frete() -> None:
                 if vehicle_choice == FREIGHT_FLEET_AVERAGE_LABEL
                 else vehicle_choice
             )
-            st.caption(
-                "Na distância, informe ida + volta. O salário por hora vem do histórico, "
-                "mas pode ser ajustado para esta simulação."
+            plate_history_params = _route_freight_history_params(
+                "Sem rota",
+                "Sem rota",
+                selected_plate,
             )
+            if use_route:
+                plate_history_params["incluir_custos"] = False
+            plate_profile = _route_freight_profile(route_json("rotas", plate_history_params))
+            if use_route and selected_route:
+                scenario_profile = _route_freight_profile(
+                    route_json(
+                        "rotas",
+                        _route_freight_history_params(str(selected_route), "Sem rota", selected_plate),
+                    )
+                )
+                scenario_label = f"rota {selected_route}"
+            else:
+                scenario_profile = plate_profile
+                scenario_label = selected_plate or "média da frota"
+            if not use_route and not selected_plate and general_reference.get("hotel_reservations", 0) > 0:
+                scenario_profile["has_hotel"] = True
+                scenario_profile["hotel_trips"] = int(general_reference["hotel_reservations"])
+                scenario_profile["hotel_total"] = float(general_reference.get("hotel_cost") or 0.0)
+
+            scenario_token = hashlib.sha256(
+                f"{simulation_mode}|{selected_route or ''}|{vehicle_choice}".encode("utf-8")
+            ).hexdigest()[:12]
+            historical_unload_rate = max(
+                float(plate_profile.get("unload_kg_per_hour") or FREIGHT_UNLOAD_KG_PER_HOUR),
+                1.0,
+            )
+            has_hotel = bool(scenario_profile.get("has_hotel"))
+            hotel_key = f"frete_include_hotels_{scenario_token}"
+            if not has_hotel and st.session_state.get(hotel_key):
+                st.session_state[hotel_key] = False
+            include_hotels = st.checkbox(
+                "Incluir hotéis no cálculo",
+                value=has_hotel,
+                disabled=not has_hotel,
+                key=hotel_key,
+                help=(
+                    f"O histórico de {scenario_label} possui hospedagem vinculada."
+                    if has_hotel
+                    else f"O histórico de {scenario_label} não possui hospedagem; o custo ficará zerado."
+                ),
+            )
+            st.caption(
+                f"Base do cenário: {fmt_num(scenario_profile.get('trip_count'), 0)} viagem(ns) concluída(s) de {scenario_label}. "
+                f"A descarga usa a média histórica do veículo escolhido e pode ser editada abaixo."
+            )
+            profile_cols = st.columns(5)
+            profile_cols[0].metric("Viagens na média", fmt_num(scenario_profile.get("trip_count"), 0))
+            profile_cols[1].metric("Peso médio", fmt_peso(scenario_profile.get("average_weight_kg")))
+            profile_cols[2].metric("KM médio", f"{fmt_num(scenario_profile.get('average_distance_km'), 1)} km")
+            profile_cols[3].metric("Duração média", _format_days_hours(scenario_profile.get("average_trip_days")))
+            profile_cols[4].metric("Descarga da placa", f"{fmt_num(historical_unload_rate, 2)} kg/h")
 
             selected_row = rows_by_plate.get(str(selected_plate or ""), {})
             plate_reference = _freight_plate_reference(selected_row, general_reference)
@@ -7928,15 +7986,15 @@ def render_calculadora_frete() -> None:
                 weight_kg = st.number_input(
                     "Peso da carga (kg)",
                     min_value=0.0,
-                    value=1000.0,
+                    value=float(scenario_profile.get("average_weight_kg") or 1000.0),
                     step=100.0,
                     format="%.2f",
-                    key="frete_weight_kg",
+                    key=f"frete_weight_kg_{scenario_token}",
                 )
                 individual_trip = st.checkbox(
                     "Viagem individual — somente motorista",
                     value=False,
-                    key=f"frete_individual_{selected_plate or 'sem_placa'}",
+                    key=f"frete_individual_{scenario_token}",
                     help="Ao ativar, a quantidade e todos os custos de ajudantes ficam zerados.",
                 )
                 if individual_trip:
@@ -7947,7 +8005,7 @@ def render_calculadora_frete() -> None:
                         value=0,
                         step=1,
                         disabled=True,
-                        key=f"frete_helpers_individual_{selected_plate or 'sem_placa'}",
+                        key=f"frete_helpers_individual_{scenario_token}",
                     )
                 else:
                     helper_count_input = st.number_input(
@@ -7956,28 +8014,36 @@ def render_calculadora_frete() -> None:
                         max_value=19,
                         value=1,
                         step=1,
-                        key=f"frete_helpers_{selected_plate or 'sem_placa'}",
+                        key=f"frete_helpers_{scenario_token}",
                         help="Quantidade de ajudantes além do motorista.",
                     )
             with input_cols[1]:
                 distance_km = st.number_input(
                     "Distância total (km)",
                     min_value=0.0,
-                    value=100.0,
+                    value=float(scenario_profile.get("average_distance_km") or 100.0),
                     step=10.0,
                     format="%.1f",
-                    key="frete_distance_km",
+                    key=f"frete_distance_km_{scenario_token}",
                 )
                 st.caption("A distância deve conter ida e volta.")
                 unload_kg_per_hour = st.number_input(
                     "Produtividade da descarga (kg/h)",
                     min_value=1.0,
-                    value=FREIGHT_UNLOAD_KG_PER_HOUR,
+                    value=historical_unload_rate,
                     step=10.0,
                     format="%.2f",
-                    key="frete_unload_kg_per_hour",
-                    help="Valor editável usado para transformar o peso em tempo de descarga.",
+                    key=f"frete_unload_kg_per_hour_{scenario_token}",
+                    help="Média calculada com as viagens concluídas da placa. O valor pode ser alterado somente nesta simulação.",
                 )
+                unload_samples = int(plate_profile.get("unload_sample_count") or 0)
+                if unload_samples:
+                    st.caption(
+                        f"Média de descarga de {vehicle_choice}: {fmt_num(historical_unload_rate, 2)} kg/h "
+                        f"em {unload_samples} viagem(ns) física(s)."
+                    )
+                else:
+                    st.caption("Sem tempo calculável para essa placa; padrão editável de 350 kg/h.")
             with input_cols[2]:
                 margin_percent = st.number_input(
                     "Margem de segurança (%)",
@@ -7986,7 +8052,7 @@ def render_calculadora_frete() -> None:
                     value=10.0,
                     step=1.0,
                     format="%.1f",
-                    key="frete_margin_percent",
+                    key=f"frete_margin_percent_{scenario_token}",
                     help="Percentual aplicado sobre o custo estimado da operação.",
                 )
                 st.write("")
@@ -7994,9 +8060,10 @@ def render_calculadora_frete() -> None:
                     "Atualizar cálculo",
                     type="primary",
                     width="stretch",
-                    key="frete_refresh",
+                    key=f"frete_refresh_{scenario_token}",
                 )
             st.markdown("#### Salários e diárias da equipe")
+            scenario_daily_rate = _freight_assistant_daily_rate(selected_route or "")
             team_cols = st.columns(4)
             with team_cols[0]:
                 driver_hourly_rate = st.number_input(
@@ -8021,22 +8088,22 @@ def render_calculadora_frete() -> None:
                 driver_daily_rate = st.number_input(
                     "Diária do motorista (R$)",
                     min_value=0.0,
-                    value=FREIGHT_ASSISTANT_OTHER_DAILY_RATE,
+                    value=scenario_daily_rate,
                     step=10.0,
                     format="%.2f",
-                    key=f"frete_driver_daily_{selected_plate or 'sem_placa'}",
-                    help="Sem rota selecionada, o padrão é R$ 100. É adicional ao salário e válido somente nesta simulação.",
+                    key=f"frete_driver_daily_{scenario_token}",
+                    help="R$ 32 para Divinópolis/Carmo do Cajuru e R$ 100 para outras cidades. É editável nesta simulação.",
                 )
             with team_cols[3]:
                 assistant_daily_rate = st.number_input(
                     "Diária do ajudante (R$)",
                     min_value=0.0,
-                    value=FREIGHT_ASSISTANT_OTHER_DAILY_RATE,
+                    value=scenario_daily_rate,
                     step=1.0,
                     format="%.2f",
-                    key=f"frete_assistant_daily_{selected_plate or 'sem_placa'}",
+                    key=f"frete_assistant_daily_{scenario_token}",
                     disabled=bool(individual_trip),
-                    help="Sem rota selecionada, o padrão é R$ 100. É adicional ao salário.",
+                    help="R$ 32 para Divinópolis/Carmo do Cajuru e R$ 100 para outras cidades. É editável nesta simulação.",
                 )
             st.caption(
                 "Salário e diária são separados e somados. No Freteiro, a diária contratada já cobre o motorista; "
@@ -8086,10 +8153,20 @@ def render_calculadora_frete() -> None:
             "freighter_daily_rate_override": (
                 float(freighter_daily_rate_override) if is_freighter else None
             ),
+            "freighter_trip_days": (
+                float(scenario_profile.get("average_trip_days") or 0.0)
+                if is_freighter
+                else None
+            ),
             "freighter_excess_km_rate": float(freighter_excess_km_rate),
             "assistant_daily_rate": float(assistant_daily_rate),
             "driver_daily_rate": float(driver_daily_rate),
             "unload_kg_per_hour": float(unload_kg_per_hour),
+            "own_trip_days": (
+                float(scenario_profile.get("average_trip_days") or 0.0)
+                if not is_freighter
+                else None
+            ),
         }
         quote = _calculate_freight_quote(plate_reference, **quote_inputs)
         vehicle_cost_label = (
@@ -8156,7 +8233,7 @@ def render_calculadora_frete() -> None:
                 <div class="frete-result-item">
                   <p class="frete-result-label">Frete sugerido</p>
                   <p class="frete-result-value">{h(fmt_brl(quote['suggested_freight'], compact_threshold=float('inf')))}</p>
-                  <p class="frete-result-note">Base: {h(result_plate)} · hotéis {"incluídos" if include_hotels else "excluídos"} · margem de {h(fmt_num(quote_inputs['margin_percent'], 1))}% incluída.</p>
+                  <p class="frete-result-note">Base: {h(scenario_label)} · {h(result_plate)} · hotéis {"incluídos" if include_hotels else "excluídos"} · margem de {h(fmt_num(quote_inputs['margin_percent'], 1))}% incluída.</p>
                 </div>
                 <div class="frete-result-item frete-result-item--cost">
                   <p class="frete-result-label">Custo estimado</p>
@@ -8253,6 +8330,92 @@ def render_calculadora_frete() -> None:
                 f"de motorista + ajudante. Velocidade média: 80 km/h. Produtividade usada na descarga: "
                 f"{fmt_num(quote['unload_kg_per_hour'], 2)} kg por hora."
             )
+
+        all_plate_comparison = _freight_plate_comparison(
+            sorted(rows_by_plate),
+            rows_by_plate,
+            general_reference,
+            quote_inputs=quote_inputs,
+            average_trip_days=float(scenario_profile.get("average_trip_days") or 0.0),
+            excess_km_rate=float(freighter_excess_km_rate),
+            assistant_daily_rate=float(assistant_daily_rate),
+            driver_daily_rate=float(driver_daily_rate),
+            driver_hourly_rate=float(driver_hourly_rate),
+            helper_hourly_rate=float(helper_hourly_rate),
+            selected_plate=selected_plate,
+            selected_daily_rate=(
+                float(freighter_daily_rate_override) if is_freighter else None
+            ),
+        )
+        recommendation = _freight_economic_recommendation(
+            all_plate_comparison,
+            [selected_plate] if selected_plate else [],
+        )
+        with st.container(border=True):
+            st.markdown("### Comparar caminhões no mesmo cenário")
+            if recommendation:
+                recommendation_plate = str(recommendation["plate"])
+                recommendation_cost = float(recommendation["estimated_cost"])
+                recommendation_price = float(recommendation["suggested_freight"])
+                savings = float(recommendation.get("savings") or 0.0)
+                message = (
+                    f"Melhor opção calculável: **{recommendation_plate}** — custo de "
+                    f"**{fmt_brl(recommendation_cost)}** e frete sugerido de **{fmt_brl(recommendation_price)}**."
+                )
+                if recommendation.get("selected_plate") and savings > 0.005:
+                    message += f" Economia de **{fmt_brl(savings)}** contra a placa selecionada."
+                st.success(message)
+            comparison_plates = st.multiselect(
+                "Placas para comparar",
+                sorted(rows_by_plate),
+                default=[selected_plate] if selected_plate in rows_by_plate else [],
+                key=f"frete_compare_{scenario_token}",
+                help="Todas usam o mesmo peso, distância, produtividade, equipe, hotel e margem informados acima.",
+            )
+            if len(comparison_plates) < 2:
+                st.info("Selecione pelo menos duas placas para comparar custo e frete sugerido.")
+            else:
+                comparison = all_plate_comparison.loc[
+                    all_plate_comparison["Placa"].astype(str).isin(comparison_plates)
+                ].copy()
+                eligible = comparison.loc[comparison["Base calculável"].fillna(False)].copy()
+                if eligible.empty:
+                    st.warning("As placas escolhidas ainda não possuem base suficiente para o cálculo.")
+                else:
+                    labels = eligible["Placa"].astype(str).tolist()
+                    costs = pd.to_numeric(eligible["Custo estimado"], errors="coerce").fillna(0).tolist()
+                    prices = pd.to_numeric(eligible["Frete sugerido"], errors="coerce").fillna(0).tolist()
+                    figure = go.Figure()
+                    figure.add_bar(
+                        name="Custo estimado", x=costs, y=labels, orientation="h",
+                        marker_color="#2563EB",
+                        text=[fmt_brl(value, compact_threshold=float("inf")) for value in costs],
+                        textposition="outside",
+                    )
+                    figure.add_bar(
+                        name="Frete sugerido", x=prices, y=labels, orientation="h",
+                        marker_color="#0F766E",
+                        text=[fmt_brl(value, compact_threshold=float("inf")) for value in prices],
+                        textposition="outside",
+                    )
+                    figure.update_layout(barmode="group", legend={"orientation": "h", "y": 1.08})
+                    figure.update_yaxes(autorange="reversed", automargin=True)
+                    figure = apply_theme(
+                        figure,
+                        height=max(330, 130 + len(labels) * 65),
+                        margin={"l": 130, "r": 170, "t": 55, "b": 45},
+                    )
+                    st.plotly_chart(figure, width="stretch", config=PLOTLY_CONFIG)
+                    st.dataframe(
+                        comparison.drop(columns=["Base calculável"]),
+                        width="stretch",
+                        hide_index=True,
+                        column_config={
+                            "Custo estimado": _money_col("Custo estimado"),
+                            "Frete sugerido": _money_col("Frete sugerido"),
+                            "Diferença para o menor": _money_col("Diferença para o menor"),
+                        },
+                    )
 
     footer("Estimativa calculada com o histórico operacional do Neon. Confira pedágios e condições especiais antes de fechar. © JR")
 
@@ -19766,12 +19929,14 @@ def render_rotas() -> None:
             key="routes_global_route_v1",
             help="Este filtro é aplicado a todas as abas, gráficos, KPIs, rankings e relatórios.",
         )
+        if st.session_state.get("routes_workspace_section") == "Calculadora de frete":
+            st.session_state["routes_workspace_section"] = "Visão geral"
         section = st.radio(
             "Navegação",
             [
                 "Visão geral", "Mapa operacional", "Análise de rotas", "Entregas e produtividade", "Motoristas",
                 "Frota e veículos", "Custos e rentabilidade", "Rankings", "Relatórios", "Qualidade dos dados",
-                "Calculadora de frete", "Previsões", "Perguntas gerenciais",
+                "Previsões", "Perguntas gerenciais",
             ],
             key="routes_workspace_section",
         )
@@ -19793,7 +19958,6 @@ def render_rotas() -> None:
         "Rankings": "Comparações transparentes entre os principais grupos",
         "Relatórios": "Documentos gerenciais conforme os filtros aplicados",
         "Qualidade dos dados": "Inconsistências, alertas e cobertura das informações",
-        "Calculadora de frete": "Simulação com ou sem rota usando o custo histórico do caminhão escolhido",
         "Previsões": "Demanda, quilômetros e custos projetados com margem de incerteza",
         "Perguntas gerenciais": "Respostas calculadas e auditáveis usando os dados reais",
     }
@@ -19939,7 +20103,7 @@ def render_rotas() -> None:
         comparison = route_json("rotas", previous_params)
 
     period_label = f"{start_date.strftime('%d/%m/%Y')} — {end_date.strftime('%d/%m/%Y')}"
-    if not int(data.get("total_rotas") or 0) and section != "Calculadora de frete":
+    if not int(data.get("total_rotas") or 0):
         st.info("Não há rotas concluídas para este período e estes filtros. Viagens pendentes continuam fora do painel.")
         footer("JR Dashboard • somente rotas concluídas")
         return
@@ -20303,14 +20467,6 @@ def render_rotas() -> None:
                 "Custo por km": _money_col("Custo/km"),
                 "Custo por entrega": _money_col("Custo/entrega"),
             },
-        )
-
-    elif section == "Calculadora de frete":
-        calculator_routes = options.get("rotas") or []
-        _render_route_freight_calculator(
-            [str(value) for value in calculator_routes],
-            global_route,
-            all_routes_label,
         )
 
     elif section == "Rankings":
