@@ -8704,6 +8704,21 @@ def _overview_transport_ranking_total(
     periodos: list[str] | None = None,
     fallback: float = 0.0,
 ) -> float:
+    return _overview_transport_ranking_totals(
+        ano=ano,
+        meses=meses,
+        periodos=periodos,
+        fallback=fallback,
+    )["total"]
+
+
+def _overview_transport_ranking_totals(
+    *,
+    ano: int | None = None,
+    meses: list[int] | None = None,
+    periodos: list[str] | None = None,
+    fallback: float = 0.0,
+) -> dict[str, float]:
     meses = meses or []
     periodos = periodos or []
     ranking_months: list[str] = []
@@ -8729,9 +8744,12 @@ def _overview_transport_ranking_total(
 
     try:
         ranking_totals = data_frota(params).get("totais") or {}
-        return float(ranking_totals.get("total") or 0.0)
+        return {
+            "total": float(ranking_totals.get("total") or 0.0),
+            "ganho_entregas": float(ranking_totals.get("valor_peso") or 0.0),
+        }
     except Exception:
-        return float(fallback)
+        return {"total": float(fallback), "ganho_entregas": 0.0}
 
 
 def compute_overview_totals(*, ano: int | None = None, mes: int | None = None, meses_lista: list[int] | None = None) -> dict:
@@ -8838,16 +8856,25 @@ def compute_overview_totals(*, ano: int | None = None, mes: int | None = None, m
     detalhes["custo_freteiros"] = custo_freteiros
     detalhes["total_transporte_operacional"] = total_transporte_operacional
     total_transporte_fallback = total_transporte_operacional + salario_transporte + custo_freteiros
-    total_transporte = _overview_transport_ranking_total(
+    ranking_totals = _overview_transport_ranking_totals(
         ano=ano,
         meses=meses_lista,
         periodos=periodos_ordenados,
         fallback=total_transporte_fallback,
     )
+    total_transporte = float(ranking_totals.get("total") or 0.0)
+    ganho_entregas = float(ranking_totals.get("ganho_entregas") or 0.0)
     total_vex = float(segmentos_dict.get("Vex", 0.0))
+    total_geral = total_transporte + total_vex
     detalhes["total_transporte"] = total_transporte
     detalhes["total_vex"] = total_vex
-    detalhes["total_geral"] = total_transporte + total_vex
+    detalhes["total_geral"] = total_geral
+    detalhes["ganho_entregas"] = ganho_entregas
+    detalhes["custo_sobre_ganho_percentual"] = (
+        total_geral / ganho_entregas * 100
+        if ganho_entregas > 0
+        else None
+    )
     detalhes["periodos_disponiveis"] = periodos_ordenados
     detalhes["anos_disponiveis"] = anos_disponiveis
     detalhes["meses_disponiveis"] = meses_disponiveis

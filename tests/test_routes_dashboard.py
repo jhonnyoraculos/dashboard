@@ -54,6 +54,22 @@ def sample_payload() -> dict:
 
 
 class RoutesDashboardTests(unittest.TestCase):
+    def test_overview_ranking_totals_include_delivery_gain(self):
+        with patch.object(
+            backend,
+            "data_frota",
+            return_value={"totais": {"total": 250.0, "valor_peso": 1000.0}},
+        ):
+            totals = backend._overview_transport_ranking_totals(
+                ano=2026,
+                meses=[10],
+                periodos=["2026-10"],
+                fallback=99.0,
+            )
+
+        self.assertEqual(totals["total"], 250.0)
+        self.assertEqual(totals["ganho_entregas"], 1000.0)
+
     def test_database_read_skips_schema_ddl_when_table_is_available(self):
         frame = pd.DataFrame([{"PLACA": "AAA1A11", "Categoria": "Transporte", "Diaria": 0.0}])
         with (

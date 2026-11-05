@@ -91,7 +91,7 @@ MUTED = "#6B7280"
 CARD_BORDER = "#c2d2f3"
 LOGO_PATH = Path(__file__).parent / "static" / "logo-jr.png"
 CURRENT_YEAR = date.today().year
-APP_VERSION = "rdv-total-direcionado-v85"
+APP_VERSION = "home-ganho-custo-percentual-v86"
 LOGGER = logging.getLogger("jr_dashboard.streamlit")
 RANK_ROUTES_ENABLED = True
 ROUTE_CACHE_TTL_SECONDS = max(int(os.environ.get("JR_ROUTE_CACHE_TTL_SECONDS", "1800") or 1800), 120)
@@ -1422,6 +1422,16 @@ def inject_css() -> None:
         .home-total-card--vex {{
           --home-accent: #7C3AED;
           --home-glow: rgba(124,58,237,.15);
+        }}
+
+        .home-total-card--gain {{
+          --home-accent: #15803D;
+          --home-glow: rgba(21,128,61,.15);
+        }}
+
+        .home-total-card--ratio {{
+          --home-accent: #D97706;
+          --home-glow: rgba(217,119,6,.16);
         }}
 
         .home-total-card--km {{
@@ -4800,6 +4810,10 @@ def render_home_totals(cards: list[tuple[str, str, str]]) -> None:
             extra_class = " home-total-card--weight"
         elif label == "Gasto Vex":
             extra_class = " home-total-card--vex"
+        elif label == "Ganho das entregas":
+            extra_class = " home-total-card--gain"
+        elif label == "Custo sobre ganho total":
+            extra_class = " home-total-card--ratio"
         elif label.startswith("Gasto"):
             extra_class = " home-total-card--money"
         else:
@@ -5819,7 +5833,8 @@ def compose_home_export_image(
     card_width = (width - margin * 2 - gap * (card_cols - 1)) // card_cols
     card_height = 205
     header_height = 140 if include_header else 0
-    height = margin + header_height + card_height + margin
+    card_rows = math.ceil(len(cards) / card_cols) if cards else 1
+    height = margin + header_height + card_rows * card_height + max(card_rows - 1, 0) * gap + margin
     canvas = Image.new("RGB", (width, height), bg)
     draw = ImageDraw.Draw(canvas)
     y = margin
@@ -5843,16 +5858,24 @@ def compose_home_export_image(
         y += header_height
 
     for index, (label, value, status) in enumerate(cards):
-        x = margin + index * (card_width + gap)
+        row, column = divmod(index, card_cols)
+        x = margin + column * (card_width + gap)
+        card_y = y + row * (card_height + gap)
         label_upper = export_text(label).upper()
-        accent = "#7C3AED" if "VEX" in label_upper else JR_RED if "GASTO" in label_upper else JR_BLUE
-        draw_liquid_export_card(canvas, (x, y, x + card_width, y + card_height), radius=18, accent=accent, outline=line)
+        accent = (
+            "#15803D" if "GANHO DAS ENTREGAS" in label_upper
+            else "#D97706" if "CUSTO SOBRE GANHO" in label_upper
+            else "#7C3AED" if "VEX" in label_upper
+            else JR_RED if "GASTO" in label_upper
+            else JR_BLUE
+        )
+        draw_liquid_export_card(canvas, (x, card_y, x + card_width, card_y + card_height), radius=18, accent=accent, outline=line)
         center_x = x + card_width // 2
         draw_centered_wrapped_text(
             draw,
             label_upper,
             center_x,
-            y + 26,
+            card_y + 26,
             font=report_font(20, bold=True),
             fill=MUTED,
             max_width=card_width - 60,
@@ -5861,12 +5884,12 @@ def compose_home_export_image(
         value_text = export_text(value)
         value_font = report_font(30, bold=True)
         value_bbox = draw.textbbox((0, 0), value_text, font=value_font)
-        draw.text((center_x - (value_bbox[2] - value_bbox[0]) // 2, y + 95), value_text, font=value_font, fill=accent)
+        draw.text((center_x - (value_bbox[2] - value_bbox[0]) // 2, card_y + 95), value_text, font=value_font, fill=accent)
         draw_centered_wrapped_text(
             draw,
             status,
             center_x,
-            y + 138,
+            card_y + 138,
             font=report_font(16),
             fill="#374151",
             max_width=card_width - 52,
@@ -8523,6 +8546,16 @@ def render_home() -> None:
             "Despesas do Transporte, salários e diárias de freteiros.",
         ),
         ("Gasto Vex", fmt_brl(overview.get("total_vex")), 'Somatório das despesas marcadas como "Vex".'),
+        (
+            "Ganho das entregas",
+            fmt_brl(overview.get("ganho_entregas")),
+            "Valor total atribuído às entregas no filtro aplicado.",
+        ),
+        (
+            "Custo sobre ganho total",
+            fmt_percent(overview.get("custo_sobre_ganho_percentual"), 2),
+            "Gasto consolidado ÷ ganho das entregas × 100.",
+        ),
     ]
 
     home_total_cards = [
