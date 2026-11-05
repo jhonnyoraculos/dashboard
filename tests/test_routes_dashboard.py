@@ -2,7 +2,7 @@ import json
 import os
 import unittest
 import zipfile
-from datetime import date
+from datetime import date, datetime, timedelta, timezone
 from io import BytesIO
 from unittest.mock import patch
 
@@ -66,6 +66,24 @@ class RoutesDashboardTests(unittest.TestCase):
 
     def test_dashboard_password_hash_rejects_invalid_salt(self):
         self.assertEqual(dashboard._password_hash("senha", "sal-invalido", 600_000), "")
+
+    def test_remember_token_is_signed_expires_and_rejects_tampering(self):
+        issued_at = datetime(2026, 11, 5, tzinfo=timezone.utc)
+        with patch.dict(
+            os.environ,
+            {"DASHBOARD_USERNAME": "usuario-teste", "DASHBOARD_COOKIE_SECRET": "segredo-de-teste-longo"},
+            clear=False,
+        ):
+            token = dashboard._make_remember_token("usuario-teste", now=issued_at)
+            self.assertEqual(
+                dashboard._verify_remember_token(token, now=issued_at + timedelta(days=1)),
+                "usuario-teste",
+            )
+            self.assertEqual(dashboard._verify_remember_token(token + "x", now=issued_at), "")
+            self.assertEqual(
+                dashboard._verify_remember_token(token, now=issued_at + timedelta(days=31)),
+                "",
+            )
 
     def test_overview_ranking_totals_include_delivery_gain(self):
         with patch.object(

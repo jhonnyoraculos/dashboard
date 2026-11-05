@@ -26,6 +26,7 @@ import pandas as pd
 import plotly.graph_objects as go
 import streamlit as st
 import streamlit.components.v1 as components
+import extra_streamlit_components as stx
 from PIL import Image, ImageDraw, ImageEnhance, ImageFilter, ImageFont, ImageOps
 
 import app as backend
@@ -96,11 +97,13 @@ LOGO_PATH = Path(__file__).parent / "static" / "logo-jr.png"
 # estes valores podem ser substituidos pelos Secrets do Streamlit descritos no
 # README. O PBKDF2 torna uma copia do codigo insuficiente para revelar a senha.
 AUTH_DEFAULT_USERNAME = "jradmin"
-AUTH_DEFAULT_SALT = "3db5026a8fdd239582e06b7e74309f56"
-AUTH_DEFAULT_PASSWORD_HASH = "c7eb26596143969d299a22273ba91bb744171d97e506d60cfc7f7803a5bb105e"
+AUTH_DEFAULT_SALT = "79d0e5cc031ecac08aedc869818264d2"
+AUTH_DEFAULT_PASSWORD_HASH = "18d658f6671cc70e1955c499b57d5e5307ab5a712216308defe7c0fb01114a99"
 AUTH_DEFAULT_ITERATIONS = 600_000
 AUTH_MAX_ATTEMPTS = 5
 AUTH_LOCK_SECONDS = 60
+AUTH_COOKIE_NAME = "jr_dashboard_access"
+AUTH_COOKIE_DAYS = 30
 
 
 def _auth_config_value(name: str, default: str = "") -> str:
@@ -150,12 +153,88 @@ def _auth_credentials_valid(username: str, password: str) -> bool:
     return username_ok and password_ok
 
 
+def _remember_signing_key() -> bytes:
+    """Derive a server-only signing key without putting it in the repository."""
+    source = (
+        _auth_config_value("DASHBOARD_COOKIE_SECRET")
+        or _auth_config_value("DASHBOARD_PASSWORD")
+        or _auth_config_value("DATABASE_URL")
+    )
+    if not source:
+        return b""
+    return hashlib.sha256(f"jr-dashboard-cookie-v1:{source}".encode("utf-8")).digest()
+
+
+def _token_encode(data: bytes) -> str:
+    return base64.urlsafe_b64encode(data).decode("ascii").rstrip("=")
+
+
+def _token_decode(value: str) -> bytes:
+    return base64.urlsafe_b64decode(value + "=" * (-len(value) % 4))
+
+
+def _make_remember_token(username: str, *, now: datetime | None = None) -> str:
+    signing_key = _remember_signing_key()
+    if not signing_key:
+        return ""
+    issued_at = now or datetime.now(timezone.utc)
+    payload = json.dumps(
+        {
+            "u": username,
+            "exp": int((issued_at + timedelta(days=AUTH_COOKIE_DAYS)).timestamp()),
+            "v": 1,
+        },
+        separators=(",", ":"),
+        sort_keys=True,
+    ).encode("utf-8")
+    encoded_payload = _token_encode(payload)
+    signature = hmac.new(signing_key, encoded_payload.encode("ascii"), hashlib.sha256).digest()
+    return f"{encoded_payload}.{_token_encode(signature)}"
+
+
+def _verify_remember_token(token: str, *, now: datetime | None = None) -> str:
+    signing_key = _remember_signing_key()
+    if not token or not signing_key:
+        return ""
+    try:
+        encoded_payload, encoded_signature = token.split(".", 1)
+        supplied_signature = _token_decode(encoded_signature)
+        expected_signature = hmac.new(
+            signing_key,
+            encoded_payload.encode("ascii"),
+            hashlib.sha256,
+        ).digest()
+        if not hmac.compare_digest(supplied_signature, expected_signature):
+            return ""
+        payload = json.loads(_token_decode(encoded_payload).decode("utf-8"))
+        current_timestamp = int((now or datetime.now(timezone.utc)).timestamp())
+        username = str(payload.get("u", ""))
+        expected_username = _auth_config_value("DASHBOARD_USERNAME", AUTH_DEFAULT_USERNAME)
+        if payload.get("v") != 1 or int(payload.get("exp", 0)) <= current_timestamp:
+            return ""
+        return username if hmac.compare_digest(username, expected_username) else ""
+    except (ValueError, TypeError, json.JSONDecodeError, UnicodeDecodeError):
+        return ""
+
+
 def require_authentication() -> bool:
     """Block every dashboard/data renderer until the session is authenticated."""
+    cookie_manager = stx.CookieManager(key="jr_auth_cookie_manager")
+    remembered_token = cookie_manager.get(AUTH_COOKIE_NAME)
+    if st.session_state.get("jr_authenticated") is not True and remembered_token:
+        remembered_user = _verify_remember_token(str(remembered_token))
+        if remembered_user:
+            st.session_state["jr_authenticated"] = True
+            st.session_state["jr_authenticated_user"] = remembered_user
+        else:
+            cookie_manager.delete(AUTH_COOKIE_NAME, key="jr_auth_cookie_invalid_delete")
+
     if st.session_state.get("jr_authenticated") is True:
         with st.sidebar:
             st.caption(f"Acesso: {st.session_state.get('jr_authenticated_user', AUTH_DEFAULT_USERNAME)}")
             if st.button("Sair do painel", key="jr_logout", width="stretch"):
+                if cookie_manager.get(AUTH_COOKIE_NAME):
+                    cookie_manager.delete(AUTH_COOKIE_NAME, key="jr_auth_cookie_logout_delete")
                 for key in (
                     "jr_authenticated",
                     "jr_authenticated_user",
@@ -200,7 +279,15 @@ def require_authentication() -> bool:
             autocomplete="current-password",
             disabled=remaining > 0,
         )
+        remember_access = st.checkbox(
+            "Lembrar meu acesso neste dispositivo por 30 dias",
+            value=True,
+            disabled=remaining > 0 or not bool(_remember_signing_key()),
+        )
         submitted = st.form_submit_button("Entrar", width="stretch", disabled=remaining > 0)
+
+    if not _remember_signing_key():
+        st.caption("Para lembrar o acesso, configure DASHBOARD_COOKIE_SECRET nos Secrets do Streamlit.")
 
     if remaining > 0:
         st.error(f"Muitas tentativas incorretas. Tente novamente em {remaining} segundo(s).")
@@ -212,6 +299,18 @@ def require_authentication() -> bool:
             st.session_state["jr_authenticated_user"] = username.strip()
             st.session_state["jr_auth_failures"] = 0
             st.session_state.pop("jr_auth_locked_until", None)
+            if remember_access:
+                remember_token = _make_remember_token(username.strip())
+                if remember_token:
+                    cookie_manager.set(
+                        AUTH_COOKIE_NAME,
+                        remember_token,
+                        key="jr_auth_cookie_set",
+                        path="/",
+                        expires_at=datetime.now() + timedelta(days=AUTH_COOKIE_DAYS),
+                        secure=True,
+                        same_site="strict",
+                    )
             st.rerun()
         failures = int(st.session_state.get("jr_auth_failures", 0) or 0) + 1
         st.session_state["jr_auth_failures"] = failures

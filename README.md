@@ -38,11 +38,14 @@ Streamlit:
 ```toml
 DASHBOARD_USERNAME = "seu_usuario"
 DASHBOARD_PASSWORD = "uma_senha_forte_e_exclusiva"
+DASHBOARD_COOKIE_SECRET = "um_segredo_aleatorio_longo_para_assinar_o_cookie"
 ```
 
 Nao grave a senha real em `.env.example`, no README ou em qualquer arquivo
 versionado. Apos cinco tentativas incorretas, a sessao fica bloqueada por 60
-segundos. O botao `Sair do painel` encerra a autenticacao da sessao atual.
+segundos. A opcao `Lembrar meu acesso` guarda somente um token assinado no
+navegador por ate 30 dias; a senha nunca e armazenada no cookie. O botao
+`Sair do painel` encerra a autenticacao e remove esse token do navegador.
 
 ## Assistente de IA com Groq
 
