@@ -91,7 +91,7 @@ MUTED = "#6B7280"
 CARD_BORDER = "#c2d2f3"
 LOGO_PATH = Path(__file__).parent / "static" / "logo-jr.png"
 CURRENT_YEAR = date.today().year
-APP_VERSION = "calculadora-unificada-v82"
+APP_VERSION = "calculadora-descarga-placas-v83"
 LOGGER = logging.getLogger("jr_dashboard.streamlit")
 RANK_ROUTES_ENABLED = True
 ROUTE_CACHE_TTL_SECONDS = max(int(os.environ.get("JR_ROUTE_CACHE_TTL_SECONDS", "1800") or 1800), 120)
@@ -100,6 +100,7 @@ DATA_EDITOR_ALL_PAGES = "__todos_os_registros__"
 TABLE_FILTER_EMPTY_LABEL = "Sem informação"
 BR_TZ = ZoneInfo("America/Sao_Paulo")
 FREIGHT_UNLOAD_KG_PER_HOUR = 350.0
+FREIGHT_FIXED_UNLOAD_PREFIXES = ("HMF", "OQH", "SYT")
 FREIGHT_AVERAGE_SPEED_KMH = 80.0
 FREIGHT_HOTEL_DAY_HOURS = 10.0
 FREIGHT_WORKDAY_HOURS = 8.0
@@ -4186,6 +4187,21 @@ def _freight_assistant_daily_rate(route_name: object) -> float:
     return FREIGHT_ASSISTANT_LOCAL_DAILY_RATE if (is_divinopolis or is_carmo_do_cajuru) else FREIGHT_ASSISTANT_OTHER_DAILY_RATE
 
 
+def _freight_uses_fixed_unload_default(plate: object) -> bool:
+    normalized_plate = re.sub(r"[^A-Z0-9]", "", str(plate or "").upper())
+    return normalized_plate.startswith(FREIGHT_FIXED_UNLOAD_PREFIXES)
+
+
+def _freight_default_unload_rate(plate: object, historical_rate: object) -> float:
+    """Mantém a taxa operacional definida para famílias específicas de placas."""
+    if _freight_uses_fixed_unload_default(plate):
+        return FREIGHT_UNLOAD_KG_PER_HOUR
+    try:
+        return max(float(historical_rate or FREIGHT_UNLOAD_KG_PER_HOUR), 1.0)
+    except (TypeError, ValueError):
+        return FREIGHT_UNLOAD_KG_PER_HOUR
+
+
 def _calculate_freight_quote(
     reference: dict[str, object],
     *,
@@ -7931,9 +7947,9 @@ def render_calculadora_frete() -> None:
             scenario_token = hashlib.sha256(
                 f"{simulation_mode}|{selected_route or ''}|{vehicle_choice}".encode("utf-8")
             ).hexdigest()[:12]
-            historical_unload_rate = max(
-                float(plate_profile.get("unload_kg_per_hour") or FREIGHT_UNLOAD_KG_PER_HOUR),
-                1.0,
+            historical_unload_rate = _freight_default_unload_rate(
+                selected_plate,
+                plate_profile.get("unload_kg_per_hour"),
             )
             has_hotel = bool(scenario_profile.get("has_hotel"))
             hotel_key = f"frete_include_hotels_{scenario_token}"
@@ -8037,7 +8053,12 @@ def render_calculadora_frete() -> None:
                     help="Média calculada com as viagens concluídas da placa. O valor pode ser alterado somente nesta simulação.",
                 )
                 unload_samples = int(plate_profile.get("unload_sample_count") or 0)
-                if unload_samples:
+                if _freight_uses_fixed_unload_default(selected_plate):
+                    st.caption(
+                        "Padrão pré-selecionado para placas HMF, OQH e SYT: 350 kg/h. "
+                        "Você pode editar este valor para a simulação."
+                    )
+                elif unload_samples:
                     st.caption(
                         f"Média de descarga de {vehicle_choice}: {fmt_num(historical_unload_rate, 2)} kg/h "
                         f"em {unload_samples} viagem(ns) física(s)."
@@ -18159,9 +18180,9 @@ def _render_route_freight_calculator(
     plate_token = hashlib.sha256(str(vehicle_choice).encode("utf-8")).hexdigest()[:10]
     default_hourly_rate = float(plate_reference.get("rate_per_employee_hour") or 0.0)
     has_hotel = bool(profile.get("has_hotel"))
-    historical_unload_rate = max(
-        float(profile.get("unload_kg_per_hour") or FREIGHT_UNLOAD_KG_PER_HOUR),
-        1.0,
+    historical_unload_rate = _freight_default_unload_rate(
+        selected_plate,
+        profile.get("unload_kg_per_hour"),
     )
     with st.container(border=True):
         st.markdown("#### Dados da simulação")

@@ -252,6 +252,14 @@ class RoutesDashboardTests(unittest.TestCase):
         self.assertEqual(quote["helper_daily_cost"], 0)
         self.assertEqual(quote["driver_salary_cost"], 60)
 
+    def test_selected_plate_families_start_with_350_kg_per_hour(self):
+        for plate in ("HMF9A43", "OQH-1A23", "SYT0B06"):
+            with self.subTest(plate=plate):
+                self.assertEqual(dashboard._freight_default_unload_rate(plate, 612.5), 350)
+
+        self.assertEqual(dashboard._freight_default_unload_rate("HAM3C53", 612.5), 612.5)
+        self.assertEqual(dashboard._freight_default_unload_rate(None, 480), 480)
+
     def test_freight_calculator_without_route_uses_only_selected_plate_history(self):
         no_route = "Sem rota — usar média da placa"
 
