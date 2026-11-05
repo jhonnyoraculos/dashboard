@@ -143,6 +143,22 @@ class RoutesDashboardTests(unittest.TestCase):
         )
         self.assertTrue(dashboard._rdv_import_valid_mask(rows).iloc[0])
 
+    def test_rdv_target_total_recovers_handwritten_currency(self):
+        self.assertEqual(dashboard._parse_rdv_target_total_text("R$ 288100"), 288.0)
+        self.assertEqual(dashboard._parse_rdv_target_total_text("R$ 63200"), 632.0)
+        self.assertEqual(dashboard._parse_rdv_target_total_text("R$ SOO"), 500.0)
+        self.assertEqual(dashboard._parse_rdv_target_total_text("R$ 704"), 704.0)
+        self.assertEqual(dashboard._parse_rdv_target_total_text("MR$Rs732/C0\n23\nde"), 732.0)
+        self.assertEqual(dashboard._parse_rdv_target_total_text("EM R$ > R$ 392\nDivinópolis\n23 de"), 392.0)
+        self.assertEqual(dashboard._parse_rdv_target_total_text("900\nM R$ > R$\n23 de"), 900.0)
+        self.assertIsNone(dashboard._parse_rdv_target_total_text("23 de 10 de 2026"))
+
+    def test_rdv_vision_totals_accepts_only_valid_json_values(self):
+        parsed = dashboard._parse_rdv_vision_totals(
+            '{"totais":[288.0, "632,00", null, 99999]}', 5
+        )
+        self.assertEqual(parsed, [288.0, 632.0, None, None, None])
+
     def test_ai_broken_inline_table_is_normalized_for_chat(self):
         raw = "## Projeção | Métrica |---| Valor observado | **Conclusão** custo estável"
         normalized = dashboard._normalize_ai_markdown(raw)

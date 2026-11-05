@@ -91,7 +91,7 @@ MUTED = "#6B7280"
 CARD_BORDER = "#c2d2f3"
 LOGO_PATH = Path(__file__).parent / "static" / "logo-jr.png"
 CURRENT_YEAR = date.today().year
-APP_VERSION = "rdv-cabecalho-nome-opcional-v84"
+APP_VERSION = "rdv-total-direcionado-v85"
 LOGGER = logging.getLogger("jr_dashboard.streamlit")
 RANK_ROUTES_ENABLED = True
 ROUTE_CACHE_TTL_SECONDS = max(int(os.environ.get("JR_ROUTE_CACHE_TTL_SECONDS", "1800") or 1800), 120)
@@ -10726,6 +10726,130 @@ def _rdv_parse_score(raw_text: str) -> int:
     )
 
 
+def _parse_rdv_target_total_text(raw_text: str) -> float | None:
+    """Interpreta somente a releitura ampliada do campo manuscrito de total."""
+    raw_lines = [clean_text(line).upper() for line in str(raw_text or "").splitlines()]
+    currency_indexes = [
+        index for index, line in enumerate(raw_lines)
+        if re.search(r"R\s*[$S]", line)
+    ]
+    if not currency_indexes:
+        return None
+
+    def _values_from_line(line: str) -> list[float]:
+        currency_parts = re.split(r"R\s*[$S]", line)
+        if len(currency_parts) > 1:
+            line = currency_parts[-1]
+        values: list[float] = []
+        for candidate in re.findall(r"\d{1,4}(?:\.\d{3})*,\d{2}", line):
+            value = _parse_brl_number(candidate)
+            if value is not None and 30 <= value <= 5000:
+                values.append(value)
+        fuzzy_candidates = re.findall(r"[0-9OQDBSH&][0-9OQDBSH&., ]{1,10}", line)
+        for candidate in fuzzy_candidates:
+            normalized = candidate.translate(
+                str.maketrans({"O": "0", "Q": "0", "D": "0", "B": "8", "S": "5", "H": "4", "&": "8"})
+            )
+            digits = re.sub(r"\D", "", normalized)
+            # A vírgula manuscrita costuma ser reconhecida como o algarismo 1:
+            # 288,00 vira 288100. Também aceita 63200 quando ela desaparece.
+            if len(digits) >= 5 and digits.endswith("100"):
+                digits = digits[:-3]
+            elif len(digits) >= 5 and digits.endswith("00"):
+                digits = digits[:-2]
+            if digits:
+                value = float(digits)
+                if 30 <= value <= 5000:
+                    values.append(value)
+        return values
+
+    # Primeiro usa a própria linha do R$. Só consulta a linha anterior ou a
+    # seguinte quando o OCR separa o símbolo e o valor em linhas diferentes.
+    for indexes in (
+        currency_indexes,
+        [index - 1 for index in currency_indexes if index > 0],
+        [index + 1 for index in currency_indexes if index + 1 < len(raw_lines)],
+    ):
+        values = [value for index in indexes for value in _values_from_line(raw_lines[index])]
+        if values:
+            return max(values)
+    return None
+
+
+def _parse_rdv_vision_totals(raw_content: str, expected: int) -> list[float | None]:
+    """Normaliza a resposta JSON da leitura visual sem aceitar valores implausíveis."""
+    try:
+        payload = json.loads(str(raw_content or ""))
+    except (TypeError, ValueError, json.JSONDecodeError):
+        match = re.search(r"\{[\s\S]*\}", str(raw_content or ""))
+        try:
+            payload = json.loads(match.group(0)) if match else {}
+        except (TypeError, ValueError, json.JSONDecodeError):
+            payload = {}
+    values = payload.get("totais") if isinstance(payload, dict) else []
+    values = values if isinstance(values, list) else []
+    result: list[float | None] = []
+    for index in range(expected):
+        candidate = values[index] if index < len(values) else None
+        try:
+            if isinstance(candidate, (int, float)) and not isinstance(candidate, bool):
+                value = float(candidate)
+            else:
+                text_value = str(candidate).replace("R$", "").strip()
+                value = (
+                    float(text_value.replace(".", "").replace(",", "."))
+                    if "," in text_value
+                    else float(text_value)
+                )
+        except (TypeError, ValueError):
+            value = 0.0
+        result.append(value if 20 <= value <= 5000 else None)
+    return result
+
+
+def _read_rdv_totals_with_vision(images: list[Image.Image]) -> list[float | None]:
+    """Usa a visão da Groq somente quando o OCR local não lê o total manuscrito."""
+    if not images:
+        return []
+    try:
+        secrets = st.secrets.to_dict()
+    except Exception:
+        secrets = {}
+    config = AssistantConfig.from_sources(environment=os.environ, secrets=secrets)
+    if not config.api_key:
+        return [None] * len(images)
+    try:
+        from groq import Groq
+
+        content: list[dict[str, object]] = [{
+            "type": "text",
+            "text": (
+                "Leia exclusivamente o valor manuscrito do campo 'TOTAL DA QUINZENA' em cada imagem, "
+                "na ordem recebida. Ignore datas, adiantamento, hotel, diárias das linhas e assinaturas. "
+                "Responda somente JSON no formato {\"totais\":[288.00,null]}; use null quando ilegível."
+            ),
+        }]
+        for image in images:
+            buffer = BytesIO()
+            image.convert("RGB").save(buffer, format="JPEG", quality=88, optimize=True)
+            encoded = base64.b64encode(buffer.getvalue()).decode("ascii")
+            content.append({
+                "type": "image_url",
+                "image_url": {"url": f"data:image/jpeg;base64,{encoded}"},
+            })
+        completion = Groq(api_key=config.api_key, timeout=config.timeout_seconds).chat.completions.create(
+            model="qwen/qwen3.8-27b",
+            messages=[{"role": "user", "content": content}],
+            response_format={"type": "json_object"},
+            temperature=0.1,
+            max_completion_tokens=200,
+        )
+        return _parse_rdv_vision_totals(completion.choices[0].message.content, len(images))
+    except Exception as exc:
+        LOGGER.warning("Leitura visual dos totais de RDV falhou: %s", type(exc).__name__)
+        return [None] * len(images)
+
+
 @st.cache_data(show_spinner=False, max_entries=24)
 def _read_rdv_document_pages(file_bytes: bytes, file_name: str) -> list[str]:
     """Extrai uma página por RDV e aplica OCR quando o PDF for digitalizado."""
@@ -10744,6 +10868,7 @@ def _read_rdv_document_pages(file_bytes: bytes, file_name: str) -> list[str]:
 
     document = pymupdf.open(stream=file_bytes, filetype="pdf")
     page_texts: list[str] = []
+    vision_candidates: list[tuple[int, Image.Image]] = []
     for page_index, page in enumerate(document):
         digital_text = extracted[page_index] if page_index < len(extracted) else ""
         if _rdv_parse_score(digital_text) >= 3:
@@ -10769,9 +10894,38 @@ def _read_rdv_document_pages(file_bytes: bytes, file_name: str) -> list[str]:
             )
             combined_text += "\n" + _ocr(footer)
             parsed = _parse_rdv_total_text(combined_text)
+        if not parsed.get("Valor"):
+            # Segunda leitura apenas do valor manuscrito do rodapé. A ampliação
+            # evita que linhas, cidades e assinaturas concorram com os dígitos.
+            detailed_pixmap = page.get_pixmap(
+                matrix=pymupdf.Matrix(3.0, 3.0), alpha=False
+            )
+            detailed = Image.open(BytesIO(detailed_pixmap.tobytes("png"))).convert("RGB")
+            detailed = detailed.rotate(270, expand=True)
+            target = detailed.crop(
+                (
+                    int(detailed.width * 0.15),
+                    int(detailed.height * 0.65),
+                    int(detailed.width * 0.55),
+                    int(detailed.height * 0.82),
+                )
+            )
+            target_text = _ocr(target)
+            target_total = _parse_rdv_target_total_text(target_text)
+            if target_total is not None:
+                combined_text += f"\nTOTAL DA QUINZENA EM R$ > R$ {target_total:.2f}"
+                parsed = _parse_rdv_total_text(combined_text)
+            else:
+                vision_candidates.append((len(page_texts), target.copy()))
         if not parsed.get("Colaborador") or not parsed.get("Inicio") or not parsed.get("Fim"):
             combined_text += "\n" + _ocr(image)
         page_texts.append(combined_text or digital_text)
+    for batch_start in range(0, len(vision_candidates), 3):
+        batch = vision_candidates[batch_start:batch_start + 3]
+        totals = _read_rdv_totals_with_vision([image for _, image in batch])
+        for (text_index, _), total in zip(batch, totals):
+            if total is not None:
+                page_texts[text_index] += f"\nTOTAL DA QUINZENA EM R$ > R$ {total:.2f}"
     document.close()
     return page_texts
 
