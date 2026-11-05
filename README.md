@@ -28,6 +28,22 @@ No Streamlit Cloud, coloque a mesma chave em `Secrets`:
 
 Sem esse Secret no Streamlit Cloud, o app nao consegue ler o Neon e os dados ficam indisponiveis.
 
+## Login do dashboard
+
+O painel exige autenticacao antes de executar consultas ou renderizar dados. A
+senha inicial e validada por hash PBKDF2 e seu texto nao fica no repositorio.
+Para trocar usuario e senha sem alterar o codigo, configure nos `Secrets` do
+Streamlit:
+
+```toml
+DASHBOARD_USERNAME = "seu_usuario"
+DASHBOARD_PASSWORD = "uma_senha_forte_e_exclusiva"
+```
+
+Nao grave a senha real em `.env.example`, no README ou em qualquer arquivo
+versionado. Apos cinco tentativas incorretas, a sessao fica bloqueada por 60
+segundos. O botao `Sair do painel` encerra a autenticacao da sessao atual.
+
 ## Assistente de IA com Groq
 
 O assistente flutuante esta disponivel em todas as paginas e usa exclusivamente

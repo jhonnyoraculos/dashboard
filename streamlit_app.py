@@ -3,6 +3,7 @@ from __future__ import annotations
 import base64
 import calendar
 import hashlib
+import hmac
 import html
 import importlib
 import json
@@ -90,6 +91,137 @@ JR_RED = "#BE1E2D"
 MUTED = "#6B7280"
 CARD_BORDER = "#c2d2f3"
 LOGO_PATH = Path(__file__).parent / "static" / "logo-jr.png"
+
+# Credencial inicial: o texto da senha nunca fica no repositorio. Em producao,
+# estes valores podem ser substituidos pelos Secrets do Streamlit descritos no
+# README. O PBKDF2 torna uma copia do codigo insuficiente para revelar a senha.
+AUTH_DEFAULT_USERNAME = "jradmin"
+AUTH_DEFAULT_SALT = "3db5026a8fdd239582e06b7e74309f56"
+AUTH_DEFAULT_PASSWORD_HASH = "c7eb26596143969d299a22273ba91bb744171d97e506d60cfc7f7803a5bb105e"
+AUTH_DEFAULT_ITERATIONS = 600_000
+AUTH_MAX_ATTEMPTS = 5
+AUTH_LOCK_SECONDS = 60
+
+
+def _auth_config_value(name: str, default: str = "") -> str:
+    """Read authentication settings without exposing them to the browser."""
+    env_value = os.getenv(name)
+    if env_value is not None:
+        cleaned_env = str(env_value).strip()
+        return cleaned_env if cleaned_env else default
+    try:
+        secret_value = st.secrets.get(name)
+    except Exception:
+        secret_value = None
+    cleaned_secret = str(secret_value).strip() if secret_value is not None else ""
+    return cleaned_secret if cleaned_secret else default
+
+
+def _password_hash(password: str, salt_hex: str, iterations: int) -> str:
+    try:
+        salt = bytes.fromhex(salt_hex)
+    except ValueError:
+        return ""
+    return hashlib.pbkdf2_hmac(
+        "sha256",
+        password.encode("utf-8"),
+        salt,
+        max(int(iterations), 100_000),
+    ).hex()
+
+
+def _auth_credentials_valid(username: str, password: str) -> bool:
+    expected_username = _auth_config_value("DASHBOARD_USERNAME", AUTH_DEFAULT_USERNAME)
+    username_ok = hmac.compare_digest(username.strip(), expected_username)
+
+    # Uma senha definida nos Secrets tem prioridade. Se ela nao existir, use a
+    # credencial inicial verificada exclusivamente pelo hash PBKDF2.
+    secret_password = _auth_config_value("DASHBOARD_PASSWORD")
+    if secret_password:
+        password_ok = hmac.compare_digest(password, secret_password)
+    else:
+        salt = _auth_config_value("DASHBOARD_PASSWORD_SALT", AUTH_DEFAULT_SALT)
+        expected_hash = _auth_config_value("DASHBOARD_PASSWORD_HASH", AUTH_DEFAULT_PASSWORD_HASH).lower()
+        try:
+            iterations = int(_auth_config_value("DASHBOARD_PASSWORD_ITERATIONS", str(AUTH_DEFAULT_ITERATIONS)))
+        except (TypeError, ValueError):
+            iterations = AUTH_DEFAULT_ITERATIONS
+        password_ok = hmac.compare_digest(_password_hash(password, salt, iterations), expected_hash)
+    return username_ok and password_ok
+
+
+def require_authentication() -> bool:
+    """Block every dashboard/data renderer until the session is authenticated."""
+    if st.session_state.get("jr_authenticated") is True:
+        with st.sidebar:
+            st.caption(f"Acesso: {st.session_state.get('jr_authenticated_user', AUTH_DEFAULT_USERNAME)}")
+            if st.button("Sair do painel", key="jr_logout", width="stretch"):
+                for key in (
+                    "jr_authenticated",
+                    "jr_authenticated_user",
+                    "jr_auth_failures",
+                    "jr_auth_locked_until",
+                ):
+                    st.session_state.pop(key, None)
+                st.rerun()
+        return True
+
+    now = datetime.now(timezone.utc).timestamp()
+    locked_until = float(st.session_state.get("jr_auth_locked_until", 0.0) or 0.0)
+    remaining = max(0, math.ceil(locked_until - now))
+
+    st.markdown(
+        """
+        <style>
+          [data-testid="stSidebar"] { display: none; }
+          [data-testid="stAppViewContainer"] { background: #f5f7fb; }
+          .jr-login-brand { text-align:center; margin: 8vh auto 1.25rem; }
+          .jr-login-brand img { width:72px; border-radius:14px; box-shadow:0 10px 28px rgba(28,45,107,.18); }
+          .jr-login-brand h1 { color:#1c2d6b; font-size:2rem; margin:.9rem 0 .25rem; }
+          .jr-login-brand p { color:#6b7280; margin:0; }
+          div[data-testid="stForm"] { max-width:430px; margin:0 auto; padding:1.5rem; background:#fff;
+            border:1px solid #d9e1f2; border-radius:16px; box-shadow:0 16px 45px rgba(28,45,107,.10); }
+        </style>
+        """,
+        unsafe_allow_html=True,
+    )
+    logo_html = f'<img src="{logo_data_uri()}" alt="JR">' if LOGO_PATH.exists() else ""
+    st.markdown(
+        f'<div class="jr-login-brand">{logo_html}<h1>JR Dashboard</h1><p>Acesso restrito</p></div>',
+        unsafe_allow_html=True,
+    )
+
+    with st.form("jr_login_form", clear_on_submit=False):
+        st.subheader("Entrar no painel")
+        username = st.text_input("Usuario", autocomplete="username", disabled=remaining > 0)
+        password = st.text_input(
+            "Senha",
+            type="password",
+            autocomplete="current-password",
+            disabled=remaining > 0,
+        )
+        submitted = st.form_submit_button("Entrar", width="stretch", disabled=remaining > 0)
+
+    if remaining > 0:
+        st.error(f"Muitas tentativas incorretas. Tente novamente em {remaining} segundo(s).")
+        return False
+
+    if submitted:
+        if _auth_credentials_valid(username, password):
+            st.session_state["jr_authenticated"] = True
+            st.session_state["jr_authenticated_user"] = username.strip()
+            st.session_state["jr_auth_failures"] = 0
+            st.session_state.pop("jr_auth_locked_until", None)
+            st.rerun()
+        failures = int(st.session_state.get("jr_auth_failures", 0) or 0) + 1
+        st.session_state["jr_auth_failures"] = failures
+        if failures >= AUTH_MAX_ATTEMPTS:
+            st.session_state["jr_auth_locked_until"] = now + AUTH_LOCK_SECONDS
+            st.session_state["jr_auth_failures"] = 0
+            st.error("Acesso bloqueado por 60 segundos apos cinco tentativas incorretas.")
+        else:
+            st.error(f"Usuario ou senha incorretos. Restam {AUTH_MAX_ATTEMPTS - failures} tentativa(s).")
+    return False
 CURRENT_YEAR = date.today().year
 APP_VERSION = "home-percentual-descricao-v89"
 LOGGER = logging.getLogger("jr_dashboard.streamlit")
@@ -21150,6 +21282,8 @@ def main() -> None:
         initial_sidebar_state="expanded",
     )
     inject_css()
+    if not require_authentication():
+        return
     page = page_param()
     try:
         if page == "combustivel":

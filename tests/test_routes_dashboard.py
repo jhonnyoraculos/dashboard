@@ -54,6 +54,19 @@ def sample_payload() -> dict:
 
 
 class RoutesDashboardTests(unittest.TestCase):
+    def test_dashboard_authentication_accepts_only_the_configured_credentials(self):
+        with patch.dict(
+            os.environ,
+            {"DASHBOARD_USERNAME": "usuario-teste", "DASHBOARD_PASSWORD": "senha-teste-forte"},
+            clear=False,
+        ):
+            self.assertTrue(dashboard._auth_credentials_valid("usuario-teste", "senha-teste-forte"))
+            self.assertFalse(dashboard._auth_credentials_valid("usuario-teste", "senha-incorreta"))
+            self.assertFalse(dashboard._auth_credentials_valid("outro-usuario", "senha-teste-forte"))
+
+    def test_dashboard_password_hash_rejects_invalid_salt(self):
+        self.assertEqual(dashboard._password_hash("senha", "sal-invalido", 600_000), "")
+
     def test_overview_ranking_totals_include_delivery_gain(self):
         with patch.object(
             backend,

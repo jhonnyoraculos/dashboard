@@ -7,7 +7,14 @@ __pycache__/
 venv/
 
 .streamlit/secrets.toml
+data/*.csv
+data/*.xls
 data/*.xlsx
+data/*.xlsm
+*.db
+*.sqlite
+*.sqlite3
+uploads/
 .pytest_cache/
 .ruff_cache/
 .tmp_*.png
