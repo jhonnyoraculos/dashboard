@@ -5778,7 +5778,11 @@ def monthly_cost_gain_line_chart(
                 },
                 text=point_labels,
                 textposition="top center",
-                textfont={"color": "#111827", "size": 11, "family": "Inter, sans-serif"},
+                textfont={
+                    "color": "#0F172A",
+                    "size": 14,
+                    "family": "Inter, Arial, sans-serif",
+                },
                 customdata=percentage_labels if is_cost else None,
                 cliponaxis=False,
                 hovertemplate=(
@@ -5811,10 +5815,20 @@ def monthly_cost_gain_line_chart(
     fig.update_layout(
         showlegend=True,
         hovermode="x unified",
-        legend={"orientation": "h", "x": 0, "y": 1.15, "itemsizing": "constant"},
+        font={"family": "Inter, Arial, sans-serif", "size": 13, "color": "#172554"},
+        legend={
+            "orientation": "h",
+            "x": 0,
+            "y": 1.15,
+            "itemsizing": "constant",
+            "font": {"size": 13, "color": "#172554"},
+        },
         yaxis=yaxis,
     )
-    return apply_theme(fig, height=410, margin={"l": 88, "r": 58, "t": 88, "b": 64})
+    fig.update_xaxes(tickfont={"size": 13, "color": "#334155"})
+    fig.update_yaxes(tickfont={"size": 13, "color": "#334155"}, title_font={"size": 13})
+    fig = apply_theme(fig, height=480, margin={"l": 100, "r": 78, "t": 108, "b": 76})
+    return update_figure_meta(fig, jr_full_width=True)
 
 
 def multi_bar_chart(
