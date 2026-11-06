@@ -219,24 +219,39 @@ def _verify_remember_token(token: str, *, now: datetime | None = None) -> str:
         return ""
 
 
+def _request_cookie(name: str) -> str:
+    """Read a request cookie without mounting a frontend component."""
+    try:
+        value = st.context.cookies.get(name)
+    except Exception:
+        value = None
+    return str(value or "").strip()
+
+
+def _auth_cookie_manager() -> stx.CookieManager:
+    """Mount the cookie writer only when login/logout changes a cookie."""
+    return stx.CookieManager(key="jr_auth_cookie_manager")
+
+
 def require_authentication() -> bool:
     """Block every dashboard/data renderer until the session is authenticated."""
-    cookie_manager = stx.CookieManager(key="jr_auth_cookie_manager")
-    remembered_token = cookie_manager.get(AUTH_COOKIE_NAME)
+    remembered_token = _request_cookie(AUTH_COOKIE_NAME)
     if st.session_state.get("jr_authenticated") is not True and remembered_token:
         remembered_user = _verify_remember_token(str(remembered_token))
         if remembered_user:
             st.session_state["jr_authenticated"] = True
             st.session_state["jr_authenticated_user"] = remembered_user
-        else:
-            cookie_manager.delete(AUTH_COOKIE_NAME, key="jr_auth_cookie_invalid_delete")
+            st.session_state["jr_show_entry_loading"] = True
 
     if st.session_state.get("jr_authenticated") is True:
         with st.sidebar:
             st.caption(f"Acesso: {st.session_state.get('jr_authenticated_user', AUTH_DEFAULT_USERNAME)}")
             if st.button("Sair do painel", key="jr_logout", width="stretch"):
-                if cookie_manager.get(AUTH_COOKIE_NAME):
-                    cookie_manager.delete(AUTH_COOKIE_NAME, key="jr_auth_cookie_logout_delete")
+                if remembered_token:
+                    _auth_cookie_manager().delete(
+                        AUTH_COOKIE_NAME,
+                        key="jr_auth_cookie_logout_delete",
+                    )
                 for key in (
                     "jr_authenticated",
                     "jr_authenticated_user",
@@ -301,10 +316,11 @@ def require_authentication() -> bool:
             st.session_state["jr_authenticated_user"] = username.strip()
             st.session_state["jr_auth_failures"] = 0
             st.session_state.pop("jr_auth_locked_until", None)
+            st.session_state["jr_show_entry_loading"] = True
             if remember_access:
                 remember_token = _make_remember_token(username.strip())
                 if remember_token:
-                    cookie_manager.set(
+                    _auth_cookie_manager().set(
                         AUTH_COOKIE_NAME,
                         remember_token,
                         key="jr_auth_cookie_set",
@@ -21772,6 +21788,37 @@ def footer(text: str) -> None:
     st.markdown(f'<div class="footer-note">{h(text)}</div>', unsafe_allow_html=True)
 
 
+def _entry_loading_overlay():
+    placeholder = st.empty()
+    placeholder.markdown(
+        """
+        <style>
+          .jr-entry-loading {
+            position: fixed; inset: 0; z-index: 999999;
+            display: flex; flex-direction: column; align-items: center; justify-content: center;
+            gap: 16px; background: rgba(245, 247, 251, .97); color: #1c2d6b;
+            font-family: Arial, sans-serif;
+          }
+          .jr-entry-loading-spinner {
+            width: 38px; height: 38px; border-radius: 50%;
+            border: 4px solid #d9e1f2; border-top-color: #be1e2d;
+            animation: jr-entry-spin .8s linear infinite;
+          }
+          .jr-entry-loading strong { font-size: 1.15rem; }
+          .jr-entry-loading span { color: #6b7280; font-size: .9rem; }
+          @keyframes jr-entry-spin { to { transform: rotate(360deg); } }
+        </style>
+        <div class="jr-entry-loading" role="status" aria-live="polite">
+          <div class="jr-entry-loading-spinner"></div>
+          <strong>Entrando no painel...</strong>
+          <span>Carregando os dados mais recentes.</span>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+    return placeholder
+
+
 def main() -> None:
     st.set_page_config(
         page_title="JR Dashboard",
@@ -21782,6 +21829,9 @@ def main() -> None:
     inject_css()
     if not require_authentication():
         return
+    entry_loading = None
+    if st.session_state.pop("jr_show_entry_loading", False):
+        entry_loading = _entry_loading_overlay()
     page = page_param()
     try:
         if page == "combustivel":
@@ -21812,6 +21862,8 @@ def main() -> None:
         st.error("Não foi possível carregar este dashboard. Configure o DATABASE_URL do Neon nos Secrets do Streamlit e tente novamente.")
         st.exception(exc)
     finally:
+        if entry_loading is not None:
+            entry_loading.empty()
         try:
             render_ai_assistant(page)
         except Exception as exc:
