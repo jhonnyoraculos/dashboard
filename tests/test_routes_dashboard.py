@@ -208,19 +208,26 @@ class RoutesDashboardTests(unittest.TestCase):
         worksheet["D8"] = "Valor"
         worksheet["C9"] = "Pessoa Dois"
         worksheet["D9"] = 864
+        worksheet["C11"] = "17/08 28/08"
+        worksheet["C12"] = "Colaborador"
+        worksheet["D12"] = "Valor"
+        worksheet["C13"] = "Pessoa Sem Separador"
+        worksheet["D13"] = 500
         buffer = BytesIO()
         workbook.save(buffer)
 
         result = dashboard._read_diarias_spreadsheet(buffer.getvalue(), "diarias.xlsx", 2026)
 
-        self.assertEqual(result["periods"], 2)
+        self.assertEqual(result["periods"], 3)
         self.assertEqual(result["warnings"], [])
-        self.assertEqual(len(result["rows"]), 3)
-        self.assertEqual(sum(row["Valor"] for row in result["rows"]), 1256.0)
+        self.assertEqual(len(result["rows"]), 4)
+        self.assertEqual(sum(row["Valor"] for row in result["rows"]), 1756.0)
         self.assertEqual(result["rows"][0]["Inicio"], date(2026, 10, 13))
         self.assertEqual(result["rows"][0]["Fim"], date(2026, 10, 23))
         self.assertEqual(result["rows"][1]["Valor"], 0.0)
         self.assertEqual(result["rows"][2]["Mes"], "2026-10")
+        self.assertEqual(result["rows"][3]["Inicio"], date(2026, 8, 17))
+        self.assertEqual(result["rows"][3]["Fim"], date(2026, 8, 28))
 
     def test_replace_diarias_spreadsheet_replaces_only_imported_periods_in_one_transaction(self):
         executed = []

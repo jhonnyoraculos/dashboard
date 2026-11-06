@@ -11354,8 +11354,8 @@ def _rdv_import_valid_mask(frame: pd.DataFrame) -> pd.Series:
 
 
 _DIARIAS_PERIOD_RE = re.compile(
-    r"(?<!\d)(\d{1,2})[/-](\d{1,2})(?:[/-](\d{2,4}))?\s*"
-    r"(?:A|ATE|ATÉ|[-–—])\s*"
+    r"(?<!\d)(\d{1,2})[/-](\d{1,2})(?:[/-](\d{2,4}))?"
+    r"(?:\s*(?:A|ATE|ATÉ|[-–—])\s*|\s+)"
     r"(\d{1,2})[/-](\d{1,2})(?:[/-](\d{2,4}))?(?!\d)",
     flags=re.IGNORECASE,
 )
