@@ -233,9 +233,36 @@ def _auth_cookie_manager() -> stx.CookieManager:
     return stx.CookieManager(key="jr_auth_cookie_manager")
 
 
+def _request_uses_https() -> bool:
+    """Keep cookies secure in production while allowing local HTTP access."""
+    try:
+        headers = st.context.headers
+        forwarded_proto = str(headers.get("X-Forwarded-Proto") or "").split(",", 1)[0].strip().lower()
+        origin = str(headers.get("Origin") or "").strip().lower()
+        referer = str(headers.get("Referer") or "").strip().lower()
+    except Exception:
+        return False
+    return forwarded_proto == "https" or origin.startswith("https://") or referer.startswith("https://")
+
+
+def _delete_auth_cookie() -> None:
+    manager = _auth_cookie_manager()
+    # CookieManager.delete expects the key to exist in its local dictionary,
+    # although the browser may already have it from a previous page/session.
+    manager.cookies.setdefault(AUTH_COOKIE_NAME, "")
+    manager.delete(AUTH_COOKIE_NAME, key="jr_auth_cookie_delete")
+
+
 def require_authentication() -> bool:
     """Block every dashboard/data renderer until the session is authenticated."""
-    remembered_token = _request_cookie(AUTH_COOKIE_NAME)
+    cookie_manager = None
+    force_logged_out = bool(st.session_state.get("jr_force_logged_out", False))
+    remembered_token = "" if force_logged_out else _request_cookie(AUTH_COOKIE_NAME)
+    if not force_logged_out and st.session_state.get("jr_authenticated") is not True and not remembered_token:
+        # Compatibility fallback for cookies created by the frontend component.
+        # It is mounted only on an unauthenticated session, never on every page.
+        cookie_manager = _auth_cookie_manager()
+        remembered_token = str(cookie_manager.get(AUTH_COOKIE_NAME) or "").strip()
     if st.session_state.get("jr_authenticated") is not True and remembered_token:
         remembered_user = _verify_remember_token(str(remembered_token))
         if remembered_user:
@@ -247,11 +274,7 @@ def require_authentication() -> bool:
         with st.sidebar:
             st.caption(f"Acesso: {st.session_state.get('jr_authenticated_user', AUTH_DEFAULT_USERNAME)}")
             if st.button("Sair do painel", key="jr_logout", width="stretch"):
-                if remembered_token:
-                    _auth_cookie_manager().delete(
-                        AUTH_COOKIE_NAME,
-                        key="jr_auth_cookie_logout_delete",
-                    )
+                _delete_auth_cookie()
                 for key in (
                     "jr_authenticated",
                     "jr_authenticated_user",
@@ -259,7 +282,8 @@ def require_authentication() -> bool:
                     "jr_auth_locked_until",
                 ):
                     st.session_state.pop(key, None)
-                st.rerun()
+                st.session_state["jr_force_logged_out"] = True
+                return False
         return True
 
     now = datetime.now(timezone.utc).timestamp()
@@ -316,19 +340,24 @@ def require_authentication() -> bool:
             st.session_state["jr_authenticated_user"] = username.strip()
             st.session_state["jr_auth_failures"] = 0
             st.session_state.pop("jr_auth_locked_until", None)
+            st.session_state.pop("jr_force_logged_out", None)
             st.session_state["jr_show_entry_loading"] = True
             if remember_access:
                 remember_token = _make_remember_token(username.strip())
                 if remember_token:
-                    _auth_cookie_manager().set(
+                    (cookie_manager or _auth_cookie_manager()).set(
                         AUTH_COOKIE_NAME,
                         remember_token,
                         key="jr_auth_cookie_set",
                         path="/",
                         expires_at=datetime.now() + timedelta(days=AUTH_COOKIE_DAYS),
-                        secure=True,
+                        secure=_request_uses_https(),
                         same_site="strict",
                     )
+                    # Let the browser component persist the cookie before the
+                    # callback rerun opens the dashboard.
+                    st.success("Acesso liberado. Entrando no painel...")
+                    return False
             st.rerun()
         failures = int(st.session_state.get("jr_auth_failures", 0) or 0) + 1
         st.session_state["jr_auth_failures"] = failures
