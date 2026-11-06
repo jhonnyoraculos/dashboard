@@ -8165,7 +8165,12 @@ def data_frota(params: dict | None = None) -> dict:
         not categorias_filtro
         or any(_normalize_category_value(category) == "Transporte" for category in categorias_filtro)
     )
-    include_original_dailies = (
+    incluir_diarias = (
+        _truthy_param(params.get("incluir_diarias"))
+        if "incluir_diarias" in params
+        else True
+    )
+    include_original_dailies = incluir_diarias and (
         not categorias_filtro
         or any(_normalize_category_value(category) == "Transporte" for category in categorias_filtro)
     )
@@ -8505,7 +8510,11 @@ def data_frota(params: dict | None = None) -> dict:
     total_ped = _ranking_sum_by_plate(df_ped, "Custo")
     peso_map = _ranking_sum_by_plate(df_peso, "Peso")
     valor_peso_map = _ranking_sum_by_plate(df_peso, "Valor")
-    df_diarias = _ranking_freighter_daily_costs(df_peso, daily_rates)
+    df_diarias = (
+        _ranking_freighter_daily_costs(df_peso, daily_rates)
+        if incluir_diarias
+        else pd.DataFrame(columns=["Data", "Mes", "PLACA", "Diaria", "Custo"])
+    )
     gasto_diarias_map = _ranking_sum_by_plate(df_diarias, "Custo")
     dias_trabalhados_map = _ranking_count_by_plate(df_diarias)
     salary_activity_base = (
@@ -8751,6 +8760,7 @@ def data_frota(params: dict | None = None) -> dict:
             "hoteis_reservas": general_hotel_reservations,
             "hoteis_media_reserva": round(hotel_reservation_average, 2),
             "inclui_hoteis": incluir_hoteis,
+            "inclui_diarias": incluir_diarias,
             "inclui_salario": include_transport_salary,
             "peso_total": round(total_peso_geral, 3),
             "peso_total_filtrado": round(total_peso_filtrado, 3),

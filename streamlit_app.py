@@ -858,6 +858,7 @@ def inject_css() -> None:
         }}
 
         .st-key-rank_filterbar .st-key-rank_incluir_hoteis,
+        .st-key-rank_filterbar .st-key-rank_incluir_diarias,
         .st-key-rank_filterbar .st-key-rank_incluir_salario {{
           width: 100%;
           height: 38px;
@@ -869,17 +870,20 @@ def inject_css() -> None:
         }}
 
         .st-key-rank_filterbar :is([data-testid="column"], [data-testid="stColumn"]):has(.st-key-rank_incluir_hoteis),
+        .st-key-rank_filterbar :is([data-testid="column"], [data-testid="stColumn"]):has(.st-key-rank_incluir_diarias),
         .st-key-rank_filterbar :is([data-testid="column"], [data-testid="stColumn"]):has(.st-key-rank_incluir_salario) {{
           align-self: flex-start;
           padding-top: 0 !important;
         }}
 
         .st-key-rank_filterbar .st-key-rank_incluir_hoteis > div,
+        .st-key-rank_filterbar .st-key-rank_incluir_diarias > div,
         .st-key-rank_filterbar .st-key-rank_incluir_salario > div {{
           width: 100%;
         }}
 
         .st-key-rank_filterbar .st-key-rank_incluir_hoteis [data-testid="stCheckbox"],
+        .st-key-rank_filterbar .st-key-rank_incluir_diarias [data-testid="stCheckbox"],
         .st-key-rank_filterbar .st-key-rank_incluir_salario [data-testid="stCheckbox"] {{
           width: 100%;
           height: 38px;
@@ -889,6 +893,7 @@ def inject_css() -> None:
         }}
 
         .st-key-rank_filterbar .st-key-rank_incluir_hoteis label,
+        .st-key-rank_filterbar .st-key-rank_incluir_diarias label,
         .st-key-rank_filterbar .st-key-rank_incluir_salario label {{
           display: inline-flex !important;
           width: 100%;
@@ -908,6 +913,7 @@ def inject_css() -> None:
         }}
 
         .st-key-rank_filterbar .st-key-rank_incluir_hoteis p,
+        .st-key-rank_filterbar .st-key-rank_incluir_diarias p,
         .st-key-rank_filterbar .st-key-rank_incluir_salario p {{
           color: var(--jr-blue);
           font-size: 13px;
@@ -1043,7 +1049,7 @@ def inject_css() -> None:
         @media (min-width: 1550px) {{
           .st-key-rank_filterbar [data-testid="stHorizontalBlock"] {{
             display: grid !important;
-            grid-template-columns: .65fr 1fr 1.05fr 1.1fr 1.15fr .78fr .82fr 1fr .88fr .68fr;
+            grid-template-columns: .58fr .9fr .95fr 1fr 1.05fr .72fr .72fr .72fr .92fr .82fr .62fr;
             gap: 8px !important;
             align-items: start;
           }}
@@ -7168,7 +7174,7 @@ def frota_filter_controls(seed: dict) -> dict[str, object]:
     year_index = year_options.index(year_default) if year_default in year_options else 0
 
     with st.container(key="rank_filterbar"):
-        cols = st.columns([0.65, 1.0, 1.05, 1.1, 1.15, 0.78, 0.82, 1.0, 0.88, 0.68])
+        cols = st.columns([0.58, 0.9, 0.95, 1.0, 1.05, 0.72, 0.72, 0.72, 0.92, 0.82, 0.62])
         with cols[0]:
             ano = st.selectbox(
                 "Ano",
@@ -7257,6 +7263,7 @@ def frota_filter_controls(seed: dict) -> dict[str, object]:
         only_freteiro = categoria_param == ["Freteiro"]
         include_salary = bool(st.session_state.get("rank_incluir_salario", True))
         include_hoteis = bool(st.session_state.get("rank_incluir_hoteis", True))
+        include_diarias = bool(st.session_state.get("rank_incluir_diarias", True))
 
         route_seed_params = {
             "ano": None if ano == "Todos" else ano,
@@ -7264,6 +7271,7 @@ def frota_filter_controls(seed: dict) -> dict[str, object]:
             "categoria": categoria_param,
             "incluir_salario": include_salary,
             "incluir_hoteis": include_hoteis,
+            "incluir_diarias": include_diarias,
             "ordenar_por": "total",
         }
         route_seed = route_json(
@@ -7501,6 +7509,14 @@ def frota_filter_controls(seed: dict) -> dict[str, object]:
             )
 
         with cols[6]:
+            include_diarias = st.checkbox(
+                "Incluir diárias",
+                value=include_diarias,
+                key="rank_incluir_diarias",
+                label_visibility="visible",
+            )
+
+        with cols[7]:
             include_salary = st.checkbox(
                 "Incluir salário",
                 value=include_salary,
@@ -7513,7 +7529,7 @@ def frota_filter_controls(seed: dict) -> dict[str, object]:
         if order_current not in order_options:
             order_current = "total"
             st.session_state["rank_ordenar_por"] = order_current
-        with cols[7]:
+        with cols[8]:
             ordenar_por = st.selectbox(
                 "Ordenar por",
                 order_options,
@@ -7523,13 +7539,13 @@ def frota_filter_controls(seed: dict) -> dict[str, object]:
                 label_visibility="collapsed",
             )
 
-        with cols[8]:
+        with cols[9]:
             if st.button("Limpar filtros", key="rank_clear", width="stretch"):
                 for state_key in list(st.session_state.keys()):
                     if state_key.startswith("rank_"):
                         del st.session_state[state_key]
                 st.rerun()
-        with cols[9]:
+        with cols[10]:
             st.markdown('<a class="filter-back" href="?page=home" target="_self">&larr; Voltar</a>', unsafe_allow_html=True)
 
     return {
@@ -7538,6 +7554,7 @@ def frota_filter_controls(seed: dict) -> dict[str, object]:
         "categoria": categoria_param,
         "rota": route_param,
         "incluir_hoteis": include_hoteis,
+        "incluir_diarias": include_diarias,
         "incluir_salario": include_salary,
         "placa": ["Todos"] if not placas_selected else [str(item) for item in placas_selected],
         "ordenar_por": ordenar_por,
@@ -7951,8 +7968,13 @@ def render_frota() -> None:
     selected_plates = [str(item) for item in (params.get("placa") or []) if item not in (None, "", "Todos")]
     freteiro_mode = selected_categories == ["Freteiro"]
     include_hoteis = bool(totais.get("inclui_hoteis") or params.get("incluir_hoteis"))
+    include_diarias = bool(
+        totais.get("inclui_diarias")
+        if "inclui_diarias" in totais
+        else params.get("incluir_diarias", True)
+    )
     ranking = data.get("ranking", []) or []
-    show_daily = (
+    show_daily = include_diarias and (
         freteiro_mode
         or float(totais.get("gasto_diarias") or 0) > 0
         or any(float(row.get("diaria") or 0) > 0 for row in ranking)
