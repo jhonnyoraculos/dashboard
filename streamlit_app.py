@@ -76,7 +76,8 @@ _backend_aluguel_period_ready = {"Inicio", "Fim"}.issubset(
 _backend_aluguel_monthly_ready = getattr(backend, "BACKEND_BUILD_VERSION", "") == "aluguel-multiplicar-meses-v1"
 _backend_pedagio_chart_ready = getattr(backend, "PEDAGIO_CHART_VERSION", "") == "all-types-v1"
 _backend_routes_ready = getattr(backend, "ROUTES_BUILD_VERSION", "") == "rotas-horas-operacao-unica-v32"
-if not _backend_features_ready or not _backend_aluguel_period_ready or not _backend_aluguel_monthly_ready or not _backend_pedagio_chart_ready or not _backend_routes_ready:
+_backend_import_progress_ready = getattr(backend, "IMPORT_PROGRESS_VERSION", "") == "all-imports-v1"
+if not _backend_features_ready or not _backend_aluguel_period_ready or not _backend_aluguel_monthly_ready or not _backend_pedagio_chart_ready or not _backend_routes_ready or not _backend_import_progress_ready:
     backend = importlib.reload(backend)
 
 # O Streamlit também pode manter módulos auxiliares em memória após o deploy.
@@ -3460,6 +3461,44 @@ def clear_cached_reads() -> None:
         _route_json_cached.clear()
     except Exception:
         pass
+
+
+class _ImportProgressDisplay:
+    """Barra padrao para todas as importacoes e seus salvamentos no Neon."""
+
+    def __init__(self, label: str):
+        self.label = clean_text(label).strip() or "Importando dados"
+        self._last_percent = -1
+        self._bar = st.progress(0, text=f"{self.label} — 0% concluído • 100% restante")
+
+    def update(self, fraction: float, stage: str) -> None:
+        percent = min(max(int(round(float(fraction) * 100)), 0), 100)
+        if percent == self._last_percent:
+            return
+        self._last_percent = percent
+        remaining = 100 - percent
+        stage_text = clean_text(stage).strip() or "Processando"
+        self._bar.progress(
+            percent,
+            text=f"{self.label}: {stage_text} — {percent}% concluído • {remaining}% restante",
+        )
+
+    def complete(self) -> None:
+        self.update(1.0, "Importação concluída")
+
+    def phase(self, start: float, end: float):
+        return lambda fraction, stage: self.update(
+            start + ((end - start) * min(max(float(fraction), 0.0), 1.0)),
+            stage,
+        )
+
+    def fail(self) -> None:
+        current = max(self._last_percent, 0)
+        self._bar.progress(current, text=f"{self.label}: importação interrompida em {current}%")
+
+
+def _import_progress(label: str) -> _ImportProgressDisplay:
+    return _ImportProgressDisplay(label)
 
 
 def route_json(route: str, params: dict[str, object] | None = None) -> dict:
@@ -11517,17 +11556,19 @@ def _render_diarias_spreadsheet_import() -> None:
         rows: list[dict[str, object]] = []
         warnings: list[str] = []
         period_labels: set[tuple[object, object]] = set()
-        with st.spinner("Lendo quinzenas, colaboradores e valores..."):
-            for uploaded in files:
-                try:
-                    result = _read_diarias_spreadsheet(
-                        uploaded.getvalue(), uploaded.name, reference_year
-                    )
-                    rows.extend(result.get("rows", []))
-                    warnings.extend(result.get("warnings", []))
-                except Exception as exc:
-                    LOGGER.exception("Falha ao ler planilha de diárias: %s", uploaded.name)
-                    warnings.append(f"{uploaded.name}: arquivo não pôde ser lido ({type(exc).__name__}).")
+        read_progress = _import_progress("Lendo planilhas de diárias")
+        for file_index, uploaded in enumerate(files, start=1):
+            try:
+                result = _read_diarias_spreadsheet(
+                    uploaded.getvalue(), uploaded.name, reference_year
+                )
+                rows.extend(result.get("rows", []))
+                warnings.extend(result.get("warnings", []))
+            except Exception as exc:
+                LOGGER.exception("Falha ao ler planilha de diárias: %s", uploaded.name)
+                warnings.append(f"{uploaded.name}: arquivo não pôde ser lido ({type(exc).__name__}).")
+            read_progress.update(file_index / len(files), f"Arquivo {file_index} de {len(files)}")
+        read_progress.complete()
         preview = pd.DataFrame(rows, columns=[
             "Inicio", "Fim", "Mes", "Colaborador", "Funcao", "Valor",
             "Arquivo", "Hash Documento",
@@ -11606,7 +11647,18 @@ def _render_diarias_spreadsheet_import() -> None:
                     row["Mes"] = f"{end.year}-{end.month:02d}"
                     row["Importado Em"] = imported_at
                     records.append(row)
-                saved_rows, saved_periods = backend.replace_diarias_equipe_periods(records)
+                progress = _import_progress("Importando diárias")
+                try:
+                    saved_rows, saved_periods = backend.replace_diarias_equipe_periods(
+                        records,
+                        progress_callback=progress.update,
+                    )
+                except Exception as exc:
+                    progress.fail()
+                    st.error("Não foi possível importar as diárias no Neon. Nenhuma quinzena incompleta foi salva.")
+                    st.exception(exc)
+                    return
+                progress.complete()
                 clear_cached_reads()
                 st.success(
                     f"{saved_rows} colaborador(es) salvos em {saved_periods} quinzena(s). "
@@ -12457,20 +12509,23 @@ def _render_hoteis_sheet_import() -> None:
         if st.button(f"Importar {len(rows)} hospedagem(ns)", type="primary", width="stretch", key="cad_hotel_import_sheet"):
             imported_rows: list[dict] = []
             skipped_rows = 0
+            progress = _import_progress("Importando hotéis")
             try:
-                with st.spinner("Conferindo os registros existentes e salvando a planilha completa..."):
-                    imported_rows, skipped_rows = backend.append_missing_dashboard_records(
-                        "hoteis",
-                        rows,
-                        update_plate_registry=False,
-                    )
+                imported_rows, skipped_rows = backend.append_missing_dashboard_records(
+                    "hoteis",
+                    rows,
+                    update_plate_registry=False,
+                    progress_callback=progress.update,
+                )
             except Exception as exc:
+                progress.fail()
                 st.error(
                     "A importação foi cancelada sem salvar um lote incompleto. "
                     "Tente novamente; os registros já existentes não serão duplicados."
                 )
                 st.exception(exc)
                 return
+            progress.complete()
             if imported_rows:
                 st.session_state["cad_hotel_last_import_rows"] = imported_rows
                 st.session_state["cad_hotel_last_import_count"] = len(imported_rows)
@@ -12692,27 +12747,31 @@ def _render_peso_sheet_import(plate_map: dict[str, str]) -> None:
         if st.button(button_label, type="primary", width="stretch", key="cad_peso_import_sheet"):
             imported_rows: list[dict] = []
             skipped_rows = 0
+            progress = _import_progress("Importando peso e rodagem")
             try:
-                with st.spinner("Conferindo os registros existentes e salvando a planilha completa..."):
-                    if rows:
-                        imported_rows, skipped_rows = backend.append_missing_dashboard_records(
-                            "peso",
-                            rows,
-                            update_plate_registry=False,
-                        )
-                    if route_rows:
-                        backend.upsert_dashboard_records(
-                            "rodagem_rota",
-                            route_rows,
-                            replace_keys=["Mes", "Rota", "PLACA"],
-                        )
+                if rows:
+                    imported_rows, skipped_rows = backend.append_missing_dashboard_records(
+                        "peso",
+                        rows,
+                        update_plate_registry=False,
+                        progress_callback=progress.phase(0.0, 0.75 if route_rows else 1.0),
+                    )
+                if route_rows:
+                    backend.upsert_dashboard_records(
+                        "rodagem_rota",
+                        route_rows,
+                        replace_keys=["Mes", "Rota", "PLACA"],
+                        progress_callback=progress.phase(0.75 if rows else 0.0, 1.0),
+                    )
             except Exception as exc:
+                progress.fail()
                 st.error(
                     "A importação foi cancelada sem salvar um lote incompleto. "
                     "Tente novamente; os registros já existentes não serão duplicados."
                 )
                 st.exception(exc)
                 return
+            progress.complete()
             if imported_rows:
                 st.session_state["cad_peso_last_import_rows"] = imported_rows
                 st.session_state["cad_peso_last_import_count"] = len(imported_rows)
@@ -12869,13 +12928,15 @@ def _render_peso_route_import() -> None:
             width="stretch",
             key="cad_peso_route_import_confirm",
         ):
+            progress = _import_progress("Importando rotas nas entregas")
             try:
-                with st.spinner("Conferindo os registros e salvando todas as rotas..."):
-                    updated = backend.update_peso_routes(rows)
+                updated = backend.update_peso_routes(rows, progress_callback=progress.update)
             except Exception as exc:
+                progress.fail()
                 st.error("A importação foi cancelada sem deixar uma atualização parcial de rotas.")
                 st.warning(clean_text(exc))
                 return
+            progress.complete()
             _reset_dataset_editor("cad_peso_table")
             clear_cached_reads()
             st.session_state["cad_peso_route_upload_nonce"] = upload_nonce + 1
@@ -12968,17 +13029,20 @@ def _render_rodagem_rota_management(plate_map: dict[str, str]) -> None:
                     width="stretch",
                     key="cad_rodagem_rota_import",
                 ):
+                    progress = _import_progress("Importando rodagem por rota")
                     try:
-                        with st.spinner("Salvando toda a planilha de rodagem..."):
-                            backend.upsert_dashboard_records(
-                                "rodagem_rota",
-                                route_rows,
-                                replace_keys=["Mes", "Rota", "PLACA"],
-                            )
+                        backend.upsert_dashboard_records(
+                            "rodagem_rota",
+                            route_rows,
+                            replace_keys=["Mes", "Rota", "PLACA"],
+                            progress_callback=progress.update,
+                        )
                     except Exception as exc:
+                        progress.fail()
                         st.error("A importação foi cancelada sem deixar uma rodagem parcial.")
                         st.exception(exc)
                     else:
+                        progress.complete()
                         _reset_dataset_editor("cad_rodagem_rota_table")
                         clear_cached_reads()
                         st.success(f"{len(route_rows)} rodagem(ns) por rota salva(s).")
@@ -13097,20 +13161,23 @@ def _render_combustivel_sheet_import(plate_map: dict[str, str]) -> None:
         if st.button("Importar combustível", type="primary", width="stretch", key="cad_comb_import_confirm"):
             imported_rows: list[dict] = []
             skipped_rows = 0
+            progress = _import_progress("Importando combustível")
             try:
-                with st.spinner("Conferindo os registros existentes e salvando a planilha completa..."):
-                    imported_rows, skipped_rows = backend.append_missing_dashboard_records(
-                        "combustivel",
-                        rows,
-                        update_plate_registry=False,
-                    )
+                imported_rows, skipped_rows = backend.append_missing_dashboard_records(
+                    "combustivel",
+                    rows,
+                    update_plate_registry=False,
+                    progress_callback=progress.update,
+                )
             except Exception as exc:
+                progress.fail()
                 st.error(
                     "A importação foi cancelada sem salvar um lote incompleto. "
                     "Tente novamente; os registros já existentes não serão duplicados."
                 )
                 st.exception(exc)
                 return
+            progress.complete()
             if imported_rows:
                 st.session_state["cad_comb_last_import_rows"] = imported_rows
                 st.session_state["cad_comb_last_import_count"] = len(imported_rows)
@@ -13157,27 +13224,31 @@ def _render_combustivel_photo_import(
         image_hash = hashlib.sha256(image_bytes).hexdigest()
         st.image(image_bytes, caption="Foto que será lida", width=360)
         if st.button("Ler dados da foto", type="primary", width="stretch", key="cad_comb_receipt_analyze"):
+            progress = _import_progress("Lendo comprovante de combustível")
             try:
-                with st.spinner("Lendo o comprovante e conferindo os cadastros..."):
-                    ocr_result = _read_fuel_receipt_image(image_bytes)
-                    if not clean_text(ocr_result.get("text")).strip():
-                        raise ValueError("Nenhum texto legível foi encontrado na foto.")
-                    parsed = _parse_fuel_receipt_text(
-                        clean_text(ocr_result.get("text")),
-                        plate_map,
-                        fuel_options,
-                        posto_options,
-                    )
-                    parsed.update(
-                        {
-                            "image_hash": image_hash,
-                            "confidence": float(ocr_result.get("confidence") or 0.0),
-                            "line_count": int(ocr_result.get("line_count") or 0),
-                        }
-                    )
-                    st.session_state["cad_comb_receipt_result"] = parsed
-                    st.session_state.pop("cad_comb_receipt_saved_hash", None)
+                progress.update(0.12, "Lendo texto da imagem")
+                ocr_result = _read_fuel_receipt_image(image_bytes)
+                if not clean_text(ocr_result.get("text")).strip():
+                    raise ValueError("Nenhum texto legível foi encontrado na foto.")
+                progress.update(0.7, "Identificando placa, litros, valor e combustível")
+                parsed = _parse_fuel_receipt_text(
+                    clean_text(ocr_result.get("text")),
+                    plate_map,
+                    fuel_options,
+                    posto_options,
+                )
+                parsed.update(
+                    {
+                        "image_hash": image_hash,
+                        "confidence": float(ocr_result.get("confidence") or 0.0),
+                        "line_count": int(ocr_result.get("line_count") or 0),
+                    }
+                )
+                st.session_state["cad_comb_receipt_result"] = parsed
+                st.session_state.pop("cad_comb_receipt_saved_hash", None)
+                progress.complete()
             except Exception as exc:
+                progress.fail()
                 st.error("Não foi possível ler essa foto. Tente enquadrar somente o comprovante, com boa luz e sem sombras.")
                 st.exception(exc)
                 return
@@ -13396,7 +13467,7 @@ def _undo_pedagio_last_import() -> None:
 def _append_records_in_batches(dataset: str, rows: list[dict], *, batch_size: int = 100) -> list[dict]:
     imported: list[dict] = []
     total = len(rows)
-    progress = st.progress(0, text="Preparando envio...")
+    progress = _import_progress("Importando lançamentos")
     status = st.empty()
 
     for start in range(0, total, batch_size):
@@ -13406,10 +13477,10 @@ def _append_records_in_batches(dataset: str, rows: list[dict], *, batch_size: in
         status.info(f"Enviando lote {batch_number}/{batch_total} ({start + 1}-{min(start + len(batch), total)} de {total})...")
         backend.append_dashboard_records(dataset, batch, update_plate_registry=False)
         imported.extend(batch)
-        progress.progress(min(len(imported) / total, 1.0), text=f"{len(imported)} de {total} lancamentos enviados")
+        progress.update(len(imported) / max(total, 1), f"{len(imported)} de {total} lançamentos enviados")
 
     status.empty()
-    progress.empty()
+    progress.complete()
     clear_cached_reads()
     return imported
 
@@ -13417,7 +13488,7 @@ def _append_records_in_batches(dataset: str, rows: list[dict], *, batch_size: in
 def _save_records_with_replace_in_batches(dataset: str, rows: list[dict], replace_keys: list[str], *, batch_size: int = 100) -> list[dict]:
     imported: list[dict] = []
     total = len(rows)
-    progress = st.progress(0, text="Preparando envio...")
+    progress = _import_progress("Importando registros")
     status = st.empty()
 
     for start in range(0, total, batch_size):
@@ -13428,10 +13499,10 @@ def _save_records_with_replace_in_batches(dataset: str, rows: list[dict], replac
         for row in batch:
             backend.save_dashboard_record(dataset, row, replace_keys=replace_keys)
         imported.extend(batch)
-        progress.progress(min(len(imported) / total, 1.0), text=f"{len(imported)} de {total} registros enviados")
+        progress.update(len(imported) / max(total, 1), f"{len(imported)} de {total} registros enviados")
 
     status.empty()
-    progress.empty()
+    progress.complete()
     clear_cached_reads()
     return imported
 
@@ -13608,16 +13679,19 @@ def _render_velocity_sheet_import(plate_map: dict[str, str]) -> None:
         if len(preview) > 100:
             st.caption(f"Previa limitada às primeiras 100 de {len(preview)} linhas.")
         if st.button(f"Importar {len(rows)} viagem(ns)", type="primary", width="stretch", key="cad_vel_import_confirm"):
+            progress = _import_progress("Importando viagens de velocidade")
             try:
-                with st.spinner(f"Importando {len(rows)} viagem(ns) em uma unica transacao..."):
-                    backend.append_dashboard_records(
-                        "velocidade",
-                        rows,
-                        update_plate_registry=True,
-                    )
+                backend.append_dashboard_records(
+                    "velocidade",
+                    rows,
+                    update_plate_registry=True,
+                    progress_callback=progress.update,
+                )
+                progress.complete()
                 clear_cached_reads()
                 imported_rows = rows
             except Exception as exc:
+                progress.fail()
                 st.error("Nao foi possivel importar as viagens para o Neon.")
                 st.caption("Nenhuma linha desta importacao foi salva; corrija o problema e tente novamente.")
                 st.exception(exc)
@@ -13673,28 +13747,32 @@ def _render_km_sheet_import() -> None:
         )
         if st.button("Importar KM mensal", type="primary", width="stretch", key="cad_km_import_confirm"):
             skipped_rows = 0
+            progress = _import_progress("Importando KM mensal")
             try:
-                with st.spinner("Conferindo os registros existentes e salvando a planilha completa..."):
-                    if substituir:
-                        backend.upsert_dashboard_records(
-                            "combustivel_km",
-                            rows,
-                            replace_keys=["Mes", "PLACA"],
-                        )
-                        imported_rows = rows
-                    else:
-                        imported_rows, skipped_rows = backend.append_missing_dashboard_records(
-                            "combustivel_km",
-                            rows,
-                            update_plate_registry=False,
-                        )
+                if substituir:
+                    backend.upsert_dashboard_records(
+                        "combustivel_km",
+                        rows,
+                        replace_keys=["Mes", "PLACA"],
+                        progress_callback=progress.update,
+                    )
+                    imported_rows = rows
+                else:
+                    imported_rows, skipped_rows = backend.append_missing_dashboard_records(
+                        "combustivel_km",
+                        rows,
+                        update_plate_registry=False,
+                        progress_callback=progress.update,
+                    )
             except Exception as exc:
+                progress.fail()
                 st.error(
                     "A importação foi cancelada sem salvar um lote incompleto. "
                     "Tente novamente; os registros já existentes não serão duplicados."
                 )
                 st.exception(exc)
                 return
+            progress.complete()
             _reset_dataset_editor("cad_km_table")
             clear_cached_reads()
             if substituir:
@@ -13826,20 +13904,23 @@ def _render_aluguel_sheet_import() -> None:
             width="stretch",
             key="cad_aluguel_import_sheet",
         ):
+            progress = _import_progress("Importando aluguel de veículos")
             try:
-                with st.spinner("Conferindo registros e salvando a planilha completa..."):
-                    imported_rows, skipped_rows = backend.append_missing_dashboard_records(
-                        "aluguel_veiculos",
-                        rows,
-                        update_plate_registry=False,
-                    )
+                imported_rows, skipped_rows = backend.append_missing_dashboard_records(
+                    "aluguel_veiculos",
+                    rows,
+                    update_plate_registry=False,
+                    progress_callback=progress.update,
+                )
             except Exception as exc:
+                progress.fail()
                 st.error(
                     "A importação foi cancelada sem salvar um lote incompleto. "
                     "Tente novamente; os registros existentes não serão duplicados."
                 )
                 st.exception(exc)
                 return
+            progress.complete()
             if imported_rows:
                 st.session_state["cad_aluguel_last_import_rows"] = imported_rows
                 st.session_state["cad_aluguel_last_import_count"] = len(imported_rows)
@@ -13916,20 +13997,23 @@ def _render_pedagio_sheet_import(plate_map: dict[str, str]) -> None:
         if st.button(f"Importar {len(rows)} lançamentos", type="primary", width="stretch", key="cad_ped_import_sheet"):
             imported_rows: list[dict] = []
             skipped_rows = 0
+            progress = _import_progress("Importando pedágios e extras")
             try:
-                with st.spinner("Conferindo os registros existentes e salvando a planilha completa..."):
-                    imported_rows, skipped_rows = backend.append_missing_dashboard_records(
-                        "pedagio",
-                        rows,
-                        update_plate_registry=False,
-                    )
+                imported_rows, skipped_rows = backend.append_missing_dashboard_records(
+                    "pedagio",
+                    rows,
+                    update_plate_registry=False,
+                    progress_callback=progress.update,
+                )
             except Exception as exc:
+                progress.fail()
                 st.error(
                     "A importação foi cancelada sem salvar um lote incompleto. "
                     "Tente novamente; os registros já existentes não serão duplicados."
                 )
                 st.exception(exc)
                 return
+            progress.complete()
             if imported_rows:
                 st.session_state["cad_ped_last_import_rows"] = imported_rows
                 st.session_state["cad_ped_last_import_count"] = len(imported_rows)
@@ -14231,15 +14315,17 @@ def _render_route_pdf_import(plate_map: dict[str, str]) -> None:
     parsed_deliveries: list[dict] = []
     parse_errors: list[str] = []
     parse_warnings: list[str] = []
-    with st.spinner("Lendo os manifestos..."):
-        for uploaded in uploaded_files:
-            try:
-                route, deliveries, warnings = parse_route_pdf(uploaded.getvalue(), uploaded.name, plate_map)
-                parsed_routes.append(route)
-                parsed_deliveries.extend(deliveries)
-                parse_warnings.extend(f"{uploaded.name}: {warning}" for warning in warnings)
-            except Exception as exc:
-                parse_errors.append(f"{uploaded.name}: {exc}")
+    parse_progress = _import_progress("Lendo manifestos")
+    for file_index, uploaded in enumerate(uploaded_files, start=1):
+        try:
+            route, deliveries, warnings = parse_route_pdf(uploaded.getvalue(), uploaded.name, plate_map)
+            parsed_routes.append(route)
+            parsed_deliveries.extend(deliveries)
+            parse_warnings.extend(f"{uploaded.name}: {warning}" for warning in warnings)
+        except Exception as exc:
+            parse_errors.append(f"{uploaded.name}: {exc}")
+        parse_progress.update(file_index / len(uploaded_files), f"Arquivo {file_index} de {len(uploaded_files)}")
+    parse_progress.complete()
 
     if parse_errors:
         st.error("Alguns arquivos não puderam ser lidos:\n- " + "\n- ".join(parse_errors))
@@ -14282,12 +14368,19 @@ def _render_route_pdf_import(plate_map: dict[str, str]) -> None:
         width="stretch",
         key="cad_rotas_pdf_import",
     ):
+        progress = _import_progress("Importando rotas e entregas")
         try:
-            result = backend.import_route_manifests(parsed_routes, parsed_deliveries)
+            result = backend.import_route_manifests(
+                parsed_routes,
+                parsed_deliveries,
+                progress_callback=progress.update,
+            )
         except Exception as exc:
+            progress.fail()
             st.error("Não foi possível importar as rotas no Neon.")
             st.exception(exc)
             return
+        progress.complete()
         clear_cached_reads()
         freighter_count = int(result.get("freteiros_concluidos", 0))
         freighter_message = (
@@ -14324,12 +14417,17 @@ def _render_route_tracker_import() -> None:
 
         content = uploaded.getvalue()
         file_hash = hashlib.sha256(content).hexdigest()[:12]
+        read_progress = _import_progress("Lendo relatório do rastreador")
         try:
-            with st.spinner("Identificando saídas, paradas, retornos e quilômetros..."):
-                cycles, events, warnings = parse_tracker_report(content, uploaded.name)
-                routes = backend.load_rotas()
-                matches = match_tracker_cycles(cycles, routes)
+            read_progress.update(0.1, "Abrindo o arquivo")
+            cycles, events, warnings = parse_tracker_report(content, uploaded.name)
+            read_progress.update(0.65, "Carregando as rotas pendentes")
+            routes = backend.load_rotas()
+            read_progress.update(0.82, "Conciliando placas, datas e ciclos")
+            matches = match_tracker_cycles(cycles, routes)
+            read_progress.complete()
         except Exception as exc:
+            read_progress.fail()
             st.error(f"Não foi possível ler o relatório do rastreador: {exc}")
             return
 
@@ -14459,11 +14557,17 @@ def _render_route_tracker_import() -> None:
                 }
                 for row in matched
             ]
+            progress = _import_progress("Importando dados do rastreador")
             try:
-                result = backend.import_route_tracker_operations(operations)
+                result = backend.import_route_tracker_operations(
+                    operations,
+                    progress_callback=progress.update,
+                )
             except Exception as exc:
+                progress.fail()
                 st.error(f"Não foi possível salvar os dados do rastreador no Neon: {exc}")
                 return
+            progress.complete()
             clear_cached_reads()
             st.session_state["route_tracker_import_message"] = (
                 f"Rastreador importado: {int(result.get('updated', 0))} rota(s) concluída(s), "
@@ -14504,20 +14608,26 @@ def _render_route_collaborator_import() -> None:
         image_hash = hashlib.sha256(image_bytes).hexdigest()
         st.image(image_bytes, caption="Escala que será lida", width="stretch")
         if st.button("Ler colaboradores da escala", type="primary", width="stretch", key="cad_route_staff_read_v1"):
+            progress = _import_progress("Lendo escala de colaboradores")
             try:
-                with st.spinner("Lendo a segunda data e conciliando as linhas com as rotas importadas..."):
-                    ocr_result = _read_route_collaborator_image(image_bytes)
-                    route_date, parsed_rows = _parse_route_collaborator_ocr(ocr_result)
-                    routes = backend.load_rotas()
-                    matches = _match_route_collaborators(parsed_rows, routes)
-                    st.session_state["cad_route_staff_result_v1"] = {
-                        "image_hash": image_hash,
-                        "date": route_date.isoformat(),
-                        "rows": matches,
-                        "confidence": float(ocr_result.get("confidence") or 0.0),
-                        "line_count": int(ocr_result.get("line_count") or 0),
-                    }
+                progress.update(0.1, "Lendo o texto da imagem")
+                ocr_result = _read_route_collaborator_image(image_bytes)
+                progress.update(0.55, "Identificando data, motorista e ajudante")
+                route_date, parsed_rows = _parse_route_collaborator_ocr(ocr_result)
+                progress.update(0.72, "Carregando rotas cadastradas")
+                routes = backend.load_rotas()
+                progress.update(0.85, "Conciliando linhas com as rotas")
+                matches = _match_route_collaborators(parsed_rows, routes)
+                st.session_state["cad_route_staff_result_v1"] = {
+                    "image_hash": image_hash,
+                    "date": route_date.isoformat(),
+                    "rows": matches,
+                    "confidence": float(ocr_result.get("confidence") or 0.0),
+                    "line_count": int(ocr_result.get("line_count") or 0),
+                }
+                progress.complete()
             except Exception as exc:
+                progress.fail()
                 st.error("Não foi possível ler essa escala. Confira se a imagem mostra as duas datas e toda a tabela.")
                 st.exception(exc)
                 return
@@ -14583,11 +14693,14 @@ def _render_route_collaborator_import() -> None:
                         "Ajudante": _route_staff_person_name(row.get("Ajudante")),
                     }
                 )
+            progress = _import_progress("Aplicando colaboradores às rotas")
             try:
-                saved = backend.update_route_collaborators(payload)
+                saved = backend.update_route_collaborators(payload, progress_callback=progress.update)
             except Exception as exc:
+                progress.fail()
                 st.error(f"Não foi possível atualizar os colaboradores no Neon: {exc}")
                 return
+            progress.complete()
             clear_cached_reads()
             st.session_state.pop("cad_route_staff_result_v1", None)
             st.session_state["route_staff_import_message"] = (
@@ -16034,17 +16147,20 @@ def render_cadastro() -> None:
                         st.warning("O fim da locação deve ser igual ou posterior ao início.")
                     else:
                         rows = _aluguel_period_rows(inicio, fim, placa, fornecedor, custo, observacao)
+                        progress = _import_progress("Salvando mensalidades do aluguel")
                         try:
-                            with st.spinner("Salvando todas as mensalidades do período..."):
-                                imported_rows, skipped_rows = backend.append_missing_dashboard_records(
-                                    "aluguel_veiculos",
-                                    rows,
-                                    update_plate_registry=False,
-                                )
+                            imported_rows, skipped_rows = backend.append_missing_dashboard_records(
+                                "aluguel_veiculos",
+                                rows,
+                                update_plate_registry=False,
+                                progress_callback=progress.update,
+                            )
                         except Exception as exc:
+                            progress.fail()
                             st.error("Não foi possível salvar as mensalidades no Neon.")
                             st.exception(exc)
                         else:
+                            progress.complete()
                             clear_cached_reads()
                             _clear_table_filter_state("cad_aluguel_table")
                             _reset_dataset_editor("cad_aluguel_table")
@@ -16495,16 +16611,20 @@ def render_alertas() -> None:
                                 not in existing_keys
                             ]
                             if new_rows:
+                                progress = _import_progress("Importando alertas Vex")
                                 try:
                                     imported, skipped = backend.append_missing_dashboard_records(
                                         "alertas_vex",
                                         new_rows,
                                         update_plate_registry=False,
+                                        progress_callback=progress.update,
                                     )
                                 except Exception as exc:
+                                    progress.fail()
                                     st.error("Não foi possível salvar os dados de alerta no Neon.")
                                     st.exception(exc)
                                     return
+                                progress.complete()
                                 clear_cached_reads()
                                 st.success(f"{len(imported)} alerta(s) importado(s); {skipped} já existente(s).")
                             else:

@@ -231,6 +231,7 @@ class RoutesDashboardTests(unittest.TestCase):
 
     def test_replace_diarias_spreadsheet_replaces_only_imported_periods_in_one_transaction(self):
         executed = []
+        progress_updates = []
 
         class Result:
             rowcount = 1
@@ -262,7 +263,10 @@ class RoutesDashboardTests(unittest.TestCase):
             patch.object(backend, "_write_metadata"),
             patch.object(backend, "_clear_dataset_cache"),
         ):
-            saved_rows, saved_periods = backend.replace_diarias_equipe_periods(rows)
+            saved_rows, saved_periods = backend.replace_diarias_equipe_periods(
+                rows,
+                progress_callback=lambda fraction, stage: progress_updates.append((fraction, stage)),
+            )
 
         deletes = [statement for statement, _ in executed if statement.lstrip().upper().startswith("DELETE")]
         inserts = [statement for statement, _ in executed if statement.lstrip().upper().startswith("INSERT")]
@@ -271,6 +275,13 @@ class RoutesDashboardTests(unittest.TestCase):
         self.assertEqual(len(inserts), 3)
         self.assertTrue(all('CAST("Inicio" AS DATE) <=' in statement for statement in deletes))
         self.assertTrue(all('CAST("Fim" AS DATE) >=' in statement for statement in deletes))
+        self.assertTrue(progress_updates)
+        self.assertEqual(progress_updates[-1][0], 1.0)
+        self.assertEqual(progress_updates[-1][1], "Atualizando os dashboards")
+        self.assertEqual(
+            [fraction for fraction, _ in progress_updates],
+            sorted(fraction for fraction, _ in progress_updates),
+        )
 
     def test_rdv_target_total_recovers_handwritten_currency(self):
         self.assertEqual(dashboard._parse_rdv_target_total_text("R$ 288100"), 288.0)

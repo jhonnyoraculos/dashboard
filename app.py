@@ -9,7 +9,7 @@ import threading
 import time
 import unicodedata
 from collections import Counter, defaultdict
-from collections.abc import Iterable
+from collections.abc import Callable, Iterable
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 
@@ -63,6 +63,7 @@ DB_METADATA_TABLE = "dashboard_metadata"
 BACKEND_BUILD_VERSION = "aluguel-multiplicar-meses-v1"
 ROUTES_BUILD_VERSION = "rotas-horas-operacao-unica-v32"
 PEDAGIO_CHART_VERSION = "all-types-v1"
+IMPORT_PROGRESS_VERSION = "all-imports-v1"
 USE_LEGACY_ROUTE_HOTEL_ALLOCATION = False
 BACKUP_METADATA_KEY = "backup.last_downloaded_at"
 COLLABORATOR_ALIASES_METADATA_KEY = "routes.collaborator_aliases"
@@ -77,6 +78,29 @@ _METADATA_CACHE_SECONDS = float(os.environ.get("JR_METADATA_CACHE_SECONDS", "120
 _METADATA_CACHE = {"loaded": False, "loaded_at": 0.0, "values": {}, "lock": threading.Lock()}
 _DATASET_SCHEMA_READY: set[str] = set()
 _DATASET_SCHEMA_LOCK = threading.Lock()
+
+ImportProgressCallback = Callable[[float, str], None]
+
+
+def _report_import_progress(
+    callback: ImportProgressCallback | None,
+    current: int,
+    total: int,
+    stage: str,
+    *,
+    start: float = 0.0,
+    end: float = 1.0,
+) -> None:
+    """Reporta progresso sem sobrecarregar a interface com uma atualizacao por linha."""
+    if callback is None:
+        return
+    total = max(int(total), 1)
+    current = min(max(int(current), 0), total)
+    stride = max(total // 100, 1)
+    if current not in {0, total} and current % stride:
+        return
+    fraction = start + ((end - start) * current / total)
+    callback(min(max(float(fraction), 0.0), 1.0), stage)
 
 _PEDAGIO_CACHE = {"mtime": None, "df": None, "lock": threading.Lock()}
 _ALUGUEL_VEICULOS_CACHE = {"mtime": None, "df": None, "lock": threading.Lock()}
@@ -1171,7 +1195,12 @@ def save_dashboard_record(dataset: str, row: dict, *, replace_keys: list[str] | 
     return version
 
 
-def replace_dashboard_records(dataset: str, rows: list[dict]) -> str:
+def replace_dashboard_records(
+    dataset: str,
+    rows: list[dict],
+    *,
+    progress_callback: ImportProgressCallback | None = None,
+) -> str:
     if dataset not in DB_TABLES or dataset not in _DATASET_COLUMNS:
         raise ValueError(f"Conjunto de dados inválido: {dataset}")
 
@@ -1179,10 +1208,12 @@ def replace_dashboard_records(dataset: str, rows: list[dict]) -> str:
 
     columns = _DATASET_COLUMNS[dataset]
     prepared_rows = []
-    for row in rows:
+    _report_import_progress(progress_callback, 0, len(rows), "Preparando registros", start=0.0, end=0.15)
+    for row_index, row in enumerate(rows, start=1):
         prepared = _prepare_insert_row(dataset, row)
         if any(prepared.get(column) is not None for column in columns):
             prepared_rows.append(prepared)
+        _report_import_progress(progress_callback, row_index, len(rows), "Preparando registros", start=0.0, end=0.15)
 
     table = _quote_identifier(DB_TABLES[dataset])
     column_sql = ", ".join(_quote_identifier(column) for column in columns)
@@ -1191,6 +1222,7 @@ def replace_dashboard_records(dataset: str, rows: list[dict]) -> str:
 
     with _db_engine().begin() as conn:
         _ensure_dataset_table(conn, dataset)
+        _report_import_progress(progress_callback, 1, 1, "Substituindo dados anteriores", start=0.15, end=0.22)
         if dataset == "hoteis":
             # Registros sincronizados pertencem ao sistema de reservas. O editor
             # manual so regrava as linhas historicas que nao possuem UUID.
@@ -1199,7 +1231,7 @@ def replace_dashboard_records(dataset: str, rows: list[dict]) -> str:
             conn.execute(text(f"DELETE FROM {table} WHERE {_quote_identifier('Reserva ID')} IS NULL"))
         else:
             conn.execute(text(f"DELETE FROM {table}"))
-        for prepared in prepared_rows:
+        for row_index, prepared in enumerate(prepared_rows, start=1):
             value_refs, value_params = _bind_columns(columns, prepared, "value")
             value_sql = ", ".join(value_refs[column] for column in columns)
             conn.execute(text(f"INSERT INTO {table} ({column_sql}) VALUES ({value_sql})"), value_params)
@@ -1242,11 +1274,21 @@ def replace_dashboard_records(dataset: str, rows: list[dict]) -> str:
                         {"value": value},
                     )
                     _write_metadata(conn, f"{registry_dataset}.version", version)
+            _report_import_progress(
+                progress_callback,
+                row_index,
+                len(prepared_rows),
+                "Gravando no banco de dados",
+                start=0.22,
+                end=0.94,
+            )
 
         if dataset in {"combustivel", "manutencao", "pneus", "pedagio", "peso", "velocidade", "rotas"}:
             _write_metadata(conn, "placas.version", version)
         _write_metadata(conn, f"{dataset}.version", version)
         _write_metadata(conn, "import.version", version)
+
+    _report_import_progress(progress_callback, 1, 1, "Atualizando os dashboards", start=0.94, end=1.0)
 
     if dataset in {"combustivel", "manutencao", "pneus", "pedagio", "peso", "velocidade", "rotas"}:
         _clear_dataset_cache("placas")
@@ -1256,7 +1298,13 @@ def replace_dashboard_records(dataset: str, rows: list[dict]) -> str:
     return version
 
 
-def append_dashboard_records(dataset: str, rows: list[dict], *, update_plate_registry: bool = True) -> str:
+def append_dashboard_records(
+    dataset: str,
+    rows: list[dict],
+    *,
+    update_plate_registry: bool = True,
+    progress_callback: ImportProgressCallback | None = None,
+) -> str:
     if dataset not in DB_TABLES or dataset not in _DATASET_COLUMNS:
         raise ValueError(f"Conjunto de dados inválido: {dataset}")
 
@@ -1264,10 +1312,12 @@ def append_dashboard_records(dataset: str, rows: list[dict], *, update_plate_reg
 
     columns = _DATASET_COLUMNS[dataset]
     prepared_rows = []
-    for row in rows:
+    _report_import_progress(progress_callback, 0, len(rows), "Preparando registros", start=0.0, end=0.15)
+    for row_index, row in enumerate(rows, start=1):
         prepared = _prepare_insert_row(dataset, row)
         if any(prepared.get(column) is not None for column in columns):
             prepared_rows.append(prepared)
+        _report_import_progress(progress_callback, row_index, len(rows), "Preparando registros", start=0.0, end=0.15)
     if not prepared_rows:
         raise ValueError("Nenhum dado valido para salvar.")
 
@@ -1278,7 +1328,7 @@ def append_dashboard_records(dataset: str, rows: list[dict], *, update_plate_reg
 
     with _db_engine().begin() as conn:
         _ensure_dataset_table(conn, dataset)
-        for prepared in prepared_rows:
+        for row_index, prepared in enumerate(prepared_rows, start=1):
             value_refs, value_params = _bind_columns(columns, prepared, "value")
             value_sql = ", ".join(value_refs[column] for column in columns)
             conn.execute(text(f"INSERT INTO {table} ({column_sql}) VALUES ({value_sql})"), value_params)
@@ -1321,11 +1371,21 @@ def append_dashboard_records(dataset: str, rows: list[dict], *, update_plate_reg
                         {"value": value},
                     )
                     _write_metadata(conn, f"{registry_dataset}.version", version)
+            _report_import_progress(
+                progress_callback,
+                row_index,
+                len(prepared_rows),
+                "Gravando no banco de dados",
+                start=0.15,
+                end=0.94,
+            )
 
         if update_plate_registry and dataset in {"combustivel", "manutencao", "pneus", "pedagio", "peso", "velocidade", "rotas"}:
             _write_metadata(conn, "placas.version", version)
         _write_metadata(conn, f"{dataset}.version", version)
         _write_metadata(conn, "import.version", version)
+
+    _report_import_progress(progress_callback, 1, 1, "Atualizando os dashboards", start=0.94, end=1.0)
 
     if update_plate_registry and dataset in {"combustivel", "manutencao", "pneus", "pedagio", "peso", "velocidade", "rotas"}:
         _clear_dataset_cache("placas")
@@ -1360,6 +1420,7 @@ def append_missing_dashboard_records(
     rows: list[dict],
     *,
     update_plate_registry: bool = True,
+    progress_callback: ImportProgressCallback | None = None,
 ) -> tuple[list[dict], int]:
     """Insere somente o que falta, em uma única transação atômica."""
     if dataset not in DB_TABLES or dataset not in _DATASET_COLUMNS:
@@ -1369,10 +1430,12 @@ def append_missing_dashboard_records(
 
     columns = _DATASET_COLUMNS[dataset]
     prepared_rows = []
-    for row in rows:
+    _report_import_progress(progress_callback, 0, len(rows), "Preparando registros", start=0.0, end=0.15)
+    for row_index, row in enumerate(rows, start=1):
         prepared = _prepare_insert_row(dataset, row)
         if any(prepared.get(column) is not None for column in columns):
             prepared_rows.append(prepared)
+        _report_import_progress(progress_callback, row_index, len(rows), "Preparando registros", start=0.0, end=0.15)
     if not prepared_rows:
         raise ValueError("Nenhum dado valido para salvar.")
 
@@ -1403,18 +1466,27 @@ def append_missing_dashboard_records(
                 select_params[name] = month
             select_sql += f' WHERE "Mes" IN ({", ".join(month_refs)})'
         existing = conn.execute(text(select_sql), select_params).mappings().all()
+        _report_import_progress(progress_callback, 1, 1, "Conferindo registros existentes", start=0.15, end=0.35)
         existing_counts = Counter(
             _import_record_key(columns, dict(row))
             for row in existing
         )
 
-        for prepared in prepared_rows:
+        for row_index, prepared in enumerate(prepared_rows, start=1):
             key = _import_record_key(columns, prepared)
             if existing_counts[key] > 0:
                 existing_counts[key] -= 1
                 skipped += 1
             else:
                 inserted_rows.append(prepared)
+            _report_import_progress(
+                progress_callback,
+                row_index,
+                len(prepared_rows),
+                "Separando somente os registros novos",
+                start=0.35,
+                end=0.55,
+            )
 
         if inserted_rows:
             parameter_names = {column: f"value_{index}" for index, column in enumerate(columns)}
@@ -1427,6 +1499,7 @@ def append_missing_dashboard_records(
                 text(f"INSERT INTO {table} ({quoted_columns}) VALUES ({value_sql})"),
                 insert_params,
             )
+            _report_import_progress(progress_callback, 1, 1, "Gravando no banco de dados", start=0.55, end=0.82)
 
             if update_plate_registry and dataset in {"combustivel", "manutencao", "pneus", "pedagio", "peso", "rotas"}:
                 plate_categories = {
@@ -1489,6 +1562,8 @@ def append_missing_dashboard_records(
             _write_metadata(conn, f"{dataset}.version", version)
             _write_metadata(conn, "import.version", version)
 
+    _report_import_progress(progress_callback, 1, 1, "Atualizando os dashboards", start=0.82, end=1.0)
+
     if inserted_rows:
         if update_plate_registry and dataset in {"combustivel", "manutencao", "pneus", "pedagio", "peso", "rotas"}:
             _clear_dataset_cache("placas")
@@ -1498,7 +1573,13 @@ def append_missing_dashboard_records(
     return inserted_rows, skipped
 
 
-def upsert_dashboard_records(dataset: str, rows: list[dict], *, replace_keys: list[str]) -> str:
+def upsert_dashboard_records(
+    dataset: str,
+    rows: list[dict],
+    *,
+    replace_keys: list[str],
+    progress_callback: ImportProgressCallback | None = None,
+) -> str:
     """Insere várias linhas substituindo a combinação informada, em uma transação."""
     if dataset not in DB_TABLES or dataset not in _DATASET_COLUMNS:
         raise ValueError(f"Conjunto de dados inválido: {dataset}")
@@ -1510,12 +1591,14 @@ def upsert_dashboard_records(dataset: str, rows: list[dict], *, replace_keys: li
 
     columns = _DATASET_COLUMNS[dataset]
     prepared_rows = []
-    for row in rows:
+    _report_import_progress(progress_callback, 0, len(rows), "Preparando registros", start=0.0, end=0.15)
+    for row_index, row in enumerate(rows, start=1):
         prepared = _prepare_insert_row(dataset, row)
         if any(prepared.get(column) is not None for column in columns):
             if any(prepared.get(key) is None for key in keys):
                 raise ValueError("Todas as chaves de substituicao devem estar preenchidas.")
             prepared_rows.append(prepared)
+        _report_import_progress(progress_callback, row_index, len(rows), "Preparando registros", start=0.0, end=0.15)
     if not prepared_rows:
         raise ValueError("Nenhum dado valido para salvar.")
 
@@ -1536,20 +1619,35 @@ def upsert_dashboard_records(dataset: str, rows: list[dict], *, replace_keys: li
                 text(f"INSERT INTO {table} ({column_sql}) VALUES ({value_sql})"),
                 value_params,
             )
+            _report_import_progress(
+                progress_callback,
+                index + 1,
+                len(prepared_rows),
+                "Substituindo e gravando registros",
+                start=0.15,
+                end=0.94,
+            )
         _write_metadata(conn, f"{dataset}.version", version)
         _write_metadata(conn, "import.version", version)
+
+    _report_import_progress(progress_callback, 1, 1, "Atualizando os dashboards", start=0.94, end=1.0)
 
     _clear_dataset_cache(dataset)
     return version
 
 
-def replace_diarias_equipe_periods(rows: list[dict]) -> tuple[int, int]:
+def replace_diarias_equipe_periods(
+    rows: list[dict],
+    *,
+    progress_callback: ImportProgressCallback | None = None,
+) -> tuple[int, int]:
     """Substitui, em lote, somente as quinzenas presentes na planilha enviada."""
     dataset = "diarias_equipe"
     columns = _DATASET_COLUMNS[dataset]
     prepared_rows: list[dict] = []
     periods: set[tuple[date, date]] = set()
-    for row in rows:
+    _report_import_progress(progress_callback, 0, len(rows), "Validando colaboradores e valores", start=0.0, end=0.12)
+    for row_index, row in enumerate(rows, start=1):
         prepared = _prepare_insert_row(dataset, row)
         start = pd.to_datetime(prepared.get("Inicio"), errors="coerce")
         end = pd.to_datetime(prepared.get("Fim"), errors="coerce")
@@ -1564,6 +1662,14 @@ def replace_diarias_equipe_periods(rows: list[dict]) -> tuple[int, int]:
         prepared["Valor"] = float(value)
         prepared_rows.append(prepared)
         periods.add((start.date(), end.date()))
+        _report_import_progress(
+            progress_callback,
+            row_index,
+            len(rows),
+            "Validando colaboradores e valores",
+            start=0.0,
+            end=0.12,
+        )
     if not prepared_rows:
         raise ValueError("Nenhuma diária válida para salvar.")
 
@@ -1583,6 +1689,14 @@ def replace_diarias_equipe_periods(rows: list[dict]) -> tuple[int, int]:
                 ),
                 {f"start_{index}": start, f"end_{index}": end},
             )
+            _report_import_progress(
+                progress_callback,
+                index + 1,
+                len(periods),
+                "Substituindo as quinzenas selecionadas",
+                start=0.12,
+                end=0.22,
+            )
         for index, prepared in enumerate(prepared_rows):
             value_refs, value_params = _bind_columns(columns, prepared, f"daily_{index}")
             value_sql = ", ".join(value_refs[column] for column in columns)
@@ -1590,8 +1704,18 @@ def replace_diarias_equipe_periods(rows: list[dict]) -> tuple[int, int]:
                 text(f"INSERT INTO {table} ({column_sql}) VALUES ({value_sql})"),
                 value_params,
             )
+            _report_import_progress(
+                progress_callback,
+                index + 1,
+                len(prepared_rows),
+                "Gravando colaboradores no banco de dados",
+                start=0.22,
+                end=0.96,
+            )
         _write_metadata(conn, f"{dataset}.version", version)
         _write_metadata(conn, "import.version", version)
+
+    _report_import_progress(progress_callback, 1, 1, "Atualizando os dashboards", start=0.96, end=1.0)
 
     _clear_dataset_cache(dataset)
     return len(prepared_rows), len(periods)
@@ -1766,7 +1890,11 @@ def preview_peso_route_updates(rows: list[dict]) -> dict:
     return {"matches": public_matches, "errors": errors, "warnings": warnings}
 
 
-def update_peso_routes(rows: list[dict]) -> int:
+def update_peso_routes(
+    rows: list[dict],
+    *,
+    progress_callback: ImportProgressCallback | None = None,
+) -> int:
     from sqlalchemy import text
 
     table = _quote_identifier(DB_TABLES["peso"])
@@ -1774,11 +1902,13 @@ def update_peso_routes(rows: list[dict]) -> int:
     engine = _db_engine()
     with engine.begin() as conn:
         _ensure_dataset_table(conn, "peso")
+        _report_import_progress(progress_callback, 1, 4, "Conferindo datas e placas", start=0.0, end=1.0)
         matches, errors, _warnings = _match_peso_route_rows(conn, rows, lock=True)
         if errors:
             raise ValueError("A importação foi cancelada. " + " ".join(errors))
 
         if matches:
+            _report_import_progress(progress_callback, 2, 4, "Localizando entregas correspondentes", start=0.0, end=1.0)
             conn.execute(
                 text(
                     f"""
@@ -1789,9 +1919,12 @@ def update_peso_routes(rows: list[dict]) -> int:
                 ),
                 [{"route": match["Rota"], "row_id": match["__row_id"]} for match in matches],
             )
+        _report_import_progress(progress_callback, 3, 4, "Gravando rotas nas entregas", start=0.0, end=1.0)
 
         _write_metadata(conn, "peso.version", version)
         _write_metadata(conn, "import.version", version)
+
+    _report_import_progress(progress_callback, 4, 4, "Atualizando os dashboards")
 
     _clear_dataset_cache("peso")
     return len(matches)
@@ -2260,15 +2393,37 @@ def auto_complete_freighter_routes() -> dict:
     return {"updated": updated, "version": version}
 
 
-def import_route_manifests(routes: list[dict], deliveries: list[dict]) -> dict:
+def import_route_manifests(
+    routes: list[dict],
+    deliveries: list[dict],
+    *,
+    progress_callback: ImportProgressCallback | None = None,
+) -> dict:
     """Importa manifestos sem tocar nas tabelas de peso ou de rodagem legadas."""
     if not routes:
         raise ValueError("Nenhuma rota valida foi encontrada nos PDFs.")
 
     from sqlalchemy import text
 
-    prepared_routes = [_prepare_insert_row("rotas", row) for row in routes]
-    prepared_deliveries = [_prepare_insert_row("rota_entregas", row) for row in deliveries]
+    prepared_routes = []
+    prepared_deliveries = []
+    total_to_prepare = len(routes) + len(deliveries)
+    _report_import_progress(progress_callback, 0, total_to_prepare, "Preparando rotas e entregas", start=0.0, end=0.12)
+    for row in routes:
+        prepared_routes.append(_prepare_insert_row("rotas", row))
+        _report_import_progress(
+            progress_callback, len(prepared_routes), total_to_prepare, "Preparando rotas e entregas", start=0.0, end=0.12
+        )
+    for row in deliveries:
+        prepared_deliveries.append(_prepare_insert_row("rota_entregas", row))
+        _report_import_progress(
+            progress_callback,
+            len(prepared_routes) + len(prepared_deliveries),
+            total_to_prepare,
+            "Preparando rotas e entregas",
+            start=0.0,
+            end=0.12,
+        )
     route_ids = [str(row.get("Rota ID") or "").strip() for row in prepared_routes]
     if any(not route_id for route_id in route_ids):
         raise ValueError("Uma das rotas nao possui identificador.")
@@ -2321,7 +2476,7 @@ def import_route_manifests(routes: list[dict], deliveries: list[dict]) -> dict:
             f"INSERT INTO {route_table} ({route_column_sql}) VALUES ({route_value_refs}) "
             f'ON CONFLICT ("Rota ID") DO UPDATE SET {", ".join(update_parts)}'
         )
-        for row in prepared_routes:
+        for row_index, row in enumerate(prepared_routes, start=1):
             params = {f"route_{index}": row.get(column) for index, column in enumerate(route_columns)}
             conn.execute(route_sql, params)
             if row.get("PLACA") and row.get("Categoria"):
@@ -2334,6 +2489,9 @@ def import_route_manifests(routes: list[dict], deliveries: list[dict]) -> dict:
                     ),
                     {"placa": row["PLACA"], "categoria": row["Categoria"]},
                 )
+            _report_import_progress(
+                progress_callback, row_index, len(prepared_routes), "Gravando manifestos de rota", start=0.12, end=0.42
+            )
 
         auto_completed_freighters = _complete_pending_freighter_routes(
             conn,
@@ -2346,6 +2504,7 @@ def import_route_manifests(routes: list[dict], deliveries: list[dict]) -> dict:
             text(f'DELETE FROM {delivery_table} WHERE "Rota ID" = ANY(:route_ids)'),
             {"route_ids": route_ids},
         )
+        _report_import_progress(progress_callback, 1, 1, "Atualizando entregas das rotas", start=0.42, end=0.48)
         if prepared_deliveries:
             delivery_column_sql = ", ".join(_quote_identifier(column) for column in delivery_columns)
             delivery_value_refs = ", ".join(f":delivery_{index}" for index in range(len(delivery_columns)))
@@ -2358,13 +2517,23 @@ def import_route_manifests(routes: list[dict], deliveries: list[dict]) -> dict:
                     if column != "Entrega ID"
                 )
             )
-            for row in prepared_deliveries:
+            for row_index, row in enumerate(prepared_deliveries, start=1):
                 params = {f"delivery_{index}": row.get(column) for index, column in enumerate(delivery_columns)}
                 conn.execute(delivery_sql, params)
+                _report_import_progress(
+                    progress_callback,
+                    row_index,
+                    len(prepared_deliveries),
+                    "Gravando entregas no banco de dados",
+                    start=0.48,
+                    end=0.96,
+                )
 
         for dataset in ("rotas", "rota_entregas", "placas"):
             _write_metadata(conn, f"{dataset}.version", version)
         _write_metadata(conn, "import.version", version)
+
+    _report_import_progress(progress_callback, 1, 1, "Atualizando os dashboards", start=0.96, end=1.0)
 
     for dataset in ("rotas", "rota_entregas", "placas"):
         _clear_dataset_cache(dataset)
@@ -2596,7 +2765,11 @@ def update_route_operation(
     }
 
 
-def import_route_tracker_operations(operations: list[dict]) -> dict:
+def import_route_tracker_operations(
+    operations: list[dict],
+    *,
+    progress_callback: ImportProgressCallback | None = None,
+) -> dict:
     """Conclui somente rotas ainda pendentes usando ciclos apurados no rastreador."""
     if not operations:
         raise ValueError("Nenhuma rota pendente foi conciliada com o relatório do rastreador.")
@@ -2613,7 +2786,8 @@ def import_route_tracker_operations(operations: list[dict]) -> dict:
 
     with _db_engine().begin() as conn:
         _ensure_dataset_table(conn, "rotas")
-        for operation in operations:
+        _report_import_progress(progress_callback, 0, len(operations), "Conciliando ciclos do rastreador", start=0.0, end=0.95)
+        for operation_index, operation in enumerate(operations, start=1):
             requested_ids = [
                 str(value or "").strip()
                 for value in operation.get("route_ids", [])
@@ -2697,10 +2871,20 @@ def import_route_tracker_operations(operations: list[dict]) -> dict:
             updated += changed
             total_km += km_per_route * changed
             processed_ids.update(pending_ids)
+            _report_import_progress(
+                progress_callback,
+                operation_index,
+                len(operations),
+                "Preenchendo rotas pendentes",
+                start=0.0,
+                end=0.95,
+            )
 
         if updated:
             _write_metadata(conn, "rotas.version", version)
             _write_metadata(conn, "import.version", version)
+
+    _report_import_progress(progress_callback, 1, 1, "Atualizando os dashboards", start=0.95, end=1.0)
 
     if updated:
         _clear_dataset_cache("rotas")
@@ -2850,7 +3034,11 @@ def update_route_history_rows(rows: list[dict]) -> dict:
     return {"updated": updated, "version": version}
 
 
-def update_route_collaborators(rows: list[dict]) -> dict:
+def update_route_collaborators(
+    rows: list[dict],
+    *,
+    progress_callback: ImportProgressCallback | None = None,
+) -> dict:
     """Atualiza somente motorista e ajudante de rotas já existentes."""
     if not rows:
         return {"updated": 0, "route_ids": []}
@@ -2862,7 +3050,8 @@ def update_route_collaborators(rows: list[dict]) -> dict:
     updated_ids: list[str] = []
     with _db_engine().begin() as conn:
         _ensure_dataset_table(conn, "rotas")
-        for row in rows:
+        _report_import_progress(progress_callback, 0, len(rows), "Preparando colaboradores", start=0.0, end=0.95)
+        for row_index, row in enumerate(rows, start=1):
             route_id = str(row.get("Rota ID") or "").strip()
             if not route_id or route_id in updated_ids:
                 continue
@@ -2889,9 +3078,19 @@ def update_route_collaborators(rows: list[dict]) -> dict:
             )
             if result.rowcount:
                 updated_ids.append(route_id)
+            _report_import_progress(
+                progress_callback,
+                row_index,
+                len(rows),
+                "Atualizando motorista e ajudante",
+                start=0.0,
+                end=0.95,
+            )
         if updated_ids:
             _write_metadata(conn, "rotas.version", version)
             _write_metadata(conn, "import.version", version)
+
+    _report_import_progress(progress_callback, 1, 1, "Atualizando os dashboards", start=0.95, end=1.0)
 
     if updated_ids:
         _clear_dataset_cache("rotas")
