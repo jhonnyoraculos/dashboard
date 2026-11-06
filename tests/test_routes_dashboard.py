@@ -190,6 +190,81 @@ class RoutesDashboardTests(unittest.TestCase):
         )
         self.assertTrue(dashboard._rdv_import_valid_mask(rows).iloc[0])
 
+    def test_diarias_spreadsheet_reads_multiple_fortnights_and_zero_values(self):
+        from openpyxl import Workbook
+
+        workbook = Workbook()
+        worksheet = workbook.active
+        worksheet.title = "Diarias"
+        worksheet["C2"] = "13/10 a 23/10"
+        worksheet["C3"] = "Colaborador"
+        worksheet["D3"] = "Valor Recarregar (Ev. 1624)"
+        worksheet["C4"] = "Pessoa Um"
+        worksheet["D4"] = 392
+        worksheet["C5"] = "Pessoa Zero"
+        worksheet["D5"] = 0
+        worksheet["C7"] = "28/09 a 09/10"
+        worksheet["C8"] = "Colaborador"
+        worksheet["D8"] = "Valor"
+        worksheet["C9"] = "Pessoa Dois"
+        worksheet["D9"] = 864
+        buffer = BytesIO()
+        workbook.save(buffer)
+
+        result = dashboard._read_diarias_spreadsheet(buffer.getvalue(), "diarias.xlsx", 2026)
+
+        self.assertEqual(result["periods"], 2)
+        self.assertEqual(result["warnings"], [])
+        self.assertEqual(len(result["rows"]), 3)
+        self.assertEqual(sum(row["Valor"] for row in result["rows"]), 1256.0)
+        self.assertEqual(result["rows"][0]["Inicio"], date(2026, 10, 13))
+        self.assertEqual(result["rows"][0]["Fim"], date(2026, 10, 23))
+        self.assertEqual(result["rows"][1]["Valor"], 0.0)
+        self.assertEqual(result["rows"][2]["Mes"], "2026-10")
+
+    def test_replace_diarias_spreadsheet_replaces_only_imported_periods_in_one_transaction(self):
+        executed = []
+
+        class Result:
+            rowcount = 1
+
+        class Connection:
+            def execute(self, statement, params=None):
+                executed.append((str(statement), params or {}))
+                return Result()
+
+        class BeginContext:
+            def __enter__(self):
+                return Connection()
+
+            def __exit__(self, exc_type, exc, traceback):
+                return False
+
+        class Engine:
+            def begin(self):
+                return BeginContext()
+
+        rows = [
+            {"Inicio": date(2026, 10, 13), "Fim": date(2026, 10, 23), "Colaborador": "PESSOA A", "Valor": 392},
+            {"Inicio": date(2026, 10, 13), "Fim": date(2026, 10, 23), "Colaborador": "PESSOA B", "Valor": 0},
+            {"Inicio": date(2026, 9, 28), "Fim": date(2026, 10, 9), "Colaborador": "PESSOA C", "Valor": 864},
+        ]
+        with (
+            patch.object(backend, "_db_engine", return_value=Engine()),
+            patch.object(backend, "_ensure_dataset_table"),
+            patch.object(backend, "_write_metadata"),
+            patch.object(backend, "_clear_dataset_cache"),
+        ):
+            saved_rows, saved_periods = backend.replace_diarias_equipe_periods(rows)
+
+        deletes = [statement for statement, _ in executed if statement.lstrip().upper().startswith("DELETE")]
+        inserts = [statement for statement, _ in executed if statement.lstrip().upper().startswith("INSERT")]
+        self.assertEqual((saved_rows, saved_periods), (3, 2))
+        self.assertEqual(len(deletes), 2)
+        self.assertEqual(len(inserts), 3)
+        self.assertTrue(all('CAST("Inicio" AS DATE) <=' in statement for statement in deletes))
+        self.assertTrue(all('CAST("Fim" AS DATE) >=' in statement for statement in deletes))
+
     def test_rdv_target_total_recovers_handwritten_currency(self):
         self.assertEqual(dashboard._parse_rdv_target_total_text("R$ 288100"), 288.0)
         self.assertEqual(dashboard._parse_rdv_target_total_text("R$ 63200"), 632.0)

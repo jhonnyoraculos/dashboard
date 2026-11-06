@@ -10,7 +10,7 @@ import time
 import unicodedata
 from collections import Counter, defaultdict
 from collections.abc import Iterable
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 
 import pandas as pd
@@ -1541,6 +1541,60 @@ def upsert_dashboard_records(dataset: str, rows: list[dict], *, replace_keys: li
 
     _clear_dataset_cache(dataset)
     return version
+
+
+def replace_diarias_equipe_periods(rows: list[dict]) -> tuple[int, int]:
+    """Substitui, em lote, somente as quinzenas presentes na planilha enviada."""
+    dataset = "diarias_equipe"
+    columns = _DATASET_COLUMNS[dataset]
+    prepared_rows: list[dict] = []
+    periods: set[tuple[date, date]] = set()
+    for row in rows:
+        prepared = _prepare_insert_row(dataset, row)
+        start = pd.to_datetime(prepared.get("Inicio"), errors="coerce")
+        end = pd.to_datetime(prepared.get("Fim"), errors="coerce")
+        collaborator = str(prepared.get("Colaborador") or "").strip()
+        value = pd.to_numeric(prepared.get("Valor"), errors="coerce")
+        if pd.isna(start) or pd.isna(end) or not collaborator or pd.isna(value) or float(value) < 0:
+            raise ValueError("Todas as linhas precisam de período, colaborador e valor não negativo.")
+        prepared["Inicio"] = start.date()
+        prepared["Fim"] = end.date()
+        prepared["Mes"] = f"{end.year}-{end.month:02d}"
+        prepared["Colaborador"] = collaborator
+        prepared["Valor"] = float(value)
+        prepared_rows.append(prepared)
+        periods.add((start.date(), end.date()))
+    if not prepared_rows:
+        raise ValueError("Nenhuma diária válida para salvar.")
+
+    from sqlalchemy import text
+
+    table = _quote_identifier(DB_TABLES[dataset])
+    column_sql = ", ".join(_quote_identifier(column) for column in columns)
+    version = datetime.now(timezone.utc).isoformat()
+    with _db_engine().begin() as conn:
+        _ensure_dataset_table(conn, dataset)
+        for index, (start, end) in enumerate(sorted(periods)):
+            conn.execute(
+                text(
+                    f'DELETE FROM {table} '
+                    f'WHERE CAST("Inicio" AS DATE) <= CAST(:end_{index} AS DATE) '
+                    f'AND CAST("Fim" AS DATE) >= CAST(:start_{index} AS DATE)'
+                ),
+                {f"start_{index}": start, f"end_{index}": end},
+            )
+        for index, prepared in enumerate(prepared_rows):
+            value_refs, value_params = _bind_columns(columns, prepared, f"daily_{index}")
+            value_sql = ", ".join(value_refs[column] for column in columns)
+            conn.execute(
+                text(f"INSERT INTO {table} ({column_sql}) VALUES ({value_sql})"),
+                value_params,
+            )
+        _write_metadata(conn, f"{dataset}.version", version)
+        _write_metadata(conn, "import.version", version)
+
+    _clear_dataset_cache(dataset)
+    return len(prepared_rows), len(periods)
 
 
 def load_peso_route_template() -> pd.DataFrame:

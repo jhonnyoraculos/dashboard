@@ -67,6 +67,7 @@ _backend_features_ready = all(
         "collaborator_name_summary",
         "merge_collaborator_names",
         "load_diarias_equipe",
+        "replace_diarias_equipe_periods",
     )
 )
 _backend_aluguel_period_ready = {"Inicio", "Fim"}.issubset(
@@ -322,7 +323,7 @@ def require_authentication() -> bool:
             st.error(f"Usuario ou senha incorretos. Restam {AUTH_MAX_ATTEMPTS - failures} tentativa(s).")
     return False
 CURRENT_YEAR = date.today().year
-APP_VERSION = "home-percentual-descricao-v89"
+APP_VERSION = "diarias-planilha-quinzenal-v90"
 LOGGER = logging.getLogger("jr_dashboard.streamlit")
 RANK_ROUTES_ENABLED = True
 ROUTE_CACHE_TTL_SECONDS = max(int(os.environ.get("JR_ROUTE_CACHE_TTL_SECONDS", "1800") or 1800), 120)
@@ -11352,6 +11353,284 @@ def _rdv_import_valid_mask(frame: pd.DataFrame) -> pd.Series:
     )
 
 
+_DIARIAS_PERIOD_RE = re.compile(
+    r"(?<!\d)(\d{1,2})[/-](\d{1,2})(?:[/-](\d{2,4}))?\s*"
+    r"(?:A|ATE|ATÉ|[-–—])\s*"
+    r"(\d{1,2})[/-](\d{1,2})(?:[/-](\d{2,4}))?(?!\d)",
+    flags=re.IGNORECASE,
+)
+
+
+def _diarias_period_from_label(value: object, reference_year: int) -> tuple[date, date] | None:
+    label = clean_text(value).strip()
+    match = _DIARIAS_PERIOD_RE.search(label)
+    if not match:
+        return None
+
+    def _year(raw: str | None, fallback: int) -> int:
+        if not raw:
+            return fallback
+        parsed = int(raw)
+        return 2000 + parsed if parsed < 100 else parsed
+
+    start_year = _year(match.group(3), int(reference_year))
+    end_year = _year(match.group(6), start_year)
+    start_month = int(match.group(2))
+    end_month = int(match.group(5))
+    if not match.group(6) and end_month < start_month:
+        end_year += 1
+    try:
+        start = date(start_year, start_month, int(match.group(1)))
+        end = date(end_year, end_month, int(match.group(4)))
+    except ValueError:
+        return None
+    return (start, end) if end >= start else None
+
+
+def _diarias_numeric_value(value: object) -> float | None:
+    if value is None or isinstance(value, bool):
+        return None
+    if isinstance(value, (int, float)) and not pd.isna(value):
+        return float(value)
+    text_value = clean_text(value).strip()
+    if not text_value or text_value.upper() == "R$":
+        return None
+    parsed = _parse_brl_number(text_value.replace("R$", "").strip())
+    return float(parsed) if parsed is not None else None
+
+
+def _diarias_name_key(value: object) -> str:
+    normalized = unicodedata.normalize("NFKD", clean_text(value))
+    normalized = normalized.encode("ascii", "ignore").decode("ascii").upper()
+    return re.sub(r"[^A-Z0-9]+", " ", normalized).strip()
+
+
+@st.cache_data(show_spinner=False, max_entries=16)
+def _read_diarias_spreadsheet(
+    file_bytes: bytes,
+    file_name: str,
+    reference_year: int,
+) -> dict[str, object]:
+    """Lê blocos de colaborador/valor agrupados por quinzena em XLSX/XLSM."""
+    from openpyxl import load_workbook
+
+    workbook = load_workbook(BytesIO(file_bytes), data_only=True, read_only=True)
+    parsed_rows: list[dict[str, object]] = []
+    warnings: list[str] = []
+    periods_found = 0
+    for worksheet in workbook.worksheets:
+        grid = [list(row) for row in worksheet.iter_rows(values_only=True)]
+        positions: list[tuple[int, int, date, date]] = []
+        for row_index, row in enumerate(grid):
+            for column_index, value in enumerate(row):
+                period = _diarias_period_from_label(value, reference_year)
+                if period:
+                    positions.append((row_index, column_index, period[0], period[1]))
+        periods_found += len(positions)
+        for row_index, period_column, start, end in positions:
+            next_rows = [
+                candidate_row
+                for candidate_row, candidate_column, _, _ in positions
+                if candidate_row > row_index and abs(candidate_column - period_column) <= 1
+            ]
+            block_end = min(next_rows) if next_rows else len(grid)
+            header_candidates: list[tuple[int, int]] = []
+            for header_row in range(row_index + 1, min(row_index + 7, block_end)):
+                for header_column, value in enumerate(grid[header_row]):
+                    if "COLABORADOR" in _diarias_name_key(value):
+                        header_candidates.append((header_row, header_column))
+            if not header_candidates:
+                warnings.append(
+                    f"{worksheet.title}: não encontrei a coluna Colaborador após "
+                    f"{start.strftime('%d/%m')} a {end.strftime('%d/%m')}."
+                )
+                continue
+            header_row, collaborator_column = min(
+                header_candidates,
+                key=lambda item: (abs(item[1] - period_column), item[0]),
+            )
+            value_columns = [
+                column_index
+                for column_index, value in enumerate(grid[header_row])
+                if "VALOR" in _diarias_name_key(value)
+            ]
+            value_column = (
+                min(value_columns, key=lambda column: abs(column - collaborator_column))
+                if value_columns
+                else collaborator_column + 1
+            )
+            for data_row_index in range(header_row + 1, block_end):
+                row = grid[data_row_index]
+                collaborator = clean_text(
+                    row[collaborator_column] if collaborator_column < len(row) else ""
+                ).strip()
+                if not collaborator or _diarias_name_key(collaborator) in {"COLABORADOR", "TOTAL"}:
+                    continue
+                amount = None
+                for candidate_column in range(value_column, min(value_column + 3, len(row))):
+                    amount = _diarias_numeric_value(row[candidate_column])
+                    if amount is not None:
+                        break
+                if amount is None:
+                    warnings.append(
+                        f"{worksheet.title}, linha {data_row_index + 1}: valor não reconhecido para {collaborator}."
+                    )
+                    continue
+                identity = f"diarias-planilha-v1|{start.isoformat()}|{end.isoformat()}|{_diarias_name_key(collaborator)}"
+                parsed_rows.append({
+                    "Inicio": start,
+                    "Fim": end,
+                    "Mes": f"{end.year}-{end.month:02d}",
+                    "Colaborador": collaborator,
+                    "Funcao": "Colaborador",
+                    "Valor": max(float(amount), 0.0),
+                    "Arquivo": f"{file_name} - {worksheet.title}",
+                    "Hash Documento": hashlib.sha256(identity.encode("utf-8")).hexdigest(),
+                })
+    workbook.close()
+    return {"rows": parsed_rows, "warnings": warnings, "periods": periods_found}
+
+
+def _render_diarias_spreadsheet_import() -> None:
+    st.markdown("#### Importar diárias por planilha quinzenal")
+    st.caption(
+        "Envie a planilha XLSX com um ou vários blocos de quinzena. Cada bloco deve conter o período, "
+        "a coluna **Colaborador** e a coluna de **Valor**. O arquivo não é armazenado: somente período, "
+        "colaborador e valor total são salvos."
+    )
+    reference_year = int(st.number_input(
+        "Ano de referência dos períodos",
+        min_value=2020,
+        max_value=CURRENT_YEAR + 1,
+        value=CURRENT_YEAR,
+        step=1,
+        key="cad_diarias_reference_year",
+        help="Usado quando a planilha informa apenas dia e mês, como 13/10 a 23/10.",
+    ))
+    files = st.file_uploader(
+        "Planilhas de diárias",
+        type=["xlsx", "xlsm"],
+        accept_multiple_files=True,
+        key="cad_diarias_spreadsheet_files",
+    )
+    if files:
+        rows: list[dict[str, object]] = []
+        warnings: list[str] = []
+        period_labels: set[tuple[object, object]] = set()
+        with st.spinner("Lendo quinzenas, colaboradores e valores..."):
+            for uploaded in files:
+                try:
+                    result = _read_diarias_spreadsheet(
+                        uploaded.getvalue(), uploaded.name, reference_year
+                    )
+                    rows.extend(result.get("rows", []))
+                    warnings.extend(result.get("warnings", []))
+                except Exception as exc:
+                    LOGGER.exception("Falha ao ler planilha de diárias: %s", uploaded.name)
+                    warnings.append(f"{uploaded.name}: arquivo não pôde ser lido ({type(exc).__name__}).")
+        preview = pd.DataFrame(rows, columns=[
+            "Inicio", "Fim", "Mes", "Colaborador", "Funcao", "Valor",
+            "Arquivo", "Hash Documento",
+        ])
+        duplicate_count = 0
+        if not preview.empty:
+            preview["_Nome Chave"] = preview["Colaborador"].map(_diarias_name_key)
+            duplicate_mask = preview.duplicated(
+                subset=["Inicio", "Fim", "_Nome Chave"], keep="last"
+            )
+            duplicate_count = int(duplicate_mask.sum())
+            preview = preview.loc[~duplicate_mask].drop(columns=["_Nome Chave"]).reset_index(drop=True)
+            period_labels = set(zip(preview["Inicio"], preview["Fim"]))
+        if warnings:
+            with st.expander(f"Ver {len(warnings)} aviso(s) da leitura"):
+                for warning in warnings:
+                    st.write(f"• {warning}")
+        if duplicate_count:
+            st.warning(f"{duplicate_count} colaborador(es) repetido(s) na mesma quinzena foram consolidados.")
+        if preview.empty:
+            st.warning("Nenhuma quinzena com colaboradores e valores foi encontrada.")
+        else:
+            metric_columns = st.columns(3)
+            metric_columns[0].metric("Quinzenas encontradas", len(period_labels))
+            metric_columns[1].metric("Colaboradores", len(preview))
+            metric_columns[2].metric("Valor total", fmt_brl(pd.to_numeric(preview["Valor"], errors="coerce").sum()))
+            edited = st.data_editor(
+                preview,
+                width="stretch",
+                hide_index=True,
+                disabled=["Inicio", "Fim", "Mes", "Arquivo", "Hash Documento"],
+                column_config={
+                    "Inicio": st.column_config.DateColumn("Início", format="DD/MM/YYYY"),
+                    "Fim": st.column_config.DateColumn("Fim", format="DD/MM/YYYY"),
+                    "Mes": st.column_config.TextColumn("Mês"),
+                    "Colaborador": st.column_config.TextColumn("Colaborador", required=True),
+                    "Funcao": st.column_config.SelectboxColumn(
+                        "Função",
+                        options=["Colaborador", "Motorista", "Ajudante de motorista"],
+                        required=True,
+                    ),
+                    "Valor": st.column_config.NumberColumn(
+                        "Total da quinzena", min_value=0.0, step=1.0, format="R$ %.2f", required=True
+                    ),
+                    "Arquivo": st.column_config.TextColumn("Origem"),
+                    "Hash Documento": None,
+                },
+                key="cad_diarias_spreadsheet_preview",
+            )
+            valid_mask = (
+                pd.to_datetime(edited["Inicio"], errors="coerce").notna()
+                & pd.to_datetime(edited["Fim"], errors="coerce").notna()
+                & edited["Colaborador"].fillna("").astype(str).str.strip().ne("")
+                & pd.to_numeric(edited["Valor"], errors="coerce").ge(0)
+            )
+            valid_rows = edited.loc[valid_mask].copy()
+            invalid_count = int((~valid_mask).sum())
+            if invalid_count:
+                st.warning(f"{invalid_count} linha(s) precisam de colaborador ou valor válido.")
+            st.info(
+                "Ao importar, os registros já existentes que coincidam ou se sobreponham às quinzenas "
+                "exibidas serão substituídos, inclusive os antigos RDVs do mesmo período. "
+                "As demais quinzenas permanecem inalteradas."
+            )
+            if st.button(
+                f"Importar {len(valid_rows)} colaborador(es) de {len(period_labels)} quinzena(s)",
+                type="primary",
+                width="stretch",
+                disabled=valid_rows.empty,
+                key="cad_diarias_spreadsheet_import_button",
+            ):
+                imported_at = datetime.now(timezone.utc)
+                records = []
+                for row in valid_rows.to_dict("records"):
+                    end = pd.to_datetime(row.get("Fim"), errors="coerce")
+                    row["Mes"] = f"{end.year}-{end.month:02d}"
+                    row["Importado Em"] = imported_at
+                    records.append(row)
+                saved_rows, saved_periods = backend.replace_diarias_equipe_periods(records)
+                clear_cached_reads()
+                st.success(
+                    f"{saved_rows} colaborador(es) salvos em {saved_periods} quinzena(s). "
+                    "Os totais já entram nos dashboards."
+                )
+                st.rerun()
+
+    _render_dataset_editor(
+        "diarias_equipe",
+        backend.load_diarias_equipe,
+        ["Inicio", "Fim", "Mes", "Colaborador", "Funcao", "Valor", "Arquivo", "Hash Documento", "Importado Em"],
+        ["Inicio", "Fim", "Mes", "Colaborador", "Funcao", "Valor", "Arquivo", "Hash Documento"],
+        "cad_diarias_equipe_table",
+        {
+            "Inicio": st.column_config.DateColumn("Início", format="DD/MM/YYYY"),
+            "Fim": st.column_config.DateColumn("Fim", format="DD/MM/YYYY"),
+            "Valor": _money_col("Total original"),
+            "Hash Documento": st.column_config.TextColumn("Identificador", disabled=True),
+            "Importado Em": st.column_config.DatetimeColumn("Importado em", disabled=True),
+        },
+        ["Mes", "Colaborador", "Funcao", "Arquivo"],
+    )
+
+
 def _render_rdv_import() -> None:
     st.markdown("#### Importar diárias originais por RDV")
     st.caption(
@@ -15024,7 +15303,7 @@ def render_cadastro() -> None:
 
         if active_tab == "Diárias":
             with st.container(border=True):
-                _render_rdv_import()
+                _render_diarias_spreadsheet_import()
 
         if active_tab == "Rotas":
             _render_route_registry(plate_map)
