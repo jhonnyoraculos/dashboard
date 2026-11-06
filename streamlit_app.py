@@ -4578,7 +4578,13 @@ def _calculate_freight_quote(
     helper_count = max(employee_count - 1, 0)
     helper_employee_hours = total_operation_hours * helper_count
     is_freighter = bool(reference.get("is_freighter"))
-    estimated_days = max(float(math.ceil(total_operation_hours / 24.0)), 1.0)
+    # Equipe e freteiro recebem por jornada operacional. Cada bloco iniciado de
+    # ate 10 horas gera uma diaria; o hotel continua usando apenas blocos
+    # completos de 10 horas, conforme sua regra propria.
+    estimated_days = max(
+        float(math.ceil(total_operation_hours / FREIGHT_HOTEL_DAY_HOURS)),
+        1.0,
+    )
     applied_assistant_daily_rate = max(float(assistant_daily_rate), 0.0)
     applied_driver_daily_rate = max(float(driver_daily_rate), 0.0)
     reference_daily_rate = max(float(reference.get("freighter_daily_rate") or 0.0), 0.0)
@@ -4586,7 +4592,7 @@ def _calculate_freight_quote(
         float(freighter_daily_rate_override), 0.0
     ) if freighter_daily_rate_override is not None else reference_daily_rate
     if is_freighter:
-        route_days = float(freighter_trip_days or estimated_days)
+        route_days = max(float(freighter_trip_days or 0.0), estimated_days)
         freighter_days = float(max(math.ceil(route_days), 1))
         freighter_daily_cost = freighter_days * freighter_daily_rate
         freighter_excess_km = max(float(distance_km) - FREIGHT_FREIGHTER_INCLUDED_KM, 0.0)
@@ -4608,7 +4614,7 @@ def _calculate_freight_quote(
         applied_excess_rate = 0.0
         freighter_excess_cost = 0.0
         freighter_cost = 0.0
-        route_days = float(own_trip_days or estimated_days)
+        route_days = max(float(own_trip_days or 0.0), estimated_days)
         own_days = float(max(math.ceil(route_days), 1))
         assistant_days = own_days
         driver_salary_cost = driver_employee_hours * applied_driver_hourly_rate
@@ -8504,7 +8510,8 @@ def render_calculadora_frete() -> None:
                 )
             st.caption(
                 "Salário e diária são separados e somados. No Freteiro, a diária contratada já cobre o motorista; "
-                "entram à parte somente o salário e a diária do(s) ajudante(s)."
+                "entram à parte somente o salário e a diária do(s) ajudante(s). "
+                "Cada jornada iniciada de até 10 horas conta como uma diária."
             )
             if is_freighter:
                 freighter_cols = st.columns(2)
@@ -8527,7 +8534,7 @@ def render_calculadora_frete() -> None:
                         key=f"frete_excess_rate_{selected_plate}",
                     )
                 st.caption(
-                    "A diária cobre os primeiros 120 km. Qualquer fração é arredondada para uma diária inteira, "
+                    "A diária cobre os primeiros 120 km. Cada jornada iniciada de até 10 horas conta como uma diária, "
                     "e o ajudante usa os mesmos dias cobrados. "
                     "As alterações valem apenas para esta simulação e não mudam o cadastro da placa."
                 )
@@ -8552,7 +8559,7 @@ def render_calculadora_frete() -> None:
             ),
             "freighter_trip_days": (
                 float(scenario_profile.get("average_trip_days") or 0.0)
-                if is_freighter
+                if is_freighter and use_route
                 else None
             ),
             "freighter_excess_km_rate": float(freighter_excess_km_rate),
@@ -8561,7 +8568,7 @@ def render_calculadora_frete() -> None:
             "unload_kg_per_hour": float(unload_kg_per_hour),
             "own_trip_days": (
                 float(scenario_profile.get("average_trip_days") or 0.0)
-                if not is_freighter
+                if not is_freighter and use_route
                 else None
             ),
         }
@@ -8602,7 +8609,7 @@ def render_calculadora_frete() -> None:
                 f'<strong>{h(fmt_brl(quote["driver_salary_cost"], compact_threshold=float("inf")))}</strong></div>'
                 f'<div class="frete-breakdown-card"><p>Salário do(s) ajudante(s)</p>'
                 f'<strong>{h(fmt_brl(quote["helper_salary_cost"], compact_threshold=float("inf")))}</strong></div>'
-                f'<div class="frete-breakdown-card"><p>Diária do motorista</p>'
+                f'<div class="frete-breakdown-card"><p>Diária do motorista — {h(fmt_num(quote["own_days"], 0))} dia(s)</p>'
                 f'<strong>{h(fmt_brl(quote["driver_daily_cost"], compact_threshold=float("inf")))}</strong></div>'
             )
         )
@@ -8733,7 +8740,11 @@ def render_calculadora_frete() -> None:
             rows_by_plate,
             general_reference,
             quote_inputs=quote_inputs,
-            average_trip_days=float(scenario_profile.get("average_trip_days") or 0.0),
+            average_trip_days=(
+                float(scenario_profile.get("average_trip_days") or 0.0)
+                if use_route
+                else 0.0
+            ),
             excess_km_rate=float(freighter_excess_km_rate),
             assistant_daily_rate=float(assistant_daily_rate),
             driver_daily_rate=float(driver_daily_rate),
@@ -19278,7 +19289,7 @@ def _render_route_freight_calculator(
                 freighter_daily_rate_override = None
                 st.info("A placa selecionada é da frota própria; estas tarifas só são usadas ao comparar com Freteiros.")
         st.caption(
-            "Regra: qualquer fração de dia é arredondada para o próximo dia inteiro. No Freteiro: diária do veículo × dias "
+            "Regra: cada jornada iniciada de até 10 horas conta como uma diária. No Freteiro: diária do veículo × dias "
             "+ KM excedente acima de 120 km. "
             "Valores alterados aqui valem somente para esta simulação."
         )
@@ -19473,7 +19484,7 @@ def _render_route_freight_calculator(
             f"{fmt_brl(quote['hotel_daily_rate'], compact_threshold=float('inf'))} = **{fmt_brl(quote['hotel_cost'])}**."
         )
         st.caption(
-            f"{('O Freteiro usa a diária da placa e a duração média histórica do cenário.' if is_freighter else 'O caminhão usa custo por KM; motorista e ajudante usam diárias inteiras do cenário.')} Hotel só é permitido quando há hospedagem "
+            f"{('O Freteiro usa a diária da placa e jornadas iniciadas de até 10 horas.' if is_freighter else 'O caminhão usa custo por KM; motorista e ajudante usam uma diária por jornada iniciada de até 10 horas.')} Hotel só é permitido quando há hospedagem "
             f"historicamente vinculada à {average_basis}. Menos de 10 horas não gera diária."
         )
 

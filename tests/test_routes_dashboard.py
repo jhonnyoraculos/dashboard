@@ -437,6 +437,35 @@ class RoutesDashboardTests(unittest.TestCase):
         self.assertEqual(quote["helper_daily_cost"], 0)
         self.assertEqual(quote["driver_salary_cost"], 60)
 
+    def test_daily_charges_each_started_ten_hour_workday(self):
+        quote = dashboard._calculate_freight_quote(
+            {
+                "rate_per_km": 5.0,
+                "hotel_daily_rate": 200.0,
+                "is_freighter": False,
+            },
+            weight_kg=1_000,
+            distance_km=2_960,
+            employees=2,
+            employee_hourly_rate=0,
+            driver_hourly_rate=0,
+            helper_hourly_rate=0,
+            driver_daily_rate=100,
+            assistant_daily_rate=100,
+            unload_kg_per_hour=500,
+            own_trip_days=2,
+            margin_percent=0,
+            include_hotels=True,
+        )
+
+        self.assertEqual(quote["total_operation_hours"], 39)
+        self.assertEqual(quote["own_days"], 4)
+        self.assertEqual(quote["assistant_days"], 4)
+        self.assertEqual(quote["driver_daily_cost"], 400)
+        self.assertEqual(quote["helper_daily_cost"], 400)
+        self.assertEqual(quote["hotel_days"], 3)
+        self.assertEqual(quote["hotel_cost"], 600)
+
     def test_selected_plate_families_start_with_350_kg_per_hour(self):
         for plate in ("HMF9A43", "OQH-1A23", "SYT0B06"):
             with self.subTest(plate=plate):
