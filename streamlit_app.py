@@ -7256,7 +7256,7 @@ def frota_filter_controls(seed: dict) -> dict[str, object]:
         categoria_param = query_multiselect(categoria_selected)
         only_freteiro = categoria_param == ["Freteiro"]
         include_salary = bool(st.session_state.get("rank_incluir_salario", True))
-        include_hoteis = bool(st.session_state.get("rank_incluir_hoteis", False))
+        include_hoteis = bool(st.session_state.get("rank_incluir_hoteis", True))
 
         route_seed_params = {
             "ano": None if ano == "Todos" else ano,
