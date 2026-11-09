@@ -85,7 +85,8 @@ _backend_pedagio_tracker_ready = getattr(backend, "PEDAGIO_TRACKER_VERSION", "")
 _backend_pedagio_ipva_ready = getattr(backend, "PEDAGIO_IPVA_VERSION", "") == "annual-append-v1"
 _backend_routes_ready = getattr(backend, "ROUTES_BUILD_VERSION", "") == "rotas-horas-operacao-unica-v32"
 _backend_import_progress_ready = getattr(backend, "IMPORT_PROGRESS_VERSION", "") == "all-imports-v1"
-if not _backend_features_ready or not _backend_aluguel_period_ready or not _backend_aluguel_monthly_ready or not _backend_pedagio_chart_ready or not _backend_pedagio_insurance_ready or not _backend_pedagio_tracker_ready or not _backend_pedagio_ipva_ready or not _backend_routes_ready or not _backend_import_progress_ready:
+_backend_frota_cost_ready = getattr(backend, "FROTA_COST_VERSION", "") == "stationary-fixed-cost-v2"
+if not _backend_features_ready or not _backend_aluguel_period_ready or not _backend_aluguel_monthly_ready or not _backend_pedagio_chart_ready or not _backend_pedagio_insurance_ready or not _backend_pedagio_tracker_ready or not _backend_pedagio_ipva_ready or not _backend_routes_ready or not _backend_import_progress_ready or not _backend_frota_cost_ready:
     backend = importlib.reload(backend)
 
 # O Streamlit também pode manter módulos auxiliares em memória após o deploy.
@@ -377,7 +378,7 @@ def require_authentication() -> bool:
             st.error(f"Usuario ou senha incorretos. Restam {AUTH_MAX_ATTEMPTS - failures} tentativa(s).")
     return False
 CURRENT_YEAR = date.today().year
-APP_VERSION = "rastreador-dashboard-v91"
+APP_VERSION = "frota-parada-v92"
 LOGGER = logging.getLogger("jr_dashboard.streamlit")
 RANK_ROUTES_ENABLED = True
 ROUTE_CACHE_TTL_SECONDS = max(int(os.environ.get("JR_ROUTE_CACHE_TTL_SECONDS", "1800") or 1800), 120)

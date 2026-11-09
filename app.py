@@ -67,6 +67,7 @@ PEDAGIO_INSURANCE_PERIOD_VERSION = "annual-total-v3"
 PEDAGIO_TRACKER_VERSION = "monthly-active-plates-v3"
 PEDAGIO_IPVA_VERSION = "annual-append-v1"
 IMPORT_PROGRESS_VERSION = "all-imports-v1"
+FROTA_COST_VERSION = "stationary-fixed-cost-v2"
 USE_LEGACY_ROUTE_HOTEL_ALLOCATION = False
 BACKUP_METADATA_KEY = "backup.last_downloaded_at"
 COLLABORATOR_ALIASES_METADATA_KEY = "routes.collaborator_aliases"
@@ -8163,15 +8164,9 @@ def _ranking_type_total(df: pd.DataFrame, tipo: str) -> float:
     return float(costs.loc[type_values == normalized_type].sum())
 
 
-def _ranking_stationary_fleet_cost(
-    total_cost: float,
-    fuel_cost: float,
-    maintenance_cost: float,
-    hotel_cost: float,
-    toll_cost: float,
-) -> float:
-    stationary_cost = total_cost - fuel_cost - maintenance_cost - hotel_cost - toll_cost
-    return max(float(stationary_cost), 0.0)
+def _ranking_stationary_fleet_cost(df_pedagio: pd.DataFrame) -> float:
+    fixed_vehicle_types = ("Seguro", "IPVA", "Rastreador", "Licenciamento", "DPVAT")
+    return sum(_ranking_type_total(df_pedagio, tipo) for tipo in fixed_vehicle_types)
 
 
 def _ranking_count_by_plate(df: pd.DataFrame) -> dict[str, int]:
@@ -9248,13 +9243,7 @@ def data_frota(params: dict | None = None) -> dict:
     total_manutencao = sum(row["manutencao"] for row in ranking)
     total_combustivel = sum(row["combustivel"] for row in ranking)
     total_pedagio_operacional = _ranking_type_total(df_ped, "Pedágio")
-    custo_frota_parada = _ranking_stationary_fleet_cost(
-        total_gasto,
-        total_combustivel,
-        total_manutencao,
-        total_hoteis,
-        total_pedagio_operacional,
-    )
+    custo_frota_parada = _ranking_stationary_fleet_cost(df_ped)
     total_peso_filtrado = sum(row["peso_total"] for row in ranking)
     total_peso_geral = (
         float(pd.to_numeric(df_peso_total.get("Peso"), errors="coerce").fillna(0).sum())
