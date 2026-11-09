@@ -63,12 +63,13 @@ DB_METADATA_TABLE = "dashboard_metadata"
 BACKEND_BUILD_VERSION = "aluguel-multiplicar-meses-v1"
 ROUTES_BUILD_VERSION = "rotas-horas-operacao-unica-v32"
 PEDAGIO_CHART_VERSION = "all-types-v1"
-PEDAGIO_INSURANCE_PERIOD_VERSION = "date-range-v1"
+PEDAGIO_INSURANCE_PERIOD_VERSION = "annual-total-v2"
 IMPORT_PROGRESS_VERSION = "all-imports-v1"
 USE_LEGACY_ROUTE_HOTEL_ALLOCATION = False
 BACKUP_METADATA_KEY = "backup.last_downloaded_at"
 COLLABORATOR_ALIASES_METADATA_KEY = "routes.collaborator_aliases"
 ROUTE_ALIASES_METADATA_KEY = "routes.route_aliases"
+PEDAGIO_INSURANCE_TOTAL_MIGRATION_KEY = "pedagio.insurance_total_migration_v1"
 ROUTE_STAFF_LOCAL_DAILY_RATE = 32.0
 ROUTE_STAFF_OTHER_DAILY_RATE = 100.0
 _DB_ENGINE = None
@@ -79,6 +80,8 @@ _METADATA_CACHE_SECONDS = float(os.environ.get("JR_METADATA_CACHE_SECONDS", "120
 _METADATA_CACHE = {"loaded": False, "loaded_at": 0.0, "values": {}, "lock": threading.Lock()}
 _DATASET_SCHEMA_READY: set[str] = set()
 _DATASET_SCHEMA_LOCK = threading.Lock()
+_PEDAGIO_INSURANCE_MIGRATION_LOCK = threading.Lock()
+_PEDAGIO_INSURANCE_MIGRATION_READY = False
 
 ImportProgressCallback = Callable[[float, str], None]
 
@@ -181,7 +184,7 @@ _HOTEIS_COLUMNS = [
     "Origem",
     "Atualizado Em",
 ]
-_PEDAGIO_COLUMNS = ["PLACA", "Tipo", "Custo", "Mes", "Data", "Inicio", "Fim", "Categoria"]
+_PEDAGIO_COLUMNS = ["PLACA", "Tipo", "Custo", "Valor Total", "Mes", "Data", "Inicio", "Fim", "Categoria"]
 _ALUGUEL_VEICULOS_COLUMNS = [
     "Data",
     "Mes",
@@ -331,6 +334,7 @@ _COLUMN_SQL_TYPES = {
     "Horas Operacao": "DOUBLE PRECISION",
     "Litros": "DOUBLE PRECISION",
     "Custo": "DOUBLE PRECISION",
+    "Valor Total": "DOUBLE PRECISION",
     "Combustivel": "TEXT",
     "POSTOS": "TEXT",
     "PLACA": "TEXT",
@@ -2060,6 +2064,35 @@ def _month_sequence(start_mes: str, end_mes: str) -> list[str]:
     return months
 
 
+def _insurance_cycle_dates(start_date: date, end_date: date) -> list[date]:
+    """Retorna uma parcela por ciclo mensal, sem duplicar o mês do vencimento anual."""
+    if start_date > end_date:
+        raise ValueError("A data inicial não pode ser posterior à data final.")
+    if start_date == end_date:
+        return [start_date]
+
+    dates: list[date] = []
+    offset = 0
+    while True:
+        cycle_date = (pd.Timestamp(start_date) + pd.DateOffset(months=offset)).date()
+        if cycle_date >= end_date:
+            break
+        dates.append(cycle_date)
+        offset += 1
+    return dates or [start_date]
+
+
+def _allocate_insurance_total(total_value: float, installment_count: int) -> list[float]:
+    """Divide o total em centavos e preserva exatamente a soma informada."""
+    if installment_count <= 0:
+        raise ValueError("O seguro precisa ter pelo menos uma parcela mensal.")
+    total_cents = int(round(float(total_value) * 100))
+    if total_cents <= 0:
+        raise ValueError("Informe um valor total de seguro maior que zero.")
+    base_cents, remainder = divmod(total_cents, installment_count)
+    return [(base_cents + (1 if index < remainder else 0)) / 100 for index in range(installment_count)]
+
+
 def redistribute_pedagio_seguros_period(
     start_mes: str = "2025-10",
     end_mes: str = "2026-10",
@@ -2261,7 +2294,7 @@ def replace_pedagio_seguros_por_placa(
 def replace_pedagio_seguro_placa(
     placa: str,
     categoria: str,
-    custo_mensal: float,
+    valor_total: float,
     start_date: date | datetime | str,
     end_date: date | datetime | str,
 ) -> dict:
@@ -2275,18 +2308,18 @@ def replace_pedagio_seguro_placa(
     if start_value > end_value:
         raise ValueError("A data inicial não pode ser posterior à data final.")
 
-    start_mes = start_value.strftime("%Y-%m")
-    end_mes = end_value.strftime("%Y-%m")
-    months = _month_sequence(start_mes, end_mes)
+    cycle_dates = _insurance_cycle_dates(start_value, end_value)
+    months = [cycle_date.strftime("%Y-%m") for cycle_date in cycle_dates]
     plate_value = _normalize_plate_value(placa)
     if pd.isna(plate_value) or not _is_plate_or_asset_identifier(plate_value):
         raise ValueError("Informe uma placa/equipamento válido.")
 
     category_value = _normalize_category_value(categoria or "Transporte")
-    cost_value = pd.to_numeric(pd.Series([custo_mensal]), errors="coerce").iloc[0]
-    if pd.isna(cost_value) or float(cost_value) <= 0:
-        raise ValueError("Informe um valor mensal de seguro maior que zero.")
-    cost_value = float(cost_value)
+    total_value = pd.to_numeric(pd.Series([valor_total]), errors="coerce").iloc[0]
+    if pd.isna(total_value) or float(total_value) <= 0:
+        raise ValueError("Informe um valor total de seguro maior que zero.")
+    total_value = float(total_value)
+    installment_values = _allocate_insurance_total(total_value, len(cycle_dates))
 
     from sqlalchemy import text
 
@@ -2313,21 +2346,22 @@ def replace_pedagio_seguro_placa(
         )
         deleted = max(result.rowcount or 0, 0)
 
-        for mes in months:
-            year, month = (int(part) for part in mes.split("-"))
+        for cycle_date, cost_value in zip(cycle_dates, installment_values):
+            mes = cycle_date.strftime("%Y-%m")
             conn.execute(
                 text(
                     f"""
-                    INSERT INTO {table} ("PLACA", "Tipo", "Custo", "Mes", "Data", "Inicio", "Fim", "Categoria")
-                    VALUES (:placa, :tipo, :custo, :mes, :data, :inicio, :fim, :categoria)
+                    INSERT INTO {table} ("PLACA", "Tipo", "Custo", "Valor Total", "Mes", "Data", "Inicio", "Fim", "Categoria")
+                    VALUES (:placa, :tipo, :custo, :valor_total, :mes, :data, :inicio, :fim, :categoria)
                     """
                 ),
                 {
                     "placa": str(plate_value),
                     "tipo": "Seguro",
                     "custo": cost_value,
+                    "valor_total": total_value,
                     "mes": mes,
-                    "data": max(start_value, date(year, month, 1)),
+                    "data": cycle_date,
                     "inicio": start_value,
                     "fim": end_value,
                     "categoria": category_value,
@@ -2359,9 +2393,136 @@ def replace_pedagio_seguro_placa(
         "inserted": inserted,
         "plate": str(plate_value),
         "months": months,
+        "total_value": total_value,
+        "installment_values": installment_values,
         "start_date": start_value,
         "end_date": end_value,
     }
+
+
+def migrate_pedagio_insurance_totals(*, force: bool = False) -> dict:
+    """Corrige uma vez os seguros por período que receberam o total como custo mensal."""
+    global _PEDAGIO_INSURANCE_MIGRATION_READY
+
+    with _PEDAGIO_INSURANCE_MIGRATION_LOCK:
+        if _PEDAGIO_INSURANCE_MIGRATION_READY and not force:
+            return {"migrated": False, "already_applied": True, "policies": 0, "deleted": 0, "inserted": 0}
+        if not force and _db_metadata(PEDAGIO_INSURANCE_TOTAL_MIGRATION_KEY, False):
+            _PEDAGIO_INSURANCE_MIGRATION_READY = True
+            return {"migrated": False, "already_applied": True, "policies": 0, "deleted": 0, "inserted": 0}
+
+        from sqlalchemy import text
+
+        table = _quote_identifier(DB_TABLES["pedagio"])
+        version = datetime.now(timezone.utc).isoformat()
+        deleted = 0
+        inserted = 0
+        policy_count = 0
+        with _db_engine().begin() as conn:
+            _ensure_dataset_table(conn, "pedagio")
+            rows = conn.execute(
+                text(
+                    f"""
+                    SELECT ctid::text AS row_id, "PLACA", "Categoria", "Custo", "Valor Total", "Inicio", "Fim"
+                    FROM {table}
+                    WHERE "Tipo" = :tipo
+                      AND "Inicio" IS NOT NULL
+                      AND "Fim" IS NOT NULL
+                    """
+                ),
+                {"tipo": "Seguro"},
+            ).mappings().all()
+
+            grouped: dict[tuple[str, str, date, date], list[dict]] = {}
+            for raw_row in rows:
+                row = dict(raw_row)
+                plate_value = _normalize_plate_value(row.get("PLACA"))
+                start_value = pd.to_datetime(row.get("Inicio"), errors="coerce")
+                end_value = pd.to_datetime(row.get("Fim"), errors="coerce")
+                if pd.isna(plate_value) or pd.isna(start_value) or pd.isna(end_value):
+                    continue
+                start_value = start_value.date()
+                end_value = end_value.date()
+                if start_value > end_value:
+                    continue
+                category_value = _normalize_category_value(row.get("Categoria") or "Transporte")
+                grouped.setdefault((str(plate_value), category_value, start_value, end_value), []).append(row)
+
+            for (plate_value, category_value, start_value, end_value), policy_rows in grouped.items():
+                stored_totals = pd.to_numeric(
+                    pd.Series([row.get("Valor Total") for row in policy_rows]), errors="coerce"
+                ).dropna()
+                stored_totals = stored_totals[stored_totals > 0]
+                monthly_values = pd.to_numeric(
+                    pd.Series([row.get("Custo") for row in policy_rows]), errors="coerce"
+                ).dropna()
+                monthly_values = monthly_values[monthly_values > 0]
+                if not stored_totals.empty:
+                    total_value = float(stored_totals.iloc[0])
+                elif monthly_values.empty:
+                    continue
+                elif float(monthly_values.max() - monthly_values.min()) <= 0.01:
+                    # A versão anterior repetia o total anual em cada mês.
+                    total_value = float(monthly_values.iloc[0])
+                else:
+                    # Uma política já rateada mantém a soma das parcelas.
+                    total_value = float(monthly_values.sum())
+
+                cycle_dates = _insurance_cycle_dates(start_value, end_value)
+                installment_values = _allocate_insurance_total(total_value, len(cycle_dates))
+                for row in policy_rows:
+                    result = conn.execute(
+                        text(f"DELETE FROM {table} WHERE ctid::text = :row_id"),
+                        {"row_id": row["row_id"]},
+                    )
+                    deleted += max(result.rowcount or 0, 0)
+
+                for cycle_date, installment_value in zip(cycle_dates, installment_values):
+                    conn.execute(
+                        text(
+                            f"""
+                            INSERT INTO {table}
+                                ("PLACA", "Tipo", "Custo", "Valor Total", "Mes", "Data", "Inicio", "Fim", "Categoria")
+                            VALUES
+                                (:placa, :tipo, :custo, :valor_total, :mes, :data, :inicio, :fim, :categoria)
+                            """
+                        ),
+                        {
+                            "placa": plate_value,
+                            "tipo": "Seguro",
+                            "custo": installment_value,
+                            "valor_total": total_value,
+                            "mes": cycle_date.strftime("%Y-%m"),
+                            "data": cycle_date,
+                            "inicio": start_value,
+                            "fim": end_value,
+                            "categoria": category_value,
+                        },
+                    )
+                    inserted += 1
+                policy_count += 1
+
+            migration_result = {
+                "applied_at": version,
+                "policies": policy_count,
+                "deleted": deleted,
+                "inserted": inserted,
+            }
+            _write_metadata(conn, PEDAGIO_INSURANCE_TOTAL_MIGRATION_KEY, migration_result)
+            if policy_count:
+                _write_metadata(conn, "pedagio.version", version)
+                _write_metadata(conn, "import.version", version)
+
+        _PEDAGIO_INSURANCE_MIGRATION_READY = True
+        if policy_count:
+            _clear_dataset_cache("pedagio")
+        return {
+            "migrated": True,
+            "already_applied": False,
+            "policies": policy_count,
+            "deleted": deleted,
+            "inserted": inserted,
+        }
 
 
 def rename_plate(old_plate, new_plate, categoria: str, diaria: float | None = None) -> str:
@@ -4642,6 +4803,7 @@ def agg_hoteis(df: pd.DataFrame) -> dict:
 
 
 def load_pedagio() -> pd.DataFrame:
+    migrate_pedagio_insurance_totals()
     cache = _PEDAGIO_CACHE
     with cache["lock"]:
         version = _db_version("pedagio")
@@ -5237,7 +5399,7 @@ def agg_pedagio(df: pd.DataFrame) -> dict:
                     .groupby(group["Mes"].astype("string").fillna("") if "Mes" in group.columns else pd.Series("", index=group.index))
                     .sum()
                 )
-                value = float(monthly_totals.mean()) if len(monthly_totals) > 1 else float(monthly_totals.sum())
+                value = float(monthly_totals.sum())
                 seguro_total += value
                 key_map = dict(zip(group_columns, keys))
                 placa = str(key_map.get("PLACA") or "").strip()

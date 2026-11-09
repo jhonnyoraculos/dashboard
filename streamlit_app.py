@@ -76,7 +76,7 @@ _backend_aluguel_period_ready = {"Inicio", "Fim"}.issubset(
 )
 _backend_aluguel_monthly_ready = getattr(backend, "BACKEND_BUILD_VERSION", "") == "aluguel-multiplicar-meses-v1"
 _backend_pedagio_chart_ready = getattr(backend, "PEDAGIO_CHART_VERSION", "") == "all-types-v1"
-_backend_pedagio_insurance_ready = getattr(backend, "PEDAGIO_INSURANCE_PERIOD_VERSION", "") == "date-range-v1"
+_backend_pedagio_insurance_ready = getattr(backend, "PEDAGIO_INSURANCE_PERIOD_VERSION", "") == "annual-total-v2"
 _backend_routes_ready = getattr(backend, "ROUTES_BUILD_VERSION", "") == "rotas-horas-operacao-unica-v32"
 _backend_import_progress_ready = getattr(backend, "IMPORT_PROGRESS_VERSION", "") == "all-imports-v1"
 if not _backend_features_ready or not _backend_aluguel_period_ready or not _backend_aluguel_monthly_ready or not _backend_pedagio_chart_ready or not _backend_pedagio_insurance_ready or not _backend_routes_ready or not _backend_import_progress_ready:
@@ -16152,10 +16152,12 @@ def render_cadastro() -> None:
                     else:
                         end_date = None
                 with c4:
-                    custo_label = "Valor mensal do seguro" if is_insurance else "Custo"
+                    custo_label = "Valor total do seguro" if is_insurance else "Custo"
                     custo = st.number_input(custo_label, min_value=0.0, step=10.0, format="%.2f", key="cad_ped_custo")
                     button_label = "Salvar seguro" if is_insurance else "Salvar pedágio/extra"
                     submitted = st.button(button_label, type="primary", width="stretch", key="cad_ped_submit")
+                if is_insurance:
+                    st.caption("Informe o valor anual/total. O sistema divide esse total pelas parcelas mensais entre as datas escolhidas.")
 
                 p1 = st.columns(4)[0]
                 with p1:
@@ -16174,7 +16176,7 @@ def render_cadastro() -> None:
                         st.warning("Preencha os campos obrigatórios: " + ", ".join(_entry_field_label(field) for field in missing))
                     elif is_insurance:
                         if custo <= 0:
-                            st.warning("Informe um valor mensal de seguro maior que zero.")
+                            st.warning("Informe um valor total de seguro maior que zero.")
                         elif start_date > end_date:
                             st.warning("A data de início não pode ser posterior à data de fim.")
                         else:
@@ -16193,7 +16195,8 @@ def render_cadastro() -> None:
                                 clear_cached_reads()
                                 _reset_dataset_editor("cad_ped_table")
                                 st.success(
-                                    f"Seguro salvo para {placa}: {result.get('inserted', 0)} mês(es). "
+                                    f"Seguro de {fmt_brl(result.get('total_value', 0))} salvo para {placa} em "
+                                    f"{result.get('inserted', 0)} parcela(s) mensal(is). "
                                     f"{result.get('deleted', 0)} lançamento(s) anterior(es) da placa, a partir da data inicial, foram substituídos."
                                 )
                     else:
@@ -16214,7 +16217,7 @@ def render_cadastro() -> None:
             _render_dataset_editor(
                 "pedagio",
                 backend.load_pedagio,
-                ["Data", "Inicio", "Fim", "Mes", "PLACA", "Categoria", "Tipo", "Custo"],
+                ["Data", "Inicio", "Fim", "Mes", "PLACA", "Categoria", "Tipo", "Valor Total", "Custo"],
                 ["Data", "Tipo"],
                 "cad_ped_table",
                 {
@@ -16225,7 +16228,8 @@ def render_cadastro() -> None:
                     "PLACA": st.column_config.TextColumn("Placa"),
                     "Categoria": st.column_config.SelectboxColumn("Categoria", options=CATEGORY_OPTIONS, required=True),
                     "Tipo": st.column_config.SelectboxColumn("Tipo", options=PEDAGIO_TIPO_OPTIONS, required=True),
-                    "Custo": _money_col("Custo"),
+                    "Valor Total": _money_col("Valor total do seguro"),
+                    "Custo": _money_col("Valor mensal rateado"),
                 },
                 ["Mes", "PLACA", "Categoria", "Tipo"],
             )

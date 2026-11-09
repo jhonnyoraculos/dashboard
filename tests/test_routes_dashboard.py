@@ -332,13 +332,112 @@ class RoutesDashboardTests(unittest.TestCase):
         self.assertNotIn('"Mes" <=', deletes[0][0])
         self.assertEqual(len(insurance_inserts), 3)
         self.assertEqual([params["mes"] for _, params in insurance_inserts], ["2026-11", "2026-12", "2027-01"])
-        self.assertTrue(all(params["custo"] == 350.0 for _, params in insurance_inserts))
+        self.assertAlmostEqual(sum(params["custo"] for _, params in insurance_inserts), 350.0)
+        self.assertTrue(all(params["valor_total"] == 350.0 for _, params in insurance_inserts))
         self.assertTrue(all(params["inicio"] == date(2026, 11, 9) for _, params in insurance_inserts))
         self.assertTrue(all(params["fim"] == date(2027, 1, 20) for _, params in insurance_inserts))
         self.assertEqual(insurance_inserts[0][1]["data"], date(2026, 11, 9))
-        self.assertEqual(insurance_inserts[1][1]["data"], date(2026, 12, 1))
+        self.assertEqual(insurance_inserts[1][1]["data"], date(2026, 12, 9))
         self.assertEqual(result["deleted"], 2)
         self.assertEqual(result["inserted"], 3)
+        self.assertEqual(result["total_value"], 350.0)
+
+    def test_annual_insurance_total_is_split_into_twelve_exact_installments(self):
+        cycle_dates = backend._insurance_cycle_dates(date(2026, 10, 2), date(2027, 10, 2))
+        installments = backend._allocate_insurance_total(3102.87, len(cycle_dates))
+
+        self.assertEqual(len(cycle_dates), 12)
+        self.assertEqual(cycle_dates[0], date(2026, 10, 2))
+        self.assertEqual(cycle_dates[-1], date(2027, 9, 2))
+        self.assertAlmostEqual(sum(installments), 3102.87)
+        self.assertEqual(installments[:3], [258.58, 258.58, 258.58])
+        self.assertTrue(all(value in {258.57, 258.58} for value in installments))
+
+        insurance_rows = pd.DataFrame(
+            [
+                {
+                    "Data": cycle_date,
+                    "Mes": cycle_date.strftime("%Y-%m"),
+                    "PLACA": "HMQ5B91",
+                    "Categoria": "Transporte",
+                    "Tipo": "Seguro",
+                    "Custo": installment,
+                }
+                for cycle_date, installment in zip(cycle_dates, installments)
+            ]
+        )
+        summary = backend.agg_pedagio(insurance_rows)
+        self.assertAlmostEqual(summary["gasto_seguro"], 3102.87)
+        self.assertAlmostEqual(summary["custo_total"], 3102.87)
+
+    def test_insurance_migration_converts_repeated_total_to_monthly_installments(self):
+        executed = []
+        source_rows = [
+            {
+                "row_id": str(index),
+                "PLACA": "HMQ5B91",
+                "Categoria": "Transporte",
+                "Custo": 3102.87,
+                "Valor Total": None,
+                "Inicio": datetime(2026, 10, 2),
+                "Fim": datetime(2027, 10, 2),
+            }
+            for index in range(13)
+        ]
+
+        class Result:
+            rowcount = 1
+
+            def __init__(self, rows=None):
+                self._rows = rows or []
+
+            def mappings(self):
+                return self
+
+            def all(self):
+                return self._rows
+
+        class Connection:
+            def execute(self, statement, params=None):
+                statement_text = str(statement)
+                executed.append((statement_text, params or {}))
+                if statement_text.lstrip().upper().startswith("SELECT"):
+                    return Result(source_rows)
+                return Result()
+
+        class BeginContext:
+            def __enter__(self):
+                return Connection()
+
+            def __exit__(self, exc_type, exc, traceback):
+                return False
+
+        class Engine:
+            def begin(self):
+                return BeginContext()
+
+        with (
+            patch.object(backend, "_db_engine", return_value=Engine()),
+            patch.object(backend, "_ensure_dataset_table"),
+            patch.object(backend, "_write_metadata"),
+            patch.object(backend, "_clear_dataset_cache"),
+            patch.object(backend, "_PEDAGIO_INSURANCE_MIGRATION_READY", False),
+        ):
+            result = backend.migrate_pedagio_insurance_totals(force=True)
+
+        deletes = [params for statement, params in executed if statement.lstrip().upper().startswith("DELETE")]
+        inserts = [
+            params
+            for statement, params in executed
+            if statement.lstrip().upper().startswith("INSERT") and '"Valor Total"' in statement
+        ]
+        self.assertEqual(len(deletes), 13)
+        self.assertEqual(len(inserts), 12)
+        self.assertAlmostEqual(sum(params["custo"] for params in inserts), 3102.87)
+        self.assertTrue(all(params["valor_total"] == 3102.87 for params in inserts))
+        self.assertEqual(result["policies"], 1)
+        self.assertEqual(result["deleted"], 13)
+        self.assertEqual(result["inserted"], 12)
 
     def test_replace_seguro_placa_rejects_invalid_period_or_value(self):
         with self.assertRaises(ValueError):
