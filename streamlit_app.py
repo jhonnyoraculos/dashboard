@@ -374,7 +374,7 @@ def require_authentication() -> bool:
             st.error(f"Usuario ou senha incorretos. Restam {AUTH_MAX_ATTEMPTS - failures} tentativa(s).")
     return False
 CURRENT_YEAR = date.today().year
-APP_VERSION = "diarias-planilha-quinzenal-v90"
+APP_VERSION = "rastreador-dashboard-v91"
 LOGGER = logging.getLogger("jr_dashboard.streamlit")
 RANK_ROUTES_ENABLED = True
 ROUTE_CACHE_TTL_SECONDS = max(int(os.environ.get("JR_ROUTE_CACHE_TTL_SECONDS", "1800") or 1800), 120)

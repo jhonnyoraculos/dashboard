@@ -571,6 +571,31 @@ class RoutesDashboardTests(unittest.TestCase):
         self.assertAlmostEqual(tracker_summary["gasto_rastreador"], 100.0)
         self.assertEqual(tracker_summary["qtd_rastreador"], 3)
 
+    def test_pedagio_dashboard_includes_vex_tracker_but_not_other_vex_costs(self):
+        rows = pd.DataFrame(
+            [
+                {
+                    "Data": date(2026, 8, 1), "Mes": "2026-08", "PLACA": "AAA1A11",
+                    "Categoria": "Transporte", "Tipo": "Rastreador", "Custo": 50.0,
+                },
+                {
+                    "Data": date(2026, 8, 1), "Mes": "2026-08", "PLACA": "CCC3C33",
+                    "Categoria": "Vex", "Tipo": "Rastreador", "Custo": 50.0,
+                },
+                {
+                    "Data": date(2026, 8, 1), "Mes": "2026-08", "PLACA": "CCC3C33",
+                    "Categoria": "Vex", "Tipo": "Pedágio", "Custo": 200.0,
+                },
+            ]
+        )
+        with patch.object(backend, "load_pedagio", return_value=rows):
+            result = backend.data_pedagio({"ano": 2026, "mes": ["2026-08"]})
+
+        self.assertAlmostEqual(result["gasto_rastreador"], 100.0)
+        self.assertEqual(result["qtd_rastreador"], 2)
+        self.assertAlmostEqual(result["gasto_pedagio"], 0.0)
+        self.assertAlmostEqual(result["custo_total"], 100.0)
+
     def test_replace_seguro_placa_rejects_invalid_period_or_value(self):
         with self.assertRaises(ValueError):
             backend.replace_pedagio_seguro_placa("ABC1D23", "Transporte", 100, date(2027, 2, 1), date(2027, 1, 31))

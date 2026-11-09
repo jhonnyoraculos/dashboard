@@ -5753,7 +5753,13 @@ def data_hoteis(params: dict | None = None) -> dict:
 
 def data_pedagio(params: dict | None = None) -> dict:
     params = params or {}
-    df = _exclude_vex(load_pedagio())
+    all_rows = load_pedagio()
+    if "Categoria" in all_rows.columns and "Tipo" in all_rows.columns:
+        vex_mask = _normalize_categoria(all_rows["Categoria"]).eq("vex")
+        tracker_mask = all_rows["Tipo"].astype("string").fillna("").eq("Rastreador")
+        df = all_rows.loc[~vex_mask | tracker_mask].copy()
+    else:
+        df = _exclude_vex(all_rows)
     segmentos_disponiveis = _unique_sorted(df, "Categoria")
 
     ano = _parse_int(_param(params, "ano"))
