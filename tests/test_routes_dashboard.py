@@ -55,7 +55,7 @@ def sample_payload() -> dict:
 
 
 class RoutesDashboardTests(unittest.TestCase):
-    def test_ipva_pdf_deduplicates_boleto_copies_and_generates_three_installments(self):
+    def test_ipva_pdf_deduplicates_boleto_copies_and_rates_consolidated_total(self):
         text = """
         DOCUMENTO DE ARRECADAÇÃO ESTADUAL - DAE
         Validade 09/02/2026
@@ -74,24 +74,28 @@ class RoutesDashboardTests(unittest.TestCase):
             parsed,
             "Transporte",
             start_date=date(2026, 3, 15),
-            end_date=date(2026, 5, 20),
+            end_date=date(2026, 6, 20),
         )
 
         self.assertEqual(parsed["PLACA"], "PXD2C71")
         self.assertEqual(parsed["Parcela PDF"], 1)
         self.assertEqual(parsed["Valor Parcela"], 761.31)
         self.assertEqual(parsed["Primeiro Vencimento"], date(2026, 2, 9))
-        self.assertEqual(len(rows), 3)
-        self.assertEqual([row["Mes"] for row in rows], ["2026-03", "2026-04", "2026-05"])
-        self.assertEqual([row["Data"] for row in rows], [date(2026, 3, 15), date(2026, 4, 15), date(2026, 5, 20)])
-        self.assertEqual([row["Custo"] for row in rows], [761.31, 761.31, 761.31])
+        self.assertEqual(len(rows), 4)
+        self.assertEqual([row["Mes"] for row in rows], ["2026-03", "2026-04", "2026-05", "2026-06"])
+        self.assertEqual(
+            [row["Data"] for row in rows],
+            [date(2026, 3, 15), date(2026, 4, 15), date(2026, 5, 15), date(2026, 6, 20)],
+        )
+        self.assertEqual([row["Custo"] for row in rows], [570.99, 570.98, 570.98, 570.98])
         self.assertTrue(all(row["Valor Total"] == 2283.93 for row in rows))
+        self.assertEqual(round(sum(row["Custo"] for row in rows), 2), 2283.93)
         with self.assertRaises(ValueError):
             ipva_three_installment_rows(
                 parsed,
                 "Transporte",
                 start_date=date(2026, 3, 15),
-                end_date=date(2026, 6, 15),
+                end_date=date(2026, 2, 15),
             )
 
     def test_dashboard_authentication_accepts_only_the_configured_credentials(self):

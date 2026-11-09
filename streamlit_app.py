@@ -14132,10 +14132,11 @@ def _render_pedagio_sheet_import(plate_map: dict[str, str]) -> None:
 
 @st.fragment
 def _render_ipva_pdf_import(plate_map: dict[str, str]) -> None:
-    with st.expander("Importar IPVA por PDF — gerar 3 parcelas", expanded=False):
+    with st.expander("Importar IPVA por PDF — consolidar e ratear", expanded=False):
         st.caption(
             "O importador reconhece o valor de uma única parcela no DAE, ignora a repetição das vias "
-            "do mesmo boleto e cria 3 parcelas mensais iguais. O vencimento impresso serve apenas para conferência."
+            "do mesmo boleto, reúne as 3 parcelas em um valor total e divide esse total pelos meses escolhidos. "
+            "O vencimento impresso serve apenas para conferência."
         )
         uploaded_files = st.file_uploader(
             "Enviar PDF(s) do IPVA",
@@ -14168,21 +14169,21 @@ def _render_ipva_pdf_import(plate_map: dict[str, str]) -> None:
         start_col, end_col = st.columns(2)
         with start_col:
             selected_start = st.date_input(
-                "Data da 1ª parcela",
+                "Mês inicial do rateio",
                 value=suggested_start,
                 format="YYYY/MM/DD",
                 key="cad_ipva_pdf_start",
             )
         with end_col:
             selected_end = st.date_input(
-                "Data da 3ª parcela",
+                "Mês final do rateio",
                 value=suggested_end,
                 format="YYYY/MM/DD",
                 key="cad_ipva_pdf_end",
             )
         month_distance = (selected_end.year - selected_start.year) * 12 + selected_end.month - selected_start.month
-        if month_distance != 2:
-            st.warning("Escolha um período de exatamente 3 meses entre a 1ª e a 3ª parcela.")
+        if month_distance < 0:
+            st.warning("O mês inicial não pode ser posterior ao mês final.")
             return
 
         parsed_documents = []
@@ -14201,11 +14202,13 @@ def _render_ipva_pdf_import(plate_map: dict[str, str]) -> None:
                     "Placa": parsed["PLACA"],
                     "Parcela identificada": parsed["Parcela PDF"],
                     "Vencimento no PDF": parsed["Primeiro Vencimento"],
-                    "1ª parcela escolhida": selected_start,
-                    "3ª parcela escolhida": selected_end,
-                    "Valor de cada parcela": parsed["Valor Parcela"],
-                    "Quantidade": 3,
-                    "Total das 3 parcelas": rows[0]["Valor Total"],
+                    "Mês inicial": selected_start,
+                    "Mês final": selected_end,
+                    "Valor do boleto": parsed["Valor Parcela"],
+                    "Parcelas reunidas": 3,
+                    "Valor total reunido": rows[0]["Valor Total"],
+                    "Meses do rateio": len(rows),
+                    "Primeiro valor mensal": rows[0]["Custo"],
                 }
             )
             all_rows.extend(rows)
@@ -14216,14 +14219,15 @@ def _render_ipva_pdf_import(plate_map: dict[str, str]) -> None:
             hide_index=True,
             column_config={
                 "Vencimento no PDF": _date_col("Vencimento no PDF"),
-                "1ª parcela escolhida": _date_col("1ª parcela escolhida"),
-                "3ª parcela escolhida": _date_col("3ª parcela escolhida"),
-                "Valor de cada parcela": _money_col("Valor de cada parcela"),
-                "Total das 3 parcelas": _money_col("Total das 3 parcelas"),
+                "Mês inicial": _date_col("Mês inicial"),
+                "Mês final": _date_col("Mês final"),
+                "Valor do boleto": _money_col("Valor do boleto"),
+                "Valor total reunido": _money_col("Valor total reunido"),
+                "Primeiro valor mensal": _money_col("Primeiro valor mensal"),
             },
         )
         if st.button(
-            f"Importar {len(parsed_documents)} IPVA(s) em 3 parcelas",
+            f"Importar e ratear {len(parsed_documents)} IPVA(s)",
             type="primary",
             width="stretch",
             key="cad_ipva_pdf_import",
@@ -14245,8 +14249,8 @@ def _render_ipva_pdf_import(plate_map: dict[str, str]) -> None:
             clear_cached_reads()
             _reset_dataset_editor("cad_ped_table")
             st.success(
-                f"{len(inserted_rows)} parcela(s) de IPVA importada(s); "
-                f"{skipped_rows} parcela(s) idêntica(s) já existente(s) foram mantidas sem duplicar."
+                f"{len(inserted_rows)} lançamento(s) mensal(is) de IPVA importado(s); "
+                f"{skipped_rows} lançamento(s) idêntico(s) já existente(s) foram mantidos sem duplicar."
             )
             st.rerun()
 

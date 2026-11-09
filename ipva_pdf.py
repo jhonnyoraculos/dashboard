@@ -97,11 +97,20 @@ def ipva_three_installment_rows(
     if not plate or installment_value <= 0 or not isinstance(first_due, date) or not isinstance(last_due, date):
         raise ValueError("Dados incompletos para gerar as parcelas do IPVA.")
     month_distance = (last_due.year - first_due.year) * 12 + last_due.month - first_due.month
-    if month_distance != 2:
-        raise ValueError("O período deve abranger exatamente 3 meses, da 1ª à 3ª parcela.")
+    if month_distance < 0:
+        raise ValueError("O mês inicial não pode ser posterior ao mês final.")
 
-    due_dates = [first_due, _add_months(first_due, 1), last_due]
+    month_count = month_distance + 1
+    due_dates = [_add_months(first_due, offset) for offset in range(month_count)]
+    if month_count > 1:
+        due_dates[-1] = last_due
     total_value = round(installment_value * 3, 2)
+    total_cents = int(round(total_value * 100))
+    base_cents, remainder = divmod(total_cents, month_count)
+    monthly_values = [
+        (base_cents + (1 if index < remainder else 0)) / 100
+        for index in range(month_count)
+    ]
     return [
         {
             "Data": due_date,
@@ -112,7 +121,7 @@ def ipva_three_installment_rows(
             "Categoria": categoria,
             "Tipo": "IPVA",
             "Valor Total": total_value,
-            "Custo": installment_value,
+            "Custo": monthly_value,
         }
-        for due_date in due_dates
+        for due_date, monthly_value in zip(due_dates, monthly_values)
     ]
