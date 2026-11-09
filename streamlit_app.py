@@ -7179,7 +7179,9 @@ def compare_kpi_cards(bundle: list[tuple[str, dict]]) -> list[tuple]:
                 ("pedagio", "Gasto pedágio", fmt_brl(data.get("gasto_pedagio"))),
                 ("ipva", "Gasto IPVA", fmt_brl(data.get("gasto_ipva"))),
                 ("seguro", "Gasto seguro", fmt_brl(data.get("gasto_seguro"))),
+                ("rastreador", "Gasto rastreador", fmt_brl(data.get("gasto_rastreador"))),
                 ("seguros", "Seguros", fmt_num(data.get("qtd_seguro"))),
+                ("rastreadores", "Rastreadores", fmt_num(data.get("qtd_rastreador"))),
                 ("media_valores", "Média de valores", fmt_brl(data.get("media_valores", data.get("ticket_medio")))),
             ]
         elif route == "vex":
@@ -16626,7 +16628,9 @@ def render_pedagio() -> None:
         ("gasto_pedagio", "Gasto pedágio", fmt_brl(data.get("gasto_pedagio"))),
         ("gasto_ipva", "Gasto IPVA", fmt_brl(data.get("gasto_ipva"))),
         ("gasto_seguro", "Gasto seguro", fmt_brl(data.get("gasto_seguro"))),
+        ("gasto_rastreador", "Gasto rastreador", fmt_brl(data.get("gasto_rastreador"))),
         ("seguros", "Seguros", fmt_num(data.get("qtd_seguro"))),
+        ("rastreadores", "Rastreadores", fmt_num(data.get("qtd_rastreador"))),
         ("media_valores", "Média de valores", fmt_brl(data.get("media_valores", data.get("ticket_medio")))),
     ]
     include_year = params.get("ano") is None

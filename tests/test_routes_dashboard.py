@@ -553,6 +553,24 @@ class RoutesDashboardTests(unittest.TestCase):
         self.assertEqual(result["month_count"], 3)
         self.assertEqual(result["deleted"], 4)
 
+        tracker_summary = backend.agg_pedagio(
+            pd.DataFrame(
+                [
+                    {
+                        "Data": date(2026, 8, 15),
+                        "Mes": "2026-08",
+                        "PLACA": params["placa"],
+                        "Categoria": params["categoria"],
+                        "Tipo": "Rastreador",
+                        "Custo": params["custo"],
+                    }
+                    for params in inserts[:3]
+                ]
+            )
+        )
+        self.assertAlmostEqual(tracker_summary["gasto_rastreador"], 100.0)
+        self.assertEqual(tracker_summary["qtd_rastreador"], 3)
+
     def test_replace_seguro_placa_rejects_invalid_period_or_value(self):
         with self.assertRaises(ValueError):
             backend.replace_pedagio_seguro_placa("ABC1D23", "Transporte", 100, date(2027, 2, 1), date(2027, 1, 31))
