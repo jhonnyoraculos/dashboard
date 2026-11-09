@@ -485,7 +485,7 @@ class RoutesDashboardTests(unittest.TestCase):
             }.issubset(backend.TRACKER_EXCLUDED_PLATES)
         )
 
-    def test_tracker_monthly_total_is_split_exactly_and_replaces_same_month(self):
+    def test_tracker_monthly_total_is_split_in_every_month_of_period(self):
         executed = []
 
         class Result:
@@ -519,7 +519,11 @@ class RoutesDashboardTests(unittest.TestCase):
             patch.object(backend, "_write_metadata"),
             patch.object(backend, "_clear_dataset_cache"),
         ):
-            result = backend.replace_pedagio_rastreador_mes(date(2026, 8, 15), 100.0)
+            result = backend.replace_pedagio_rastreador_period(
+                date(2026, 8, 15),
+                date(2026, 10, 20),
+                100.0,
+            )
 
         deletes = [(statement, params) for statement, params in executed if statement.lstrip().upper().startswith("DELETE")]
         inserts = [
@@ -528,13 +532,25 @@ class RoutesDashboardTests(unittest.TestCase):
             if statement.lstrip().upper().startswith("INSERT") and '"Tipo"' in statement
         ]
         self.assertEqual(len(deletes), 1)
-        self.assertEqual(deletes[0][1], {"tipo": "Rastreador", "mes": "2026-08"})
-        self.assertEqual(len(inserts), 3)
-        self.assertEqual([params["placa"] for params in inserts], ["AAA1A11", "BBB2B22", "CCC3C33"])
-        self.assertEqual([params["custo"] for params in inserts], [33.34, 33.33, 33.33])
-        self.assertAlmostEqual(sum(params["custo"] for params in inserts), 100.0)
+        self.assertEqual(
+            deletes[0][1],
+            {"tipo": "Rastreador", "start_mes": "2026-08", "end_mes": "2026-10"},
+        )
+        self.assertEqual(len(inserts), 9)
+        self.assertEqual(
+            [params["mes"] for params in inserts],
+            ["2026-08"] * 3 + ["2026-09"] * 3 + ["2026-10"] * 3,
+        )
+        for month in {"2026-08", "2026-09", "2026-10"}:
+            monthly = [params for params in inserts if params["mes"] == month]
+            self.assertEqual([params["placa"] for params in monthly], ["AAA1A11", "BBB2B22", "CCC3C33"])
+            self.assertEqual([params["custo"] for params in monthly], [33.34, 33.33, 33.33])
+            self.assertAlmostEqual(sum(params["custo"] for params in monthly), 100.0)
         self.assertTrue(all(params["valor_total"] == 100.0 for params in inserts))
-        self.assertEqual(result["inserted"], 3)
+        self.assertTrue(all(params["inicio"] == date(2026, 8, 15) for params in inserts))
+        self.assertTrue(all(params["fim"] == date(2026, 10, 20) for params in inserts))
+        self.assertEqual(result["inserted"], 9)
+        self.assertEqual(result["month_count"], 3)
         self.assertEqual(result["deleted"], 4)
 
     def test_replace_seguro_placa_rejects_invalid_period_or_value(self):

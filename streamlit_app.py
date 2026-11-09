@@ -70,6 +70,7 @@ _backend_features_ready = all(
         "replace_diarias_equipe_periods",
         "replace_pedagio_seguro_placa",
         "replace_pedagio_rastreador_mes",
+        "replace_pedagio_rastreador_period",
     )
 )
 _backend_aluguel_period_ready = {"Inicio", "Fim"}.issubset(
@@ -78,7 +79,7 @@ _backend_aluguel_period_ready = {"Inicio", "Fim"}.issubset(
 _backend_aluguel_monthly_ready = getattr(backend, "BACKEND_BUILD_VERSION", "") == "aluguel-multiplicar-meses-v1"
 _backend_pedagio_chart_ready = getattr(backend, "PEDAGIO_CHART_VERSION", "") == "all-types-v1"
 _backend_pedagio_insurance_ready = getattr(backend, "PEDAGIO_INSURANCE_PERIOD_VERSION", "") == "annual-total-v3"
-_backend_pedagio_tracker_ready = getattr(backend, "PEDAGIO_TRACKER_VERSION", "") == "monthly-active-plates-v2"
+_backend_pedagio_tracker_ready = getattr(backend, "PEDAGIO_TRACKER_VERSION", "") == "monthly-active-plates-v3"
 _backend_routes_ready = getattr(backend, "ROUTES_BUILD_VERSION", "") == "rotas-horas-operacao-unica-v32"
 _backend_import_progress_ready = getattr(backend, "IMPORT_PROGRESS_VERSION", "") == "all-imports-v1"
 if not _backend_features_ready or not _backend_aluguel_period_ready or not _backend_aluguel_monthly_ready or not _backend_pedagio_chart_ready or not _backend_pedagio_insurance_ready or not _backend_pedagio_tracker_ready or not _backend_routes_ready or not _backend_import_progress_ready:
@@ -16128,30 +16129,33 @@ def render_cadastro() -> None:
                 plate_required = tipo not in PEDAGIO_OPTIONAL_PLATE_TYPES and not is_tracker
                 is_insurance = tipo == "Seguro"
                 with c1:
-                    if is_insurance:
+                    if is_insurance or is_tracker:
+                        start_label = "Data de início" if is_insurance else "Mês inicial"
+                        start_key = "cad_ped_seguro_inicio" if is_insurance else "cad_ped_tracker_inicio"
                         start_date = st.date_input(
-                            "Data de início",
+                            start_label,
                             value=date.today(),
                             format="YYYY/MM/DD",
-                            key="cad_ped_seguro_inicio",
+                            key=start_key,
                         )
                         data = start_date
                     else:
-                        data_label = "Mês de referência" if is_tracker else "Data"
                         data = st.date_input(
-                            data_label,
+                            "Data",
                             value=date.today(),
                             format="YYYY/MM/DD",
                             key="cad_ped_data",
                         )
                         start_date = None
                 with c2:
-                    if is_insurance:
+                    if is_insurance or is_tracker:
+                        end_label = "Data de fim" if is_insurance else "Mês final"
+                        end_key = "cad_ped_seguro_fim" if is_insurance else "cad_ped_tracker_fim"
                         end_date = st.date_input(
-                            "Data de fim",
+                            end_label,
                             value=date.today(),
                             format="YYYY/MM/DD",
-                            key="cad_ped_seguro_fim",
+                            key=end_key,
                         )
                     else:
                         end_date = None
@@ -16168,25 +16172,36 @@ def render_cadastro() -> None:
                     submitted = st.button(button_label, type="primary", width="stretch", key="cad_ped_submit")
                 if is_insurance:
                     st.caption("Informe o valor anual/total. O sistema divide esse total pelas parcelas mensais entre as datas escolhidas.")
+                elif is_tracker:
+                    st.caption("O valor informado será repetido em cada mês, do mês inicial ao mês final, e rateado entre as placas elegíveis do ano.")
 
-                tracker_plates = []
+                tracker_plates_by_year = {}
                 tracker_error = None
                 if is_tracker:
                     try:
-                        tracker_plates = backend.active_transport_plates_for_year(data.year)
+                        tracker_years = range(start_date.year, end_date.year + 1) if start_date <= end_date else []
+                        tracker_plates_by_year = {
+                            year: backend.active_transport_plates_for_year(year)
+                            for year in tracker_years
+                        }
                     except Exception as exc:
                         tracker_error = exc
                     if tracker_error:
                         st.warning("Não foi possível conferir as placas em uso neste ano.")
-                    elif tracker_plates:
-                        plate_names = ", ".join(item["PLACA"] for item in tracker_plates)
-                        estimated_value = custo / len(tracker_plates) if custo > 0 else 0.0
-                        st.info(
-                            f"{len(tracker_plates)} placa(s) elegível(is) em uso em {data.year}. "
-                            f"Rateio aproximado: {fmt_brl(estimated_value)} por placa. Placas: {plate_names}"
-                        )
+                    elif tracker_plates_by_year and all(tracker_plates_by_year.values()):
+                        preview_parts = []
+                        for year, tracker_plates in tracker_plates_by_year.items():
+                            plate_names = ", ".join(item["PLACA"] for item in tracker_plates)
+                            estimated_value = custo / len(tracker_plates) if custo > 0 else 0.0
+                            preview_parts.append(
+                                f"{year}: {len(tracker_plates)} placa(s), aproximadamente {fmt_brl(estimated_value)} por placa. "
+                                f"Placas: {plate_names}"
+                            )
+                        st.info("\n\n".join(preview_parts))
                     else:
-                        st.warning(f"Nenhuma placa elegível em uso foi encontrada em {data.year}.")
+                        empty_years = [str(year) for year, plates in tracker_plates_by_year.items() if not plates]
+                        if empty_years:
+                            st.warning("Nenhuma placa elegível em uso foi encontrada em: " + ", ".join(empty_years) + ".")
 
                 p1 = st.columns(4)[0]
                 with p1:
@@ -16233,14 +16248,16 @@ def render_cadastro() -> None:
                     elif is_tracker:
                         if custo <= 0:
                             st.warning("Informe um valor mensal de rastreador maior que zero.")
+                        elif start_date > end_date:
+                            st.warning("O mês inicial não pode ser posterior ao mês final.")
                         elif tracker_error:
                             st.error("Não foi possível carregar as placas em uso para fazer o rateio.")
                             st.exception(tracker_error)
-                        elif not tracker_plates:
-                            st.warning(f"Nenhuma placa elegível em uso foi encontrada em {data.year}.")
+                        elif not tracker_plates_by_year or not all(tracker_plates_by_year.values()):
+                            st.warning("Existem anos no período sem placas elegíveis em uso.")
                         else:
                             try:
-                                result = backend.replace_pedagio_rastreador_mes(data, custo)
+                                result = backend.replace_pedagio_rastreador_period(start_date, end_date, custo)
                             except Exception as exc:
                                 st.error("Não foi possível salvar o rateio do rastreador no Neon.")
                                 st.exception(exc)
@@ -16248,9 +16265,9 @@ def render_cadastro() -> None:
                                 clear_cached_reads()
                                 _reset_dataset_editor("cad_ped_table")
                                 st.success(
-                                    f"Rastreador de {fmt_brl(result.get('total_value', 0))} rateado entre "
-                                    f"{result.get('inserted', 0)} placa(s) em {month_filter_label(result.get('month'))}. "
-                                    f"{result.get('deleted', 0)} lançamento(s) anterior(es) do mês foram substituídos."
+                                    f"Rastreador mensal de {fmt_brl(result.get('total_value', 0))} rateado por "
+                                    f"{result.get('month_count', 0)} mês(es), gerando {result.get('inserted', 0)} lançamento(s). "
+                                    f"{result.get('deleted', 0)} lançamento(s) anterior(es) do período foram substituídos."
                                 )
                     else:
                         _save_entry(
@@ -16275,8 +16292,8 @@ def render_cadastro() -> None:
                 "cad_ped_table",
                 {
                     "Data": _date_col(),
-                    "Inicio": _date_col("Início do seguro"),
-                    "Fim": _date_col("Fim do seguro"),
+                    "Inicio": _date_col("Início do período"),
+                    "Fim": _date_col("Fim do período"),
                     "Mes": st.column_config.TextColumn("Mês"),
                     "PLACA": st.column_config.TextColumn("Placa"),
                     "Categoria": st.column_config.SelectboxColumn("Categoria", options=CATEGORY_OPTIONS, required=True),

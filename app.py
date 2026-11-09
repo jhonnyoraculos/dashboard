@@ -64,7 +64,7 @@ BACKEND_BUILD_VERSION = "aluguel-multiplicar-meses-v1"
 ROUTES_BUILD_VERSION = "rotas-horas-operacao-unica-v32"
 PEDAGIO_CHART_VERSION = "all-types-v1"
 PEDAGIO_INSURANCE_PERIOD_VERSION = "annual-total-v3"
-PEDAGIO_TRACKER_VERSION = "monthly-active-plates-v2"
+PEDAGIO_TRACKER_VERSION = "monthly-active-plates-v3"
 IMPORT_PROGRESS_VERSION = "all-imports-v1"
 USE_LEGACY_ROUTE_HOTEL_ALLOCATION = False
 BACKUP_METADATA_KEY = "backup.last_downloaded_at"
@@ -2461,23 +2461,37 @@ def active_transport_plates_for_year(year: int) -> list[dict]:
     return [{"PLACA": plate, "Categoria": category_map.get(plate, "Transporte")} for plate in sorted(active)]
 
 
-def replace_pedagio_rastreador_mes(reference_date: date | datetime | str, valor_mensal: float) -> dict:
-    """Rateia o total mensal do rastreador entre as placas elegíveis ativas no ano."""
-    date_value = pd.to_datetime(reference_date, errors="coerce")
-    if pd.isna(date_value):
-        raise ValueError("Informe uma data válida para o rastreador.")
-    date_value = date_value.date()
-    month_value = date_value.strftime("%Y-%m")
+def replace_pedagio_rastreador_period(
+    start_date: date | datetime | str,
+    end_date: date | datetime | str,
+    valor_mensal: float,
+) -> dict:
+    """Rateia o mesmo total mensal do rastreador em todos os meses do período."""
+    start_value = pd.to_datetime(start_date, errors="coerce")
+    end_value = pd.to_datetime(end_date, errors="coerce")
+    if pd.isna(start_value) or pd.isna(end_value):
+        raise ValueError("Informe datas válidas para o início e o fim do rastreador.")
+    start_value = start_value.date()
+    end_value = end_value.date()
+    if start_value > end_value:
+        raise ValueError("A data inicial não pode ser posterior à data final.")
+    months = _month_sequence(start_value.strftime("%Y-%m"), end_value.strftime("%Y-%m"))
 
     total_value = pd.to_numeric(pd.Series([valor_mensal]), errors="coerce").iloc[0]
     if pd.isna(total_value) or float(total_value) <= 0:
         raise ValueError("Informe um valor mensal de rastreador maior que zero.")
     total_value = float(total_value)
 
-    plates = active_transport_plates_for_year(date_value.year)
-    if not plates:
-        raise ValueError(f"Nenhuma placa elegível em uso foi encontrada em {date_value.year}.")
-    allocated_values = _allocate_insurance_total(total_value, len(plates))
+    years = sorted({int(month[:4]) for month in months})
+    plates_by_year = {year: active_transport_plates_for_year(year) for year in years}
+    empty_years = [year for year, plates in plates_by_year.items() if not plates]
+    if empty_years:
+        years_text = ", ".join(str(year) for year in empty_years)
+        raise ValueError(f"Nenhuma placa elegível em uso foi encontrada em: {years_text}.")
+    allocations_by_year = {
+        year: _allocate_insurance_total(total_value, len(plates))
+        for year, plates in plates_by_year.items()
+    }
 
     from sqlalchemy import text
 
@@ -2486,29 +2500,45 @@ def replace_pedagio_rastreador_mes(reference_date: date | datetime | str, valor_
     with _db_engine().begin() as conn:
         _ensure_dataset_table(conn, "pedagio")
         result = conn.execute(
-            text(f'DELETE FROM {table} WHERE "Tipo" = :tipo AND "Mes" = :mes'),
-            {"tipo": "Rastreador", "mes": month_value},
+            text(
+                f"""
+                DELETE FROM {table}
+                WHERE "Tipo" = :tipo
+                  AND "Mes" >= :start_mes
+                  AND "Mes" <= :end_mes
+                """
+            ),
+            {"tipo": "Rastreador", "start_mes": months[0], "end_mes": months[-1]},
         )
         deleted = max(result.rowcount or 0, 0)
 
-        for plate, allocated_value in zip(plates, allocated_values):
-            conn.execute(
-                text(
-                    f"""
-                    INSERT INTO {table} ("PLACA", "Tipo", "Custo", "Valor Total", "Mes", "Data", "Categoria")
-                    VALUES (:placa, :tipo, :custo, :valor_total, :mes, :data, :categoria)
-                    """
-                ),
-                {
-                    "placa": plate["PLACA"],
-                    "tipo": "Rastreador",
-                    "custo": allocated_value,
-                    "valor_total": total_value,
-                    "mes": month_value,
-                    "data": date_value,
-                    "categoria": plate["Categoria"],
-                },
-            )
+        inserted = 0
+        for month_value in months:
+            year, month = (int(part) for part in month_value.split("-"))
+            data_value = max(start_value, date(year, month, 1))
+            for plate, allocated_value in zip(plates_by_year[year], allocations_by_year[year]):
+                conn.execute(
+                    text(
+                        f"""
+                        INSERT INTO {table}
+                            ("PLACA", "Tipo", "Custo", "Valor Total", "Mes", "Data", "Inicio", "Fim", "Categoria")
+                        VALUES
+                            (:placa, :tipo, :custo, :valor_total, :mes, :data, :inicio, :fim, :categoria)
+                        """
+                    ),
+                    {
+                        "placa": plate["PLACA"],
+                        "tipo": "Rastreador",
+                        "custo": allocated_value,
+                        "valor_total": total_value,
+                        "mes": month_value,
+                        "data": data_value,
+                        "inicio": start_value,
+                        "fim": end_value,
+                        "categoria": plate["Categoria"],
+                    },
+                )
+                inserted += 1
 
         _write_metadata(conn, "pedagio.version", version)
         _write_metadata(conn, "import.version", version)
@@ -2516,12 +2546,20 @@ def replace_pedagio_rastreador_mes(reference_date: date | datetime | str, valor_
     _clear_dataset_cache("pedagio")
     return {
         "deleted": deleted,
-        "inserted": len(plates),
-        "plates": plates,
-        "month": month_value,
+        "inserted": inserted,
+        "months": months,
+        "month_count": len(months),
+        "plates_by_year": plates_by_year,
         "total_value": total_value,
-        "allocated_values": allocated_values,
+        "allocations_by_year": allocations_by_year,
+        "start_date": start_value,
+        "end_date": end_value,
     }
+
+
+def replace_pedagio_rastreador_mes(reference_date: date | datetime | str, valor_mensal: float) -> dict:
+    """Compatibilidade para ratear somente um mês."""
+    return replace_pedagio_rastreador_period(reference_date, reference_date, valor_mensal)
 
 
 def migrate_pedagio_insurance_totals(*, force: bool = False) -> dict:
