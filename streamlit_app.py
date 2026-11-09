@@ -14135,7 +14135,7 @@ def _render_ipva_pdf_import(plate_map: dict[str, str]) -> None:
     with st.expander("Importar IPVA por PDF — gerar 3 parcelas", expanded=False):
         st.caption(
             "O importador reconhece o valor de uma única parcela no DAE, ignora a repetição das vias "
-            "do mesmo boleto e cria 3 parcelas mensais iguais."
+            "do mesmo boleto e cria 3 parcelas mensais iguais. O vencimento impresso serve apenas para conferência."
         )
         uploaded_files = st.file_uploader(
             "Enviar PDF(s) do IPVA",
@@ -14146,45 +14146,78 @@ def _render_ipva_pdf_import(plate_map: dict[str, str]) -> None:
         if not uploaded_files:
             return
 
-        parsed_documents = []
-        all_rows = []
+        parsed_sources = []
         errors = []
         for uploaded in uploaded_files:
             try:
                 parsed = parse_ipva_pdf(uploaded.getvalue(), uploaded.name)
-                category = plate_map.get(parsed["PLACA"], "Transporte")
-                rows = ipva_three_installment_rows(parsed, category)
             except Exception as exc:
                 errors.append(f"{uploaded.name}: {exc}")
                 continue
-            parsed_documents.append(
-                {
-                    "Arquivo": uploaded.name,
-                    "Placa": parsed["PLACA"],
-                    "Parcela identificada": parsed["Parcela PDF"],
-                    "Primeiro vencimento": parsed["Primeiro Vencimento"],
-                    "Valor de cada parcela": parsed["Valor Parcela"],
-                    "Quantidade": 3,
-                    "Total das 3 parcelas": rows[0]["Valor Total"],
-                    "Último vencimento": rows[-1]["Data"],
-                }
-            )
-            all_rows.extend(rows)
+            parsed_sources.append(parsed)
 
         if errors:
             st.warning("Alguns PDFs não puderam ser lidos:")
             for error in errors:
                 st.write(error)
-        if not parsed_documents:
+        if not parsed_sources:
             return
+
+        suggested_start = parsed_sources[0]["Primeiro Vencimento"]
+        suggested_end = (pd.Timestamp(suggested_start) + pd.DateOffset(months=2)).date()
+        start_col, end_col = st.columns(2)
+        with start_col:
+            selected_start = st.date_input(
+                "Data da 1ª parcela",
+                value=suggested_start,
+                format="YYYY/MM/DD",
+                key="cad_ipva_pdf_start",
+            )
+        with end_col:
+            selected_end = st.date_input(
+                "Data da 3ª parcela",
+                value=suggested_end,
+                format="YYYY/MM/DD",
+                key="cad_ipva_pdf_end",
+            )
+        month_distance = (selected_end.year - selected_start.year) * 12 + selected_end.month - selected_start.month
+        if month_distance != 2:
+            st.warning("Escolha um período de exatamente 3 meses entre a 1ª e a 3ª parcela.")
+            return
+
+        parsed_documents = []
+        all_rows = []
+        for parsed in parsed_sources:
+            category = plate_map.get(parsed["PLACA"], "Transporte")
+            rows = ipva_three_installment_rows(
+                parsed,
+                category,
+                start_date=selected_start,
+                end_date=selected_end,
+            )
+            parsed_documents.append(
+                {
+                    "Arquivo": parsed["Arquivo"],
+                    "Placa": parsed["PLACA"],
+                    "Parcela identificada": parsed["Parcela PDF"],
+                    "Vencimento no PDF": parsed["Primeiro Vencimento"],
+                    "1ª parcela escolhida": selected_start,
+                    "3ª parcela escolhida": selected_end,
+                    "Valor de cada parcela": parsed["Valor Parcela"],
+                    "Quantidade": 3,
+                    "Total das 3 parcelas": rows[0]["Valor Total"],
+                }
+            )
+            all_rows.extend(rows)
 
         st.dataframe(
             pd.DataFrame(parsed_documents),
             width="stretch",
             hide_index=True,
             column_config={
-                "Primeiro vencimento": _date_col("Primeiro vencimento"),
-                "Último vencimento": _date_col("Último vencimento"),
+                "Vencimento no PDF": _date_col("Vencimento no PDF"),
+                "1ª parcela escolhida": _date_col("1ª parcela escolhida"),
+                "3ª parcela escolhida": _date_col("3ª parcela escolhida"),
                 "Valor de cada parcela": _money_col("Valor de cada parcela"),
                 "Total das 3 parcelas": _money_col("Total das 3 parcelas"),
             },

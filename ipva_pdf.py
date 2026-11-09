@@ -82,14 +82,25 @@ def parse_ipva_pdf(data: bytes, filename: str = "") -> dict:
     return parse_ipva_text(text, filename=filename)
 
 
-def ipva_three_installment_rows(parsed: dict, categoria: str) -> list[dict]:
+def ipva_three_installment_rows(
+    parsed: dict,
+    categoria: str,
+    *,
+    start_date: date | None = None,
+    end_date: date | None = None,
+) -> list[dict]:
     plate = str(parsed.get("PLACA") or "").strip().upper()
     installment_value = round(float(parsed.get("Valor Parcela") or 0.0), 2)
-    first_due = parsed.get("Primeiro Vencimento")
-    if not plate or installment_value <= 0 or not isinstance(first_due, date):
+    pdf_due = parsed.get("Primeiro Vencimento")
+    first_due = start_date or pdf_due
+    last_due = end_date or (_add_months(first_due, 2) if isinstance(first_due, date) else None)
+    if not plate or installment_value <= 0 or not isinstance(first_due, date) or not isinstance(last_due, date):
         raise ValueError("Dados incompletos para gerar as parcelas do IPVA.")
+    month_distance = (last_due.year - first_due.year) * 12 + last_due.month - first_due.month
+    if month_distance != 2:
+        raise ValueError("O período deve abranger exatamente 3 meses, da 1ª à 3ª parcela.")
 
-    due_dates = [_add_months(first_due, offset) for offset in range(3)]
+    due_dates = [first_due, _add_months(first_due, 1), last_due]
     total_value = round(installment_value * 3, 2)
     return [
         {

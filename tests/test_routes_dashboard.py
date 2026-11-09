@@ -70,16 +70,29 @@ class RoutesDashboardTests(unittest.TestCase):
         """
 
         parsed = parse_ipva_text(text, filename="Lançado PXD2C71.pdf")
-        rows = ipva_three_installment_rows(parsed, "Transporte")
+        rows = ipva_three_installment_rows(
+            parsed,
+            "Transporte",
+            start_date=date(2026, 3, 15),
+            end_date=date(2026, 5, 20),
+        )
 
         self.assertEqual(parsed["PLACA"], "PXD2C71")
         self.assertEqual(parsed["Parcela PDF"], 1)
         self.assertEqual(parsed["Valor Parcela"], 761.31)
         self.assertEqual(parsed["Primeiro Vencimento"], date(2026, 2, 9))
         self.assertEqual(len(rows), 3)
-        self.assertEqual([row["Mes"] for row in rows], ["2026-02", "2026-03", "2026-04"])
+        self.assertEqual([row["Mes"] for row in rows], ["2026-03", "2026-04", "2026-05"])
+        self.assertEqual([row["Data"] for row in rows], [date(2026, 3, 15), date(2026, 4, 15), date(2026, 5, 20)])
         self.assertEqual([row["Custo"] for row in rows], [761.31, 761.31, 761.31])
         self.assertTrue(all(row["Valor Total"] == 2283.93 for row in rows))
+        with self.assertRaises(ValueError):
+            ipva_three_installment_rows(
+                parsed,
+                "Transporte",
+                start_date=date(2026, 3, 15),
+                end_date=date(2026, 6, 15),
+            )
 
     def test_dashboard_authentication_accepts_only_the_configured_credentials(self):
         with patch.dict(
