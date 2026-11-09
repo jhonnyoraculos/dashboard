@@ -76,7 +76,7 @@ _backend_aluguel_period_ready = {"Inicio", "Fim"}.issubset(
 )
 _backend_aluguel_monthly_ready = getattr(backend, "BACKEND_BUILD_VERSION", "") == "aluguel-multiplicar-meses-v1"
 _backend_pedagio_chart_ready = getattr(backend, "PEDAGIO_CHART_VERSION", "") == "all-types-v1"
-_backend_pedagio_insurance_ready = getattr(backend, "PEDAGIO_INSURANCE_PERIOD_VERSION", "") == "annual-total-v2"
+_backend_pedagio_insurance_ready = getattr(backend, "PEDAGIO_INSURANCE_PERIOD_VERSION", "") == "annual-total-v3"
 _backend_routes_ready = getattr(backend, "ROUTES_BUILD_VERSION", "") == "rotas-horas-operacao-unica-v32"
 _backend_import_progress_ready = getattr(backend, "IMPORT_PROGRESS_VERSION", "") == "all-imports-v1"
 if not _backend_features_ready or not _backend_aluguel_period_ready or not _backend_aluguel_monthly_ready or not _backend_pedagio_chart_ready or not _backend_pedagio_insurance_ready or not _backend_routes_ready or not _backend_import_progress_ready:
