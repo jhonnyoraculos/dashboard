@@ -12,7 +12,7 @@ os.environ.setdefault("JR_SKIP_WARM_CACHE", "1")
 
 import app as backend
 import streamlit_app as dashboard
-from ipva_pdf import ipva_three_installment_rows, parse_ipva_text
+from ipva_pdf import ipva_three_installment_rows, parse_ipva_pdf, parse_ipva_text
 
 
 def sample_payload() -> dict:
@@ -55,6 +55,29 @@ def sample_payload() -> dict:
 
 
 class RoutesDashboardTests(unittest.TestCase):
+    def test_ipva_scanned_pdf_uses_ocr_fallback(self):
+        ocr_text = """
+        Validade 10/02/2026
+        DOCUMENTO DE ARRECADAÇÃO ESTADUAL - DAE
+        Placa HAM3C53
+        TOTAL: R$ 254,49
+        Fluxo 1ª Via - Contribuinte
+        TOTAL: R$ 254,49
+        Fluxo 2ª Via - Banco
+        """
+        blank_page = type("BlankPage", (), {"extract_text": lambda self: ""})()
+        with (
+            patch("ipva_pdf.PdfReader") as reader,
+            patch("ipva_pdf._extract_ipva_ocr_text", return_value=ocr_text) as extract_ocr,
+        ):
+            reader.return_value.pages = [blank_page]
+            parsed = parse_ipva_pdf(b"scanned-pdf", "Lançado HAM3C53.pdf")
+
+        self.assertEqual(parsed["PLACA"], "HAM3C53")
+        self.assertEqual(parsed["Valor Parcela"], 254.49)
+        self.assertEqual(parsed["Primeiro Vencimento"], date(2026, 2, 10))
+        extract_ocr.assert_called_once_with(b"scanned-pdf")
+
     def test_ipva_pdf_deduplicates_boleto_copies_and_rates_consolidated_total(self):
         text = """
         DOCUMENTO DE ARRECADAÇÃO ESTADUAL - DAE

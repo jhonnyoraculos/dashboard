@@ -4,6 +4,7 @@ import calendar
 import re
 from collections import Counter
 from datetime import date
+from functools import lru_cache
 from io import BytesIO
 
 from pypdf import PdfReader
@@ -74,12 +75,62 @@ def parse_ipva_text(text: str, *, filename: str = "") -> dict:
     }
 
 
+@lru_cache(maxsize=1)
+def _ipva_ocr_engine():
+    from rapidocr import RapidOCR
+
+    return RapidOCR()
+
+
+def _extract_ipva_ocr_text(data: bytes) -> str:
+    import numpy as np
+    import pymupdf
+    from PIL import Image, ImageEnhance, ImageOps
+
+    document = pymupdf.open(stream=data, filetype="pdf")
+    page_texts: list[str] = []
+    try:
+        for page in document:
+            pixmap = page.get_pixmap(matrix=pymupdf.Matrix(2.0, 2.0), alpha=False)
+            image = Image.open(BytesIO(pixmap.tobytes("png"))).convert("RGB")
+            image = ImageOps.autocontrast(image.convert("L"), cutoff=1).convert("RGB")
+            image = ImageEnhance.Contrast(image).enhance(1.2)
+            result = _ipva_ocr_engine()(np.asarray(image))
+            lines = [
+                str(value).strip()
+                for value in (getattr(result, "txts", None) or [])
+                if str(value).strip()
+            ]
+            page_texts.append("\n".join(lines))
+            combined_text = "\n".join(page_texts)
+            try:
+                parse_ipva_text(combined_text)
+            except ValueError:
+                continue
+            return combined_text
+    finally:
+        document.close()
+    return "\n".join(page_texts)
+
+
 def parse_ipva_pdf(data: bytes, filename: str = "") -> dict:
     reader = PdfReader(BytesIO(data))
     text = "\n".join(page.extract_text() or "" for page in reader.pages)
-    if not text.strip():
-        raise ValueError("O PDF do IPVA não possui texto legível.")
-    return parse_ipva_text(text, filename=filename)
+    if text.strip():
+        try:
+            return parse_ipva_text(text, filename=filename)
+        except ValueError:
+            pass
+
+    try:
+        ocr_text = _extract_ipva_ocr_text(data)
+    except Exception as exc:
+        raise ValueError(
+            "O PDF do IPVA não possui texto legível e a leitura da imagem falhou."
+        ) from exc
+    if not ocr_text.strip():
+        raise ValueError("O PDF do IPVA não possui texto legível nem imagem reconhecível.")
+    return parse_ipva_text(ocr_text, filename=filename)
 
 
 def ipva_three_installment_rows(
