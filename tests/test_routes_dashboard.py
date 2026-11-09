@@ -283,6 +283,69 @@ class RoutesDashboardTests(unittest.TestCase):
             sorted(fraction for fraction, _ in progress_updates),
         )
 
+    def test_replace_seguro_placa_replaces_selected_plate_from_start_month(self):
+        executed = []
+
+        class Result:
+            rowcount = 2
+
+        class Connection:
+            def execute(self, statement, params=None):
+                executed.append((str(statement), params or {}))
+                return Result()
+
+        class BeginContext:
+            def __enter__(self):
+                return Connection()
+
+            def __exit__(self, exc_type, exc, traceback):
+                return False
+
+        class Engine:
+            def begin(self):
+                return BeginContext()
+
+        with (
+            patch.object(backend, "_db_engine", return_value=Engine()),
+            patch.object(backend, "_ensure_dataset_table"),
+            patch.object(backend, "_write_metadata"),
+            patch.object(backend, "_clear_dataset_cache"),
+        ):
+            result = backend.replace_pedagio_seguro_placa(
+                "abc-1d23",
+                "Transporte",
+                350.0,
+                date(2026, 11, 9),
+                date(2027, 1, 20),
+            )
+
+        deletes = [(statement, params) for statement, params in executed if statement.lstrip().upper().startswith("DELETE")]
+        insurance_inserts = [
+            (statement, params)
+            for statement, params in executed
+            if statement.lstrip().upper().startswith("INSERT") and '"Tipo"' in statement
+        ]
+        self.assertEqual(len(deletes), 1)
+        self.assertEqual(deletes[0][1]["placa"], "ABC1D23")
+        self.assertEqual(deletes[0][1]["start_mes"], "2026-11")
+        self.assertIn('"PLACA" = :placa', deletes[0][0])
+        self.assertNotIn('"Mes" <=', deletes[0][0])
+        self.assertEqual(len(insurance_inserts), 3)
+        self.assertEqual([params["mes"] for _, params in insurance_inserts], ["2026-11", "2026-12", "2027-01"])
+        self.assertTrue(all(params["custo"] == 350.0 for _, params in insurance_inserts))
+        self.assertTrue(all(params["inicio"] == date(2026, 11, 9) for _, params in insurance_inserts))
+        self.assertTrue(all(params["fim"] == date(2027, 1, 20) for _, params in insurance_inserts))
+        self.assertEqual(insurance_inserts[0][1]["data"], date(2026, 11, 9))
+        self.assertEqual(insurance_inserts[1][1]["data"], date(2026, 12, 1))
+        self.assertEqual(result["deleted"], 2)
+        self.assertEqual(result["inserted"], 3)
+
+    def test_replace_seguro_placa_rejects_invalid_period_or_value(self):
+        with self.assertRaises(ValueError):
+            backend.replace_pedagio_seguro_placa("ABC1D23", "Transporte", 100, date(2027, 2, 1), date(2027, 1, 31))
+        with self.assertRaises(ValueError):
+            backend.replace_pedagio_seguro_placa("ABC1D23", "Transporte", 0, "2027-01", "2027-02")
+
     def test_rdv_target_total_recovers_handwritten_currency(self):
         self.assertEqual(dashboard._parse_rdv_target_total_text("R$ 288100"), 288.0)
         self.assertEqual(dashboard._parse_rdv_target_total_text("R$ 63200"), 632.0)

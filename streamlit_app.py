@@ -68,6 +68,7 @@ _backend_features_ready = all(
         "merge_collaborator_names",
         "load_diarias_equipe",
         "replace_diarias_equipe_periods",
+        "replace_pedagio_seguro_placa",
     )
 )
 _backend_aluguel_period_ready = {"Inicio", "Fim"}.issubset(
@@ -75,9 +76,10 @@ _backend_aluguel_period_ready = {"Inicio", "Fim"}.issubset(
 )
 _backend_aluguel_monthly_ready = getattr(backend, "BACKEND_BUILD_VERSION", "") == "aluguel-multiplicar-meses-v1"
 _backend_pedagio_chart_ready = getattr(backend, "PEDAGIO_CHART_VERSION", "") == "all-types-v1"
+_backend_pedagio_insurance_ready = getattr(backend, "PEDAGIO_INSURANCE_PERIOD_VERSION", "") == "date-range-v1"
 _backend_routes_ready = getattr(backend, "ROUTES_BUILD_VERSION", "") == "rotas-horas-operacao-unica-v32"
 _backend_import_progress_ready = getattr(backend, "IMPORT_PROGRESS_VERSION", "") == "all-imports-v1"
-if not _backend_features_ready or not _backend_aluguel_period_ready or not _backend_aluguel_monthly_ready or not _backend_pedagio_chart_ready or not _backend_routes_ready or not _backend_import_progress_ready:
+if not _backend_features_ready or not _backend_aluguel_period_ready or not _backend_aluguel_monthly_ready or not _backend_pedagio_chart_ready or not _backend_pedagio_insurance_ready or not _backend_routes_ready or not _backend_import_progress_ready:
     backend = importlib.reload(backend)
 
 # O Streamlit também pode manter módulos auxiliares em memória após o deploy.
@@ -16116,46 +16118,109 @@ def render_cadastro() -> None:
             _render_pedagio_sheet_import(plate_map)
             _render_pedagio_reset_options()
 
-            with st.form("form_pedagio", clear_on_submit=True):
-                c1, c2, c3 = st.columns(3)
-                with c2:
+            with st.container(border=True):
+                c1, c2, c3, c4 = st.columns(4)
+                with c3:
                     tipo = st.selectbox("Tipo", PEDAGIO_TIPO_OPTIONS, key="cad_ped_tipo")
                 plate_required = tipo not in PEDAGIO_OPTIONAL_PLATE_TYPES
+                is_insurance = tipo == "Seguro"
                 with c1:
-                    data = st.date_input("Data", value=date.today(), key="cad_ped_data")
+                    if is_insurance:
+                        start_date = st.date_input(
+                            "Data de início",
+                            value=date.today(),
+                            format="YYYY/MM/DD",
+                            key="cad_ped_seguro_inicio",
+                        )
+                        data = start_date
+                    else:
+                        data = st.date_input(
+                            "Data",
+                            value=date.today(),
+                            format="YYYY/MM/DD",
+                            key="cad_ped_data",
+                        )
+                        start_date = None
+                with c2:
+                    if is_insurance:
+                        end_date = st.date_input(
+                            "Data de fim",
+                            value=date.today(),
+                            format="YYYY/MM/DD",
+                            key="cad_ped_seguro_fim",
+                        )
+                    else:
+                        end_date = None
+                with c4:
+                    custo_label = "Valor mensal do seguro" if is_insurance else "Custo"
+                    custo = st.number_input(custo_label, min_value=0.0, step=10.0, format="%.2f", key="cad_ped_custo")
+                    button_label = "Salvar seguro" if is_insurance else "Salvar pedágio/extra"
+                    submitted = st.button(button_label, type="primary", width="stretch", key="cad_ped_submit")
+
+                p1 = st.columns(4)[0]
+                with p1:
                     if plate_required:
                         placa, categoria = _plate_fields("cad_ped", plate_map)
                     else:
                         st.text_input("Placa", value="Sem placa", disabled=True, key="cad_ped_no_plate")
                         st.text_input("Categoria da placa", value="Transporte", disabled=True, key="cad_ped_no_plate_categoria")
                         placa, categoria = None, "Transporte"
-                with c3:
-                    custo = st.number_input("Custo", min_value=0.0, step=10.0, format="%.2f", key="cad_ped_custo")
-                    submitted = st.form_submit_button("Salvar pedágio/extra", type="primary", width="stretch")
-                required = ["Data", "Tipo"] if not plate_required else ["Data", "PLACA", "Tipo"]
+                required = ["Tipo"] if not plate_required else ["PLACA", "Tipo"]
+                if not is_insurance:
+                    required.append("Data")
                 if submitted:
-                    _save_entry(
-                        "pedagio",
-                        {
-                            "Data": data,
-                            "Mes": _entry_month(data),
-                            "PLACA": placa,
-                            "Tipo": tipo,
-                            "Custo": custo,
-                            "Categoria": categoria,
-                        },
-                        required=required,
-                        success="Lançamento de pedágio/extra salvo.",
-                    )
+                    missing = _entry_required_missing({"Data": data, "PLACA": placa, "Tipo": tipo}, required)
+                    if missing:
+                        st.warning("Preencha os campos obrigatórios: " + ", ".join(_entry_field_label(field) for field in missing))
+                    elif is_insurance:
+                        if custo <= 0:
+                            st.warning("Informe um valor mensal de seguro maior que zero.")
+                        elif start_date > end_date:
+                            st.warning("A data de início não pode ser posterior à data de fim.")
+                        else:
+                            try:
+                                result = backend.replace_pedagio_seguro_placa(
+                                    placa,
+                                    categoria,
+                                    custo,
+                                    start_date,
+                                    end_date,
+                                )
+                            except Exception as exc:
+                                st.error("Não foi possível salvar o seguro no Neon.")
+                                st.exception(exc)
+                            else:
+                                clear_cached_reads()
+                                _reset_dataset_editor("cad_ped_table")
+                                st.success(
+                                    f"Seguro salvo para {placa}: {result.get('inserted', 0)} mês(es). "
+                                    f"{result.get('deleted', 0)} lançamento(s) anterior(es) da placa, a partir da data inicial, foram substituídos."
+                                )
+                    else:
+                        _save_entry(
+                            "pedagio",
+                            {
+                                "Data": data,
+                                "Mes": _entry_month(data),
+                                "PLACA": placa,
+                                "Tipo": tipo,
+                                "Custo": custo,
+                                "Categoria": categoria,
+                            },
+                            required=required,
+                            success="Lançamento de pedágio/extra salvo.",
+                        )
             _render_seguro_period_adjustment()
             _render_dataset_editor(
                 "pedagio",
                 backend.load_pedagio,
-                ["Data", "Mes", "PLACA", "Categoria", "Tipo", "Custo"],
+                ["Data", "Inicio", "Fim", "Mes", "PLACA", "Categoria", "Tipo", "Custo"],
                 ["Data", "Tipo"],
                 "cad_ped_table",
                 {
                     "Data": _date_col(),
+                    "Inicio": _date_col("Início do seguro"),
+                    "Fim": _date_col("Fim do seguro"),
                     "Mes": st.column_config.TextColumn("Mês"),
                     "PLACA": st.column_config.TextColumn("Placa"),
                     "Categoria": st.column_config.SelectboxColumn("Categoria", options=CATEGORY_OPTIONS, required=True),

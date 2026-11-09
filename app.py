@@ -63,6 +63,7 @@ DB_METADATA_TABLE = "dashboard_metadata"
 BACKEND_BUILD_VERSION = "aluguel-multiplicar-meses-v1"
 ROUTES_BUILD_VERSION = "rotas-horas-operacao-unica-v32"
 PEDAGIO_CHART_VERSION = "all-types-v1"
+PEDAGIO_INSURANCE_PERIOD_VERSION = "date-range-v1"
 IMPORT_PROGRESS_VERSION = "all-imports-v1"
 USE_LEGACY_ROUTE_HOTEL_ALLOCATION = False
 BACKUP_METADATA_KEY = "backup.last_downloaded_at"
@@ -180,7 +181,7 @@ _HOTEIS_COLUMNS = [
     "Origem",
     "Atualizado Em",
 ]
-_PEDAGIO_COLUMNS = ["PLACA", "Tipo", "Custo", "Mes", "Data", "Categoria"]
+_PEDAGIO_COLUMNS = ["PLACA", "Tipo", "Custo", "Mes", "Data", "Inicio", "Fim", "Categoria"]
 _ALUGUEL_VEICULOS_COLUMNS = [
     "Data",
     "Mes",
@@ -2255,6 +2256,112 @@ def replace_pedagio_seguros_por_placa(
 
     _clear_dataset_cache("pedagio")
     return {"deleted": deleted, "inserted": inserted, "plates": len(normalized), "months": months}
+
+
+def replace_pedagio_seguro_placa(
+    placa: str,
+    categoria: str,
+    custo_mensal: float,
+    start_date: date | datetime | str,
+    end_date: date | datetime | str,
+) -> dict:
+    """Substitui o seguro ativo de uma placa a partir da data inicial."""
+    start_value = pd.to_datetime(start_date, errors="coerce")
+    end_value = pd.to_datetime(end_date, errors="coerce")
+    if pd.isna(start_value) or pd.isna(end_value):
+        raise ValueError("Informe datas válidas para o início e o fim do seguro.")
+    start_value = start_value.date()
+    end_value = end_value.date()
+    if start_value > end_value:
+        raise ValueError("A data inicial não pode ser posterior à data final.")
+
+    start_mes = start_value.strftime("%Y-%m")
+    end_mes = end_value.strftime("%Y-%m")
+    months = _month_sequence(start_mes, end_mes)
+    plate_value = _normalize_plate_value(placa)
+    if pd.isna(plate_value) or not _is_plate_or_asset_identifier(plate_value):
+        raise ValueError("Informe uma placa/equipamento válido.")
+
+    category_value = _normalize_category_value(categoria or "Transporte")
+    cost_value = pd.to_numeric(pd.Series([custo_mensal]), errors="coerce").iloc[0]
+    if pd.isna(cost_value) or float(cost_value) <= 0:
+        raise ValueError("Informe um valor mensal de seguro maior que zero.")
+    cost_value = float(cost_value)
+
+    from sqlalchemy import text
+
+    table = _quote_identifier(DB_TABLES["pedagio"])
+    placas_table = _quote_identifier(DB_TABLES["placas"])
+    version = datetime.now(timezone.utc).isoformat()
+    inserted = 0
+    with _db_engine().begin() as conn:
+        _ensure_dataset_table(conn, "pedagio")
+        result = conn.execute(
+            text(
+                f"""
+                DELETE FROM {table}
+                WHERE "PLACA" = :placa
+                  AND "Tipo" = :tipo
+                  AND "Mes" >= :start_mes
+                """
+            ),
+            {
+                "placa": str(plate_value),
+                "tipo": "Seguro",
+                "start_mes": months[0],
+            },
+        )
+        deleted = max(result.rowcount or 0, 0)
+
+        for mes in months:
+            year, month = (int(part) for part in mes.split("-"))
+            conn.execute(
+                text(
+                    f"""
+                    INSERT INTO {table} ("PLACA", "Tipo", "Custo", "Mes", "Data", "Inicio", "Fim", "Categoria")
+                    VALUES (:placa, :tipo, :custo, :mes, :data, :inicio, :fim, :categoria)
+                    """
+                ),
+                {
+                    "placa": str(plate_value),
+                    "tipo": "Seguro",
+                    "custo": cost_value,
+                    "mes": mes,
+                    "data": max(start_value, date(year, month, 1)),
+                    "inicio": start_value,
+                    "fim": end_value,
+                    "categoria": category_value,
+                },
+            )
+            inserted += 1
+
+        _ensure_dataset_table(conn, "placas")
+        conn.execute(
+            text(
+                f"""
+                INSERT INTO {placas_table} ("PLACA", "Categoria")
+                VALUES (:placa, :categoria)
+                ON CONFLICT ("PLACA")
+                DO UPDATE SET "Categoria" = EXCLUDED."Categoria"
+                WHERE {placas_table}."Categoria" IS DISTINCT FROM EXCLUDED."Categoria"
+                """
+            ),
+            {"placa": str(plate_value), "categoria": category_value},
+        )
+        _write_metadata(conn, "pedagio.version", version)
+        _write_metadata(conn, "placas.version", version)
+        _write_metadata(conn, "import.version", version)
+
+    _clear_dataset_cache("pedagio")
+    _clear_dataset_cache("placas")
+    return {
+        "deleted": deleted,
+        "inserted": inserted,
+        "plate": str(plate_value),
+        "months": months,
+        "start_date": start_value,
+        "end_date": end_value,
+    }
 
 
 def rename_plate(old_plate, new_plate, categoria: str, diaria: float | None = None) -> str:
@@ -4542,10 +4649,10 @@ def load_pedagio() -> pd.DataFrame:
         if cached is not None and cache.get("mtime") == version:
             return cached.copy(deep=False)
 
-        df = _read_database_table("pedagio", _PEDAGIO_COLUMNS, date_columns=["Data"])
+        df = _read_database_table("pedagio", _PEDAGIO_COLUMNS, date_columns=["Data", "Inicio", "Fim"])
         df = _finalize_common(
             df,
-            date_columns=["Data"],
+            date_columns=["Data", "Inicio", "Fim"],
             numeric_columns=["Custo"],
             text_columns=["Tipo"],
             plate_columns=["PLACA"],
