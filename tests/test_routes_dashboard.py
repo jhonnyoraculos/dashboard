@@ -439,6 +439,90 @@ class RoutesDashboardTests(unittest.TestCase):
         self.assertEqual(result["deleted"], 13)
         self.assertEqual(result["inserted"], 12)
 
+    def test_tracker_active_plates_use_only_own_fleet_with_activity_in_year(self):
+        registry = pd.DataFrame(
+            [
+                {"PLACA": "AAA1A11", "Categoria": "Transporte"},
+                {"PLACA": "BBB2B22", "Categoria": "Freteiro"},
+                {"PLACA": "CCC3C33", "Categoria": "Vex"},
+                {"PLACA": "DDD4D44", "Categoria": "Transporte"},
+            ]
+        )
+        activity = pd.DataFrame(
+            [
+                {"PLACA": "AAA1A11", "Categoria": "Transporte", "Mes": "2026-03"},
+                {"PLACA": "BBB2B22", "Categoria": "Freteiro", "Mes": "2026-03"},
+                {"PLACA": "CCC3C33", "Categoria": "Vex", "Mes": "2026-03"},
+                {"PLACA": "DDD4D44", "Categoria": "Transporte", "Mes": "2025-12"},
+            ]
+        )
+        empty = pd.DataFrame(columns=["PLACA", "Categoria", "Mes"])
+        with (
+            patch.object(backend, "load_placas", return_value=registry),
+            patch.object(backend, "load_rotas", return_value=activity),
+            patch.object(backend, "load_peso", return_value=empty),
+            patch.object(backend, "load_combustivel", return_value=empty),
+            patch.object(backend, "load_manutencao", return_value=empty),
+            patch.object(backend, "load_pneus", return_value=empty),
+            patch.object(backend, "load_rodagem_rota", return_value=empty),
+            patch.object(backend, "load_velocidade", return_value=empty),
+        ):
+            plates = backend.active_transport_plates_for_year(2026)
+
+        self.assertEqual(plates, [{"PLACA": "AAA1A11", "Categoria": "Transporte"}])
+
+    def test_tracker_monthly_total_is_split_exactly_and_replaces_same_month(self):
+        executed = []
+
+        class Result:
+            rowcount = 4
+
+        class Connection:
+            def execute(self, statement, params=None):
+                executed.append((str(statement), params or {}))
+                return Result()
+
+        class BeginContext:
+            def __enter__(self):
+                return Connection()
+
+            def __exit__(self, exc_type, exc, traceback):
+                return False
+
+        class Engine:
+            def begin(self):
+                return BeginContext()
+
+        active_plates = [
+            {"PLACA": "AAA1A11", "Categoria": "Transporte"},
+            {"PLACA": "BBB2B22", "Categoria": "Transporte"},
+            {"PLACA": "CCC3C33", "Categoria": "Transporte"},
+        ]
+        with (
+            patch.object(backend, "active_transport_plates_for_year", return_value=active_plates),
+            patch.object(backend, "_db_engine", return_value=Engine()),
+            patch.object(backend, "_ensure_dataset_table"),
+            patch.object(backend, "_write_metadata"),
+            patch.object(backend, "_clear_dataset_cache"),
+        ):
+            result = backend.replace_pedagio_rastreador_mes(date(2026, 8, 15), 100.0)
+
+        deletes = [(statement, params) for statement, params in executed if statement.lstrip().upper().startswith("DELETE")]
+        inserts = [
+            params
+            for statement, params in executed
+            if statement.lstrip().upper().startswith("INSERT") and '"Tipo"' in statement
+        ]
+        self.assertEqual(len(deletes), 1)
+        self.assertEqual(deletes[0][1], {"tipo": "Rastreador", "mes": "2026-08"})
+        self.assertEqual(len(inserts), 3)
+        self.assertEqual([params["placa"] for params in inserts], ["AAA1A11", "BBB2B22", "CCC3C33"])
+        self.assertEqual([params["custo"] for params in inserts], [33.34, 33.33, 33.33])
+        self.assertAlmostEqual(sum(params["custo"] for params in inserts), 100.0)
+        self.assertTrue(all(params["valor_total"] == 100.0 for params in inserts))
+        self.assertEqual(result["inserted"], 3)
+        self.assertEqual(result["deleted"], 4)
+
     def test_replace_seguro_placa_rejects_invalid_period_or_value(self):
         with self.assertRaises(ValueError):
             backend.replace_pedagio_seguro_placa("ABC1D23", "Transporte", 100, date(2027, 2, 1), date(2027, 1, 31))

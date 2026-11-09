@@ -69,6 +69,7 @@ _backend_features_ready = all(
         "load_diarias_equipe",
         "replace_diarias_equipe_periods",
         "replace_pedagio_seguro_placa",
+        "replace_pedagio_rastreador_mes",
     )
 )
 _backend_aluguel_period_ready = {"Inicio", "Fim"}.issubset(
@@ -77,9 +78,10 @@ _backend_aluguel_period_ready = {"Inicio", "Fim"}.issubset(
 _backend_aluguel_monthly_ready = getattr(backend, "BACKEND_BUILD_VERSION", "") == "aluguel-multiplicar-meses-v1"
 _backend_pedagio_chart_ready = getattr(backend, "PEDAGIO_CHART_VERSION", "") == "all-types-v1"
 _backend_pedagio_insurance_ready = getattr(backend, "PEDAGIO_INSURANCE_PERIOD_VERSION", "") == "annual-total-v3"
+_backend_pedagio_tracker_ready = getattr(backend, "PEDAGIO_TRACKER_VERSION", "") == "monthly-active-plates-v1"
 _backend_routes_ready = getattr(backend, "ROUTES_BUILD_VERSION", "") == "rotas-horas-operacao-unica-v32"
 _backend_import_progress_ready = getattr(backend, "IMPORT_PROGRESS_VERSION", "") == "all-imports-v1"
-if not _backend_features_ready or not _backend_aluguel_period_ready or not _backend_aluguel_monthly_ready or not _backend_pedagio_chart_ready or not _backend_pedagio_insurance_ready or not _backend_routes_ready or not _backend_import_progress_ready:
+if not _backend_features_ready or not _backend_aluguel_period_ready or not _backend_aluguel_monthly_ready or not _backend_pedagio_chart_ready or not _backend_pedagio_insurance_ready or not _backend_pedagio_tracker_ready or not _backend_routes_ready or not _backend_import_progress_ready:
     backend = importlib.reload(backend)
 
 # O Streamlit também pode manter módulos auxiliares em memória após o deploy.
@@ -432,7 +434,7 @@ CITY_COORDINATES_CATALOG_PATH = Path(__file__).parent / "static" / "municipios_b
 _CITY_COORDINATE_CATALOG: tuple[dict[str, tuple[float, float]], dict[str, tuple[float, float]]] | None = None
 CATEGORY_OPTIONS = ["Transporte", "Freteiro", "Empilhadeira", "Estoque", "Vex", "Equipamento"]
 CADASTRO_TABS = ["Placas", "Diárias", "Rotas", "Empilhadeiras", "Combustível", "KM mensal", "Manutenção", "Pneus", "Hotéis", "Peso", "Velocidade", "Pedágio/Extras", "Aluguel de veículos"]
-PEDAGIO_TIPO_OPTIONS = ["Pedágio", "Extras", "Táxi", "IPVA", "Seguro", "Licenciamento", "DPVAT", "Outros"]
+PEDAGIO_TIPO_OPTIONS = ["Pedágio", "Extras", "Táxi", "IPVA", "Seguro", "Rastreador", "Licenciamento", "DPVAT", "Outros"]
 PEDAGIO_OPTIONAL_PLATE_TYPES = {"Extras", "Táxi"}
 BACKUP_INTERVAL_DAYS = 7
 BACKUP_TABLES = [
@@ -16122,7 +16124,8 @@ def render_cadastro() -> None:
                 c1, c2, c3, c4 = st.columns(4)
                 with c3:
                     tipo = st.selectbox("Tipo", PEDAGIO_TIPO_OPTIONS, key="cad_ped_tipo")
-                plate_required = tipo not in PEDAGIO_OPTIONAL_PLATE_TYPES
+                is_tracker = tipo == "Rastreador"
+                plate_required = tipo not in PEDAGIO_OPTIONAL_PLATE_TYPES and not is_tracker
                 is_insurance = tipo == "Seguro"
                 with c1:
                     if is_insurance:
@@ -16134,8 +16137,9 @@ def render_cadastro() -> None:
                         )
                         data = start_date
                     else:
+                        data_label = "Mês de referência" if is_tracker else "Data"
                         data = st.date_input(
-                            "Data",
+                            data_label,
                             value=date.today(),
                             format="YYYY/MM/DD",
                             key="cad_ped_data",
@@ -16152,16 +16156,43 @@ def render_cadastro() -> None:
                     else:
                         end_date = None
                 with c4:
-                    custo_label = "Valor total do seguro" if is_insurance else "Custo"
+                    custo_label = (
+                        "Valor total do seguro"
+                        if is_insurance
+                        else "Valor mensal total do rastreador"
+                        if is_tracker
+                        else "Custo"
+                    )
                     custo = st.number_input(custo_label, min_value=0.0, step=10.0, format="%.2f", key="cad_ped_custo")
-                    button_label = "Salvar seguro" if is_insurance else "Salvar pedágio/extra"
+                    button_label = "Salvar seguro" if is_insurance else "Ratear rastreador" if is_tracker else "Salvar pedágio/extra"
                     submitted = st.button(button_label, type="primary", width="stretch", key="cad_ped_submit")
                 if is_insurance:
                     st.caption("Informe o valor anual/total. O sistema divide esse total pelas parcelas mensais entre as datas escolhidas.")
 
+                tracker_plates = []
+                tracker_error = None
+                if is_tracker:
+                    try:
+                        tracker_plates = backend.active_transport_plates_for_year(data.year)
+                    except Exception as exc:
+                        tracker_error = exc
+                    if tracker_error:
+                        st.warning("Não foi possível conferir as placas em uso neste ano.")
+                    elif tracker_plates:
+                        plate_names = ", ".join(item["PLACA"] for item in tracker_plates)
+                        estimated_value = custo / len(tracker_plates) if custo > 0 else 0.0
+                        st.info(
+                            f"{len(tracker_plates)} placa(s) própria(s) em uso em {data.year}. "
+                            f"Rateio aproximado: {fmt_brl(estimated_value)} por placa. Placas: {plate_names}"
+                        )
+                    else:
+                        st.warning(f"Nenhuma placa própria em uso foi encontrada em {data.year}.")
+
                 p1 = st.columns(4)[0]
                 with p1:
-                    if plate_required:
+                    if is_tracker:
+                        placa, categoria = None, "Transporte"
+                    elif plate_required:
                         placa, categoria = _plate_fields("cad_ped", plate_map)
                     else:
                         st.text_input("Placa", value="Sem placa", disabled=True, key="cad_ped_no_plate")
@@ -16199,6 +16230,28 @@ def render_cadastro() -> None:
                                     f"{result.get('inserted', 0)} parcela(s) mensal(is). "
                                     f"{result.get('deleted', 0)} lançamento(s) anterior(es) da placa, a partir da data inicial, foram substituídos."
                                 )
+                    elif is_tracker:
+                        if custo <= 0:
+                            st.warning("Informe um valor mensal de rastreador maior que zero.")
+                        elif tracker_error:
+                            st.error("Não foi possível carregar as placas em uso para fazer o rateio.")
+                            st.exception(tracker_error)
+                        elif not tracker_plates:
+                            st.warning(f"Nenhuma placa própria em uso foi encontrada em {data.year}.")
+                        else:
+                            try:
+                                result = backend.replace_pedagio_rastreador_mes(data, custo)
+                            except Exception as exc:
+                                st.error("Não foi possível salvar o rateio do rastreador no Neon.")
+                                st.exception(exc)
+                            else:
+                                clear_cached_reads()
+                                _reset_dataset_editor("cad_ped_table")
+                                st.success(
+                                    f"Rastreador de {fmt_brl(result.get('total_value', 0))} rateado entre "
+                                    f"{result.get('inserted', 0)} placa(s) em {month_filter_label(result.get('month'))}. "
+                                    f"{result.get('deleted', 0)} lançamento(s) anterior(es) do mês foram substituídos."
+                                )
                     else:
                         _save_entry(
                             "pedagio",
@@ -16228,8 +16281,8 @@ def render_cadastro() -> None:
                     "PLACA": st.column_config.TextColumn("Placa"),
                     "Categoria": st.column_config.SelectboxColumn("Categoria", options=CATEGORY_OPTIONS, required=True),
                     "Tipo": st.column_config.SelectboxColumn("Tipo", options=PEDAGIO_TIPO_OPTIONS, required=True),
-                    "Valor Total": _money_col("Valor total do seguro"),
-                    "Custo": _money_col("Valor mensal rateado"),
+                    "Valor Total": _money_col("Valor total informado"),
+                    "Custo": _money_col("Valor rateado"),
                 },
                 ["Mes", "PLACA", "Categoria", "Tipo"],
             )

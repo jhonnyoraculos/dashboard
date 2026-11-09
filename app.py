@@ -64,6 +64,7 @@ BACKEND_BUILD_VERSION = "aluguel-multiplicar-meses-v1"
 ROUTES_BUILD_VERSION = "rotas-horas-operacao-unica-v32"
 PEDAGIO_CHART_VERSION = "all-types-v1"
 PEDAGIO_INSURANCE_PERIOD_VERSION = "annual-total-v3"
+PEDAGIO_TRACKER_VERSION = "monthly-active-plates-v1"
 IMPORT_PROGRESS_VERSION = "all-imports-v1"
 USE_LEGACY_ROUTE_HOTEL_ALLOCATION = False
 BACKUP_METADATA_KEY = "backup.last_downloaded_at"
@@ -2400,6 +2401,115 @@ def replace_pedagio_seguro_placa(
     }
 
 
+def active_transport_plates_for_year(year: int) -> list[dict]:
+    """Lista placas próprias com atividade operacional no ano informado."""
+    year = int(year)
+    registry = load_placas()
+    category_map = {
+        str(row.get("PLACA") or "").strip(): _normalize_category_value(row.get("Categoria"))
+        for row in registry.to_dict("records")
+        if str(row.get("PLACA") or "").strip()
+    }
+    active: set[str] = set()
+    loaders = (
+        load_rotas,
+        load_peso,
+        load_combustivel,
+        load_manutencao,
+        load_pneus,
+        load_rodagem_rota,
+        load_velocidade,
+    )
+    for loader in loaders:
+        try:
+            frame = loader()
+        except Exception:
+            continue
+        if frame.empty or "PLACA" not in frame.columns:
+            continue
+        if "Mes" in frame.columns:
+            mask = frame["Mes"].astype("string").fillna("").str.startswith(f"{year:04d}-")
+        elif "Data" in frame.columns:
+            mask = pd.to_datetime(frame["Data"], errors="coerce").dt.year.eq(year)
+        else:
+            continue
+        for row in frame.loc[mask].to_dict("records"):
+            plate_value = _normalize_plate_value(row.get("PLACA"))
+            if pd.isna(plate_value) or not _is_plate_identifier(plate_value):
+                continue
+            plate_value = str(plate_value)
+            category = category_map.get(
+                plate_value,
+                _normalize_category_value(row.get("Categoria") or "Transporte"),
+            )
+            if category == "Transporte":
+                active.add(plate_value)
+    return [{"PLACA": plate, "Categoria": category_map.get(plate, "Transporte")} for plate in sorted(active)]
+
+
+def replace_pedagio_rastreador_mes(reference_date: date | datetime | str, valor_mensal: float) -> dict:
+    """Rateia o total mensal do rastreador entre as placas próprias ativas no ano."""
+    date_value = pd.to_datetime(reference_date, errors="coerce")
+    if pd.isna(date_value):
+        raise ValueError("Informe uma data válida para o rastreador.")
+    date_value = date_value.date()
+    month_value = date_value.strftime("%Y-%m")
+
+    total_value = pd.to_numeric(pd.Series([valor_mensal]), errors="coerce").iloc[0]
+    if pd.isna(total_value) or float(total_value) <= 0:
+        raise ValueError("Informe um valor mensal de rastreador maior que zero.")
+    total_value = float(total_value)
+
+    plates = active_transport_plates_for_year(date_value.year)
+    if not plates:
+        raise ValueError(f"Nenhuma placa própria em uso foi encontrada em {date_value.year}.")
+    allocated_values = _allocate_insurance_total(total_value, len(plates))
+
+    from sqlalchemy import text
+
+    table = _quote_identifier(DB_TABLES["pedagio"])
+    version = datetime.now(timezone.utc).isoformat()
+    with _db_engine().begin() as conn:
+        _ensure_dataset_table(conn, "pedagio")
+        result = conn.execute(
+            text(f'DELETE FROM {table} WHERE "Tipo" = :tipo AND "Mes" = :mes'),
+            {"tipo": "Rastreador", "mes": month_value},
+        )
+        deleted = max(result.rowcount or 0, 0)
+
+        for plate, allocated_value in zip(plates, allocated_values):
+            conn.execute(
+                text(
+                    f"""
+                    INSERT INTO {table} ("PLACA", "Tipo", "Custo", "Valor Total", "Mes", "Data", "Categoria")
+                    VALUES (:placa, :tipo, :custo, :valor_total, :mes, :data, :categoria)
+                    """
+                ),
+                {
+                    "placa": plate["PLACA"],
+                    "tipo": "Rastreador",
+                    "custo": allocated_value,
+                    "valor_total": total_value,
+                    "mes": month_value,
+                    "data": date_value,
+                    "categoria": plate["Categoria"],
+                },
+            )
+
+        _write_metadata(conn, "pedagio.version", version)
+        _write_metadata(conn, "import.version", version)
+
+    _clear_dataset_cache("pedagio")
+    return {
+        "deleted": deleted,
+        "inserted": len(plates),
+        "plates": plates,
+        "month": month_value,
+        "total_value": total_value,
+        "allocated_values": allocated_values,
+    }
+
+
 def migrate_pedagio_insurance_totals(*, force: bool = False) -> dict:
     """Corrige uma vez os seguros por período que receberam o total como custo mensal."""
     global _PEDAGIO_INSURANCE_MIGRATION_READY
@@ -3751,6 +3861,8 @@ def _normalize_tipo_value(value):
         return "IPVA"
     if "SEGUR" in text or "APOLI" in text:
         return "Seguro"
+    if "RASTREAD" in text:
+        return "Rastreador"
     if "TAXI" in text:
         return "Táxi"
     if "EXTRA" in text:
