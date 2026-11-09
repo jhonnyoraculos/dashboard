@@ -370,6 +370,71 @@ class RoutesDashboardTests(unittest.TestCase):
         self.assertAlmostEqual(summary["gasto_seguro"], 3102.87)
         self.assertAlmostEqual(summary["custo_total"], 3102.87)
 
+    def test_ipva_total_is_appended_in_installments_without_deleting_existing_rows(self):
+        executed = []
+
+        class Result:
+            rowcount = 1
+
+        class Connection:
+            def execute(self, statement, params=None):
+                executed.append((str(statement), params or {}))
+                return Result()
+
+        class BeginContext:
+            def __enter__(self):
+                return Connection()
+
+            def __exit__(self, exc_type, exc, traceback):
+                return False
+
+        class Engine:
+            def begin(self):
+                return BeginContext()
+
+        with (
+            patch.object(backend, "_db_engine", return_value=Engine()),
+            patch.object(backend, "_ensure_dataset_table"),
+            patch.object(backend, "_write_metadata"),
+            patch.object(backend, "_clear_dataset_cache"),
+        ):
+            result = backend.append_pedagio_ipva_period(
+                "ABC1D23",
+                "Transporte",
+                100.0,
+                date(2026, 1, 10),
+                date(2026, 3, 31),
+            )
+
+        deletes = [statement for statement, _ in executed if statement.lstrip().upper().startswith("DELETE")]
+        ipva_inserts = [
+            params
+            for statement, params in executed
+            if statement.lstrip().upper().startswith("INSERT") and '"Tipo"' in statement
+        ]
+        self.assertEqual(deletes, [])
+        self.assertEqual(len(ipva_inserts), 3)
+        self.assertEqual([params["mes"] for params in ipva_inserts], ["2026-01", "2026-02", "2026-03"])
+        self.assertEqual([params["custo"] for params in ipva_inserts], [33.34, 33.33, 33.33])
+        self.assertAlmostEqual(sum(params["custo"] for params in ipva_inserts), 100.0)
+        self.assertTrue(all(params["valor_total"] == 100.0 for params in ipva_inserts))
+        self.assertEqual(result["inserted"], 3)
+        self.assertEqual(result["months"], ["2026-01", "2026-02", "2026-03"])
+
+        summary = backend.agg_pedagio(
+            pd.DataFrame(
+                [
+                    {
+                        "Data": params["data"], "Mes": params["mes"], "PLACA": params["placa"],
+                        "Categoria": params["categoria"], "Tipo": "IPVA", "Custo": params["custo"],
+                    }
+                    for params in ipva_inserts
+                ]
+            )
+        )
+        self.assertAlmostEqual(summary["gasto_ipva"], 100.0)
+        self.assertEqual(summary["qtd_ipva"], 3)
+
     def test_insurance_migration_converts_repeated_total_to_monthly_installments(self):
         executed = []
         source_rows = [

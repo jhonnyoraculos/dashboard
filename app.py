@@ -65,6 +65,7 @@ ROUTES_BUILD_VERSION = "rotas-horas-operacao-unica-v32"
 PEDAGIO_CHART_VERSION = "all-types-v1"
 PEDAGIO_INSURANCE_PERIOD_VERSION = "annual-total-v3"
 PEDAGIO_TRACKER_VERSION = "monthly-active-plates-v3"
+PEDAGIO_IPVA_VERSION = "annual-append-v1"
 IMPORT_PROGRESS_VERSION = "all-imports-v1"
 USE_LEGACY_ROUTE_HOTEL_ALLOCATION = False
 BACKUP_METADATA_KEY = "backup.last_downloaded_at"
@@ -2404,6 +2405,97 @@ def replace_pedagio_seguro_placa(
     return {
         "deleted": deleted,
         "inserted": inserted,
+        "plate": str(plate_value),
+        "months": months,
+        "total_value": total_value,
+        "installment_values": installment_values,
+        "start_date": start_value,
+        "end_date": end_value,
+    }
+
+
+def append_pedagio_ipva_period(
+    placa: str,
+    categoria: str,
+    valor_total: float,
+    start_date: date | datetime | str,
+    end_date: date | datetime | str,
+) -> dict:
+    """Acrescenta um IPVA e divide o total pelos meses sem apagar parcelas existentes."""
+    start_value = pd.to_datetime(start_date, errors="coerce")
+    end_value = pd.to_datetime(end_date, errors="coerce")
+    if pd.isna(start_value) or pd.isna(end_value):
+        raise ValueError("Informe datas válidas para o início e o fim do IPVA.")
+    start_value = start_value.date()
+    end_value = end_value.date()
+    if start_value > end_value:
+        raise ValueError("A data inicial não pode ser posterior à data final.")
+
+    months = _month_sequence(start_value.strftime("%Y-%m"), end_value.strftime("%Y-%m"))
+    plate_value = _normalize_plate_value(placa)
+    if pd.isna(plate_value) or not _is_plate_or_asset_identifier(plate_value):
+        raise ValueError("Informe uma placa/equipamento válido.")
+    category_value = _normalize_category_value(categoria or "Transporte")
+
+    total_value = pd.to_numeric(pd.Series([valor_total]), errors="coerce").iloc[0]
+    if pd.isna(total_value) or float(total_value) <= 0:
+        raise ValueError("Informe um valor total de IPVA maior que zero.")
+    total_value = float(total_value)
+    installment_values = _allocate_insurance_total(total_value, len(months))
+
+    from sqlalchemy import text
+
+    table = _quote_identifier(DB_TABLES["pedagio"])
+    placas_table = _quote_identifier(DB_TABLES["placas"])
+    version = datetime.now(timezone.utc).isoformat()
+    with _db_engine().begin() as conn:
+        _ensure_dataset_table(conn, "pedagio")
+        for month_value, installment_value in zip(months, installment_values):
+            year, month = (int(part) for part in month_value.split("-"))
+            data_value = max(start_value, date(year, month, 1))
+            conn.execute(
+                text(
+                    f"""
+                    INSERT INTO {table}
+                        ("PLACA", "Tipo", "Custo", "Valor Total", "Mes", "Data", "Inicio", "Fim", "Categoria")
+                    VALUES
+                        (:placa, :tipo, :custo, :valor_total, :mes, :data, :inicio, :fim, :categoria)
+                    """
+                ),
+                {
+                    "placa": str(plate_value),
+                    "tipo": "IPVA",
+                    "custo": installment_value,
+                    "valor_total": total_value,
+                    "mes": month_value,
+                    "data": data_value,
+                    "inicio": start_value,
+                    "fim": end_value,
+                    "categoria": category_value,
+                },
+            )
+
+        _ensure_dataset_table(conn, "placas")
+        conn.execute(
+            text(
+                f"""
+                INSERT INTO {placas_table} ("PLACA", "Categoria")
+                VALUES (:placa, :categoria)
+                ON CONFLICT ("PLACA")
+                DO UPDATE SET "Categoria" = EXCLUDED."Categoria"
+                WHERE {placas_table}."Categoria" IS DISTINCT FROM EXCLUDED."Categoria"
+                """
+            ),
+            {"placa": str(plate_value), "categoria": category_value},
+        )
+        _write_metadata(conn, "pedagio.version", version)
+        _write_metadata(conn, "placas.version", version)
+        _write_metadata(conn, "import.version", version)
+
+    _clear_dataset_cache("pedagio")
+    _clear_dataset_cache("placas")
+    return {
+        "inserted": len(months),
         "plate": str(plate_value),
         "months": months,
         "total_value": total_value,

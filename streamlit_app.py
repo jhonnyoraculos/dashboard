@@ -71,6 +71,7 @@ _backend_features_ready = all(
         "replace_pedagio_seguro_placa",
         "replace_pedagio_rastreador_mes",
         "replace_pedagio_rastreador_period",
+        "append_pedagio_ipva_period",
     )
 )
 _backend_aluguel_period_ready = {"Inicio", "Fim"}.issubset(
@@ -80,9 +81,10 @@ _backend_aluguel_monthly_ready = getattr(backend, "BACKEND_BUILD_VERSION", "") =
 _backend_pedagio_chart_ready = getattr(backend, "PEDAGIO_CHART_VERSION", "") == "all-types-v1"
 _backend_pedagio_insurance_ready = getattr(backend, "PEDAGIO_INSURANCE_PERIOD_VERSION", "") == "annual-total-v3"
 _backend_pedagio_tracker_ready = getattr(backend, "PEDAGIO_TRACKER_VERSION", "") == "monthly-active-plates-v3"
+_backend_pedagio_ipva_ready = getattr(backend, "PEDAGIO_IPVA_VERSION", "") == "annual-append-v1"
 _backend_routes_ready = getattr(backend, "ROUTES_BUILD_VERSION", "") == "rotas-horas-operacao-unica-v32"
 _backend_import_progress_ready = getattr(backend, "IMPORT_PROGRESS_VERSION", "") == "all-imports-v1"
-if not _backend_features_ready or not _backend_aluguel_period_ready or not _backend_aluguel_monthly_ready or not _backend_pedagio_chart_ready or not _backend_pedagio_insurance_ready or not _backend_pedagio_tracker_ready or not _backend_routes_ready or not _backend_import_progress_ready:
+if not _backend_features_ready or not _backend_aluguel_period_ready or not _backend_aluguel_monthly_ready or not _backend_pedagio_chart_ready or not _backend_pedagio_insurance_ready or not _backend_pedagio_tracker_ready or not _backend_pedagio_ipva_ready or not _backend_routes_ready or not _backend_import_progress_ready:
     backend = importlib.reload(backend)
 
 # O Streamlit também pode manter módulos auxiliares em memória após o deploy.
@@ -16128,12 +16130,19 @@ def render_cadastro() -> None:
                 with c3:
                     tipo = st.selectbox("Tipo", PEDAGIO_TIPO_OPTIONS, key="cad_ped_tipo")
                 is_tracker = tipo == "Rastreador"
+                is_ipva = tipo == "IPVA"
                 plate_required = tipo not in PEDAGIO_OPTIONAL_PLATE_TYPES and not is_tracker
                 is_insurance = tipo == "Seguro"
                 with c1:
-                    if is_insurance or is_tracker:
+                    if is_insurance or is_tracker or is_ipva:
                         start_label = "Data de início" if is_insurance else "Mês inicial"
-                        start_key = "cad_ped_seguro_inicio" if is_insurance else "cad_ped_tracker_inicio"
+                        start_key = (
+                            "cad_ped_seguro_inicio"
+                            if is_insurance
+                            else "cad_ped_tracker_inicio"
+                            if is_tracker
+                            else "cad_ped_ipva_inicio"
+                        )
                         start_date = st.date_input(
                             start_label,
                             value=date.today(),
@@ -16150,9 +16159,15 @@ def render_cadastro() -> None:
                         )
                         start_date = None
                 with c2:
-                    if is_insurance or is_tracker:
+                    if is_insurance or is_tracker or is_ipva:
                         end_label = "Data de fim" if is_insurance else "Mês final"
-                        end_key = "cad_ped_seguro_fim" if is_insurance else "cad_ped_tracker_fim"
+                        end_key = (
+                            "cad_ped_seguro_fim"
+                            if is_insurance
+                            else "cad_ped_tracker_fim"
+                            if is_tracker
+                            else "cad_ped_ipva_fim"
+                        )
                         end_date = st.date_input(
                             end_label,
                             value=date.today(),
@@ -16165,15 +16180,33 @@ def render_cadastro() -> None:
                     custo_label = (
                         "Valor total do seguro"
                         if is_insurance
+                        else "Valor total do IPVA"
+                        if is_ipva
                         else "Valor mensal total do rastreador"
                         if is_tracker
                         else "Custo"
                     )
                     custo = st.number_input(custo_label, min_value=0.0, step=10.0, format="%.2f", key="cad_ped_custo")
-                    button_label = "Salvar seguro" if is_insurance else "Ratear rastreador" if is_tracker else "Salvar pedágio/extra"
+                    button_label = (
+                        "Salvar seguro"
+                        if is_insurance
+                        else "Adicionar IPVA"
+                        if is_ipva
+                        else "Ratear rastreador"
+                        if is_tracker
+                        else "Salvar pedágio/extra"
+                    )
                     submitted = st.button(button_label, type="primary", width="stretch", key="cad_ped_submit")
                 if is_insurance:
                     st.caption("Informe o valor anual/total. O sistema divide esse total pelas parcelas mensais entre as datas escolhidas.")
+                elif is_ipva:
+                    if start_date <= end_date:
+                        ipva_installments = len(pd.period_range(start=start_date, end=end_date, freq="M"))
+                        estimated_installment = custo / ipva_installments if custo > 0 and ipva_installments else 0.0
+                        st.caption(
+                            f"O total será acrescentado em {ipva_installments} parcela(s) de aproximadamente "
+                            f"{fmt_brl(estimated_installment)}. IPVA já cadastrado não será apagado."
+                        )
                 elif is_tracker:
                     st.caption("O valor informado será repetido em cada mês, do mês inicial ao mês final, e rateado entre as placas elegíveis do ano.")
 
@@ -16246,6 +16279,30 @@ def render_cadastro() -> None:
                                     f"Seguro de {fmt_brl(result.get('total_value', 0))} salvo para {placa} em "
                                     f"{result.get('inserted', 0)} parcela(s) mensal(is). "
                                     f"{result.get('deleted', 0)} lançamento(s) anterior(es) da placa, a partir da data inicial, foram substituídos."
+                                )
+                    elif is_ipva:
+                        if custo <= 0:
+                            st.warning("Informe um valor total de IPVA maior que zero.")
+                        elif start_date > end_date:
+                            st.warning("O mês inicial não pode ser posterior ao mês final.")
+                        else:
+                            try:
+                                result = backend.append_pedagio_ipva_period(
+                                    placa,
+                                    categoria,
+                                    custo,
+                                    start_date,
+                                    end_date,
+                                )
+                            except Exception as exc:
+                                st.error("Não foi possível adicionar o IPVA no Neon.")
+                                st.exception(exc)
+                            else:
+                                clear_cached_reads()
+                                _reset_dataset_editor("cad_ped_table")
+                                st.success(
+                                    f"IPVA de {fmt_brl(result.get('total_value', 0))} acrescentado para {placa} em "
+                                    f"{result.get('inserted', 0)} parcela(s). Os lançamentos anteriores foram mantidos."
                                 )
                     elif is_tracker:
                         if custo <= 0:
