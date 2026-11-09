@@ -8066,6 +8066,7 @@ def render_frota() -> None:
         maintenance_total_label = "Manutenção total no período"
     cost_kpis = [
         ("Gasto total", fmt_brl_big(totais.get("total")), JR_RED),
+        ("Custo da frota parada", fmt_brl_big(totais.get("custo_frota_parada")), "#7C3AED"),
         ("Custo total por KM", fmt_brl(totais.get("custo_por_km")), JR_RED),
         ("Média mensal de gastos", fmt_brl_big(totais.get("media_mensal")), "#0F766E"),
         (maintenance_total_label, fmt_brl_big(totais.get("manutencao")), JR_RED),

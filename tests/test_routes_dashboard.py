@@ -55,6 +55,28 @@ def sample_payload() -> dict:
 
 
 class RoutesDashboardTests(unittest.TestCase):
+    def test_stationary_fleet_cost_excludes_only_operational_costs(self):
+        extras = pd.DataFrame(
+            [
+                {"Tipo": "Pedágio", "Custo": 100.0},
+                {"Tipo": "Seguro", "Custo": 300.0},
+                {"Tipo": "IPVA", "Custo": 200.0},
+                {"Tipo": "Rastreador", "Custo": 50.0},
+            ]
+        )
+
+        toll_cost = backend._ranking_type_total(extras, "Pedágio")
+        stationary_cost = backend._ranking_stationary_fleet_cost(
+            total_cost=1_500.0,
+            fuel_cost=400.0,
+            maintenance_cost=200.0,
+            hotel_cost=100.0,
+            toll_cost=toll_cost,
+        )
+
+        self.assertEqual(toll_cost, 100.0)
+        self.assertEqual(stationary_cost, 700.0)
+
     def test_ipva_scanned_pdf_uses_ocr_fallback(self):
         ocr_text = """
         Validade 10/02/2026

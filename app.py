@@ -8154,6 +8154,26 @@ def _ranking_sum_by_plate(df: pd.DataFrame, value_col: str) -> dict[str, float]:
     return {str(placa): float(valor or 0) for placa, valor in grouped.items()}
 
 
+def _ranking_type_total(df: pd.DataFrame, tipo: str) -> float:
+    if df.empty or "Tipo" not in df.columns or "Custo" not in df.columns:
+        return 0.0
+    normalized_type = _normalize_tipo_value(tipo)
+    type_values = df["Tipo"].apply(_normalize_tipo_value)
+    costs = pd.to_numeric(df["Custo"], errors="coerce").fillna(0.0)
+    return float(costs.loc[type_values == normalized_type].sum())
+
+
+def _ranking_stationary_fleet_cost(
+    total_cost: float,
+    fuel_cost: float,
+    maintenance_cost: float,
+    hotel_cost: float,
+    toll_cost: float,
+) -> float:
+    stationary_cost = total_cost - fuel_cost - maintenance_cost - hotel_cost - toll_cost
+    return max(float(stationary_cost), 0.0)
+
+
 def _ranking_count_by_plate(df: pd.DataFrame) -> dict[str, int]:
     if df.empty or "PLACA" not in df.columns:
         return {}
@@ -9226,6 +9246,15 @@ def data_frota(params: dict | None = None) -> dict:
     total_placas = len(ranking)
     total_dias_na_rota = sum(row["dias_na_rota"] for row in ranking)
     total_manutencao = sum(row["manutencao"] for row in ranking)
+    total_combustivel = sum(row["combustivel"] for row in ranking)
+    total_pedagio_operacional = _ranking_type_total(df_ped, "Pedágio")
+    custo_frota_parada = _ranking_stationary_fleet_cost(
+        total_gasto,
+        total_combustivel,
+        total_manutencao,
+        total_hoteis,
+        total_pedagio_operacional,
+    )
     total_peso_filtrado = sum(row["peso_total"] for row in ranking)
     total_peso_geral = (
         float(pd.to_numeric(df_peso_total.get("Peso"), errors="coerce").fillna(0).sum())
@@ -9276,12 +9305,14 @@ def data_frota(params: dict | None = None) -> dict:
         "totais": {
             "placas": total_placas,
             "total": round(total_gasto, 2),
+            "custo_frota_parada": round(custo_frota_parada, 2),
             "media_mensal": round((total_gasto / total_meses) if total_meses else 0.0, 2),
-            "combustivel": round(sum(row["combustivel"] for row in ranking), 2),
+            "combustivel": round(total_combustivel, 2),
             "manutencao": round(total_manutencao, 2),
             "manutencao_diaria": round((total_manutencao / total_dias_na_rota) if total_dias_na_rota else 0.0, 2),
             "dias_na_rota": total_dias_na_rota,
             "pedagio": round(sum(row["pedagio"] for row in ranking), 2),
+            "pedagio_operacional": round(total_pedagio_operacional, 2),
             "gasto_diarias": round(sum(row["gasto_diarias"] for row in ranking), 2),
             "diarias_equipe": round(total_diarias_equipe, 2),
             "salario_transporte": round(total_salario_transporte, 2),
