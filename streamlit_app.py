@@ -42,6 +42,7 @@ from ai_assistant import (
     numeric_metrics,
 )
 from route_pdf import parse_route_pdf
+from ipva_pdf import ipva_three_installment_rows, parse_ipva_pdf
 import route_tracker
 
 # O Streamlit pode recarregar este arquivo sem reiniciar o processo Python.
@@ -14130,6 +14131,94 @@ def _render_pedagio_sheet_import(plate_map: dict[str, str]) -> None:
 
 
 @st.fragment
+def _render_ipva_pdf_import(plate_map: dict[str, str]) -> None:
+    with st.expander("Importar IPVA por PDF — gerar 3 parcelas", expanded=False):
+        st.caption(
+            "O importador reconhece o valor de uma única parcela no DAE, ignora a repetição das vias "
+            "do mesmo boleto e cria 3 parcelas mensais iguais."
+        )
+        uploaded_files = st.file_uploader(
+            "Enviar PDF(s) do IPVA",
+            type=["pdf"],
+            accept_multiple_files=True,
+            key="cad_ipva_pdf_upload",
+        )
+        if not uploaded_files:
+            return
+
+        parsed_documents = []
+        all_rows = []
+        errors = []
+        for uploaded in uploaded_files:
+            try:
+                parsed = parse_ipva_pdf(uploaded.getvalue(), uploaded.name)
+                category = plate_map.get(parsed["PLACA"], "Transporte")
+                rows = ipva_three_installment_rows(parsed, category)
+            except Exception as exc:
+                errors.append(f"{uploaded.name}: {exc}")
+                continue
+            parsed_documents.append(
+                {
+                    "Arquivo": uploaded.name,
+                    "Placa": parsed["PLACA"],
+                    "Parcela identificada": parsed["Parcela PDF"],
+                    "Primeiro vencimento": parsed["Primeiro Vencimento"],
+                    "Valor de cada parcela": parsed["Valor Parcela"],
+                    "Quantidade": 3,
+                    "Total das 3 parcelas": rows[0]["Valor Total"],
+                    "Último vencimento": rows[-1]["Data"],
+                }
+            )
+            all_rows.extend(rows)
+
+        if errors:
+            st.warning("Alguns PDFs não puderam ser lidos:")
+            for error in errors:
+                st.write(error)
+        if not parsed_documents:
+            return
+
+        st.dataframe(
+            pd.DataFrame(parsed_documents),
+            width="stretch",
+            hide_index=True,
+            column_config={
+                "Primeiro vencimento": _date_col("Primeiro vencimento"),
+                "Último vencimento": _date_col("Último vencimento"),
+                "Valor de cada parcela": _money_col("Valor de cada parcela"),
+                "Total das 3 parcelas": _money_col("Total das 3 parcelas"),
+            },
+        )
+        if st.button(
+            f"Importar {len(parsed_documents)} IPVA(s) em 3 parcelas",
+            type="primary",
+            width="stretch",
+            key="cad_ipva_pdf_import",
+        ):
+            progress = _import_progress("Importando PDFs de IPVA")
+            try:
+                inserted_rows, skipped_rows = backend.append_missing_dashboard_records(
+                    "pedagio",
+                    all_rows,
+                    update_plate_registry=True,
+                    progress_callback=progress.update,
+                )
+            except Exception as exc:
+                progress.fail()
+                st.error("Não foi possível importar os PDFs de IPVA no Neon.")
+                st.exception(exc)
+                return
+            progress.complete()
+            clear_cached_reads()
+            _reset_dataset_editor("cad_ped_table")
+            st.success(
+                f"{len(inserted_rows)} parcela(s) de IPVA importada(s); "
+                f"{skipped_rows} parcela(s) idêntica(s) já existente(s) foram mantidas sem duplicar."
+            )
+            st.rerun()
+
+
+@st.fragment
 def _render_seguro_period_adjustment() -> None:
     with st.expander("Ajustar seguros para 10/2025 a 10/2026", expanded=False):
         try:
@@ -16122,6 +16211,7 @@ def render_cadastro() -> None:
             )
 
         if active_tab == "Pedágio/Extras":
+            _render_ipva_pdf_import(plate_map)
             _render_pedagio_sheet_import(plate_map)
             _render_pedagio_reset_options()
 

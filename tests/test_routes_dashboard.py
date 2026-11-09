@@ -12,6 +12,7 @@ os.environ.setdefault("JR_SKIP_WARM_CACHE", "1")
 
 import app as backend
 import streamlit_app as dashboard
+from ipva_pdf import ipva_three_installment_rows, parse_ipva_text
 
 
 def sample_payload() -> dict:
@@ -54,6 +55,32 @@ def sample_payload() -> dict:
 
 
 class RoutesDashboardTests(unittest.TestCase):
+    def test_ipva_pdf_deduplicates_boleto_copies_and_generates_three_installments(self):
+        text = """
+        DOCUMENTO DE ARRECADAÇÃO ESTADUAL - DAE
+        Validade 09/02/2026
+        TOTAL: R$ 761,31
+        Fluxo 1ª Via - Contribuinte
+        Validade 09/02/2026
+        TOTAL: R$ 761,31
+        Fluxo 2ª Via - Banco
+        Emissão realizada em 28/01/2026
+        RENAVAM: 1073204097 / Placa: PXD2C71
+        00.293241001-81 2026 IPVA-1 761,31 0,00 0,00 761,31
+        """
+
+        parsed = parse_ipva_text(text, filename="Lançado PXD2C71.pdf")
+        rows = ipva_three_installment_rows(parsed, "Transporte")
+
+        self.assertEqual(parsed["PLACA"], "PXD2C71")
+        self.assertEqual(parsed["Parcela PDF"], 1)
+        self.assertEqual(parsed["Valor Parcela"], 761.31)
+        self.assertEqual(parsed["Primeiro Vencimento"], date(2026, 2, 9))
+        self.assertEqual(len(rows), 3)
+        self.assertEqual([row["Mes"] for row in rows], ["2026-02", "2026-03", "2026-04"])
+        self.assertEqual([row["Custo"] for row in rows], [761.31, 761.31, 761.31])
+        self.assertTrue(all(row["Valor Total"] == 2283.93 for row in rows))
+
     def test_dashboard_authentication_accepts_only_the_configured_credentials(self):
         with patch.dict(
             os.environ,
