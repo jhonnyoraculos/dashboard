@@ -64,7 +64,7 @@ BACKEND_BUILD_VERSION = "aluguel-multiplicar-meses-v1"
 ROUTES_BUILD_VERSION = "rotas-horas-operacao-unica-v32"
 PEDAGIO_CHART_VERSION = "all-types-v1"
 PEDAGIO_INSURANCE_PERIOD_VERSION = "annual-total-v3"
-PEDAGIO_TRACKER_VERSION = "monthly-active-plates-v1"
+PEDAGIO_TRACKER_VERSION = "monthly-active-plates-v2"
 IMPORT_PROGRESS_VERSION = "all-imports-v1"
 USE_LEGACY_ROUTE_HOTEL_ALLOCATION = False
 BACKUP_METADATA_KEY = "backup.last_downloaded_at"
@@ -73,6 +73,18 @@ ROUTE_ALIASES_METADATA_KEY = "routes.route_aliases"
 PEDAGIO_INSURANCE_TOTAL_MIGRATION_KEY = "pedagio.insurance_total_migration_v2"
 ROUTE_STAFF_LOCAL_DAILY_RATE = 32.0
 ROUTE_STAFF_OTHER_DAILY_RATE = 100.0
+TRACKER_EXCLUDED_PLATES = {
+    "QPT9H51",
+    "RET0001",
+    "RUV3J96",
+    "SEM PLACA",
+    "TQQ5C84",
+    "PXN3I36",
+    "PVY3H23",
+    "LMY9I11",
+    "HCH3D58",
+    "FGE6C78",
+}
 _DB_ENGINE = None
 # As versoes das tabelas invalidam os caches imediatamente nas escritas feitas
 # por este processo. Para leituras, consultar o Neon a cada poucos segundos
@@ -2402,7 +2414,7 @@ def replace_pedagio_seguro_placa(
 
 
 def active_transport_plates_for_year(year: int) -> list[dict]:
-    """Lista placas próprias com atividade operacional no ano informado."""
+    """Lista placas de Transporte e Vex elegíveis com atividade no ano."""
     year = int(year)
     registry = load_placas()
     category_map = {
@@ -2438,17 +2450,19 @@ def active_transport_plates_for_year(year: int) -> list[dict]:
             if pd.isna(plate_value) or not _is_plate_identifier(plate_value):
                 continue
             plate_value = str(plate_value)
+            if plate_value in TRACKER_EXCLUDED_PLATES:
+                continue
             category = category_map.get(
                 plate_value,
                 _normalize_category_value(row.get("Categoria") or "Transporte"),
             )
-            if category == "Transporte":
+            if category in {"Transporte", "Vex"}:
                 active.add(plate_value)
     return [{"PLACA": plate, "Categoria": category_map.get(plate, "Transporte")} for plate in sorted(active)]
 
 
 def replace_pedagio_rastreador_mes(reference_date: date | datetime | str, valor_mensal: float) -> dict:
-    """Rateia o total mensal do rastreador entre as placas próprias ativas no ano."""
+    """Rateia o total mensal do rastreador entre as placas elegíveis ativas no ano."""
     date_value = pd.to_datetime(reference_date, errors="coerce")
     if pd.isna(date_value):
         raise ValueError("Informe uma data válida para o rastreador.")
@@ -2462,7 +2476,7 @@ def replace_pedagio_rastreador_mes(reference_date: date | datetime | str, valor_
 
     plates = active_transport_plates_for_year(date_value.year)
     if not plates:
-        raise ValueError(f"Nenhuma placa própria em uso foi encontrada em {date_value.year}.")
+        raise ValueError(f"Nenhuma placa elegível em uso foi encontrada em {date_value.year}.")
     allocated_values = _allocate_insurance_total(total_value, len(plates))
 
     from sqlalchemy import text

@@ -439,13 +439,14 @@ class RoutesDashboardTests(unittest.TestCase):
         self.assertEqual(result["deleted"], 13)
         self.assertEqual(result["inserted"], 12)
 
-    def test_tracker_active_plates_use_only_own_fleet_with_activity_in_year(self):
+    def test_tracker_active_plates_include_vex_and_apply_permanent_exclusions(self):
         registry = pd.DataFrame(
             [
                 {"PLACA": "AAA1A11", "Categoria": "Transporte"},
                 {"PLACA": "BBB2B22", "Categoria": "Freteiro"},
                 {"PLACA": "CCC3C33", "Categoria": "Vex"},
                 {"PLACA": "DDD4D44", "Categoria": "Transporte"},
+                {"PLACA": "QPT9H51", "Categoria": "Transporte"},
             ]
         )
         activity = pd.DataFrame(
@@ -454,6 +455,7 @@ class RoutesDashboardTests(unittest.TestCase):
                 {"PLACA": "BBB2B22", "Categoria": "Freteiro", "Mes": "2026-03"},
                 {"PLACA": "CCC3C33", "Categoria": "Vex", "Mes": "2026-03"},
                 {"PLACA": "DDD4D44", "Categoria": "Transporte", "Mes": "2025-12"},
+                {"PLACA": "QPT9H51", "Categoria": "Transporte", "Mes": "2026-03"},
             ]
         )
         empty = pd.DataFrame(columns=["PLACA", "Categoria", "Mes"])
@@ -469,7 +471,19 @@ class RoutesDashboardTests(unittest.TestCase):
         ):
             plates = backend.active_transport_plates_for_year(2026)
 
-        self.assertEqual(plates, [{"PLACA": "AAA1A11", "Categoria": "Transporte"}])
+        self.assertEqual(
+            plates,
+            [
+                {"PLACA": "AAA1A11", "Categoria": "Transporte"},
+                {"PLACA": "CCC3C33", "Categoria": "Vex"},
+            ],
+        )
+        self.assertTrue(
+            {
+                "QPT9H51", "RET0001", "RUV3J96", "SEM PLACA", "TQQ5C84",
+                "PXN3I36", "PVY3H23", "LMY9I11", "HCH3D58", "FGE6C78",
+            }.issubset(backend.TRACKER_EXCLUDED_PLATES)
+        )
 
     def test_tracker_monthly_total_is_split_exactly_and_replaces_same_month(self):
         executed = []

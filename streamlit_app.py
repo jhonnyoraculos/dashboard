@@ -78,7 +78,7 @@ _backend_aluguel_period_ready = {"Inicio", "Fim"}.issubset(
 _backend_aluguel_monthly_ready = getattr(backend, "BACKEND_BUILD_VERSION", "") == "aluguel-multiplicar-meses-v1"
 _backend_pedagio_chart_ready = getattr(backend, "PEDAGIO_CHART_VERSION", "") == "all-types-v1"
 _backend_pedagio_insurance_ready = getattr(backend, "PEDAGIO_INSURANCE_PERIOD_VERSION", "") == "annual-total-v3"
-_backend_pedagio_tracker_ready = getattr(backend, "PEDAGIO_TRACKER_VERSION", "") == "monthly-active-plates-v1"
+_backend_pedagio_tracker_ready = getattr(backend, "PEDAGIO_TRACKER_VERSION", "") == "monthly-active-plates-v2"
 _backend_routes_ready = getattr(backend, "ROUTES_BUILD_VERSION", "") == "rotas-horas-operacao-unica-v32"
 _backend_import_progress_ready = getattr(backend, "IMPORT_PROGRESS_VERSION", "") == "all-imports-v1"
 if not _backend_features_ready or not _backend_aluguel_period_ready or not _backend_aluguel_monthly_ready or not _backend_pedagio_chart_ready or not _backend_pedagio_insurance_ready or not _backend_pedagio_tracker_ready or not _backend_routes_ready or not _backend_import_progress_ready:
@@ -16182,11 +16182,11 @@ def render_cadastro() -> None:
                         plate_names = ", ".join(item["PLACA"] for item in tracker_plates)
                         estimated_value = custo / len(tracker_plates) if custo > 0 else 0.0
                         st.info(
-                            f"{len(tracker_plates)} placa(s) própria(s) em uso em {data.year}. "
+                            f"{len(tracker_plates)} placa(s) elegível(is) em uso em {data.year}. "
                             f"Rateio aproximado: {fmt_brl(estimated_value)} por placa. Placas: {plate_names}"
                         )
                     else:
-                        st.warning(f"Nenhuma placa própria em uso foi encontrada em {data.year}.")
+                        st.warning(f"Nenhuma placa elegível em uso foi encontrada em {data.year}.")
 
                 p1 = st.columns(4)[0]
                 with p1:
@@ -16237,7 +16237,7 @@ def render_cadastro() -> None:
                             st.error("Não foi possível carregar as placas em uso para fazer o rateio.")
                             st.exception(tracker_error)
                         elif not tracker_plates:
-                            st.warning(f"Nenhuma placa própria em uso foi encontrada em {data.year}.")
+                            st.warning(f"Nenhuma placa elegível em uso foi encontrada em {data.year}.")
                         else:
                             try:
                                 result = backend.replace_pedagio_rastreador_mes(data, custo)
