@@ -277,7 +277,6 @@ def require_authentication() -> bool:
         if remembered_user:
             st.session_state["jr_authenticated"] = True
             st.session_state["jr_authenticated_user"] = remembered_user
-            st.session_state["jr_show_entry_loading"] = True
 
     if st.session_state.get("jr_authenticated") is True:
         with st.sidebar:
