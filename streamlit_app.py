@@ -8037,7 +8037,6 @@ def render_frota() -> None:
     summary_kpis = [
         ("Placas no ranking", fmt_num(totais.get("placas")), JR_BLUE),
         ("Número de entregas", fmt_num(totais.get("entregas")), JR_BLUE),
-        ("Dias de serviço", fmt_num(totais.get("dias_servico")), JR_BLUE),
         ("Custo sobre o ganho das entregas", fmt_percent(cost_percentage), "#D97706"),
         ("Ganho das entregas", fmt_brl_big(totais.get("valor_peso")), "#15803D"),
         (weight_label, fmt_peso(totais.get("peso_total")), JR_BLUE),
