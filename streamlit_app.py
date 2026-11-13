@@ -379,7 +379,7 @@ def require_authentication() -> bool:
 CURRENT_YEAR = date.today().year
 APP_VERSION = "frota-parada-v92"
 LOGGER = logging.getLogger("jr_dashboard.streamlit")
-RANK_ROUTES_ENABLED = True
+RANK_ROUTES_ENABLED = False
 ROUTE_CACHE_TTL_SECONDS = max(int(os.environ.get("JR_ROUTE_CACHE_TTL_SECONDS", "1800") or 1800), 120)
 DATA_EDITOR_PAGE_SIZE = 100
 DATA_EDITOR_ALL_PAGES = "__todos_os_registros__"
@@ -938,6 +938,10 @@ def inject_css() -> None:
           padding-top: 0 !important;
         }}
 
+        .st-key-rank_filterbar :is([data-testid="column"], [data-testid="stColumn"]):has(.st-key-rank_route_popover) {{
+          display: none !important;
+        }}
+
         .st-key-rank_filterbar .st-key-rank_incluir_hoteis > div,
         .st-key-rank_filterbar .st-key-rank_incluir_diarias > div,
         .st-key-rank_filterbar .st-key-rank_incluir_salario > div {{
@@ -1111,7 +1115,7 @@ def inject_css() -> None:
         @media (min-width: 1550px) {{
           .st-key-rank_filterbar [data-testid="stHorizontalBlock"] {{
             display: grid !important;
-            grid-template-columns: .58fr .9fr .95fr 1fr 1.05fr .72fr .72fr .72fr .92fr .82fr .62fr;
+            grid-template-columns: .58fr .9fr .95fr 1.05fr .72fr .72fr .72fr .92fr .82fr .62fr;
             gap: 8px !important;
             align-items: start;
           }}
@@ -3720,7 +3724,7 @@ AI_DASHBOARD_FILTERS = {
     "vex": {"ano", "mes", "placa"},
     "alertas": {"ano", "mes", "placa"},
     "velocidade": {"ano", "mes", "placa", "motorista", "rota"},
-    "frota": {"ano", "mes", "categoria", "placa", "rota", "ordenar_por"},
+    "frota": {"ano", "mes", "categoria", "placa", "ordenar_por"},
     "rotas": {"data_inicio", "data_fim", "categoria", "placa", "motorista", "rota", "busca"},
 }
 
@@ -3759,7 +3763,7 @@ AI_FILTER_STATE_KEYS = {
     "velocidade": {"ano": "velocidade_ano", "mes": "velocidade_mes", "placa": "velocidade_placa", "motorista": "velocidade_motorista", "rota": "velocidade_rota"},
     "alertas": {"ano": "alertas_ano", "mes": "alertas_mes", "placa": "alertas_placa"},
     "overview": {"ano": "home_ano", "mes": "home_mes"},
-    "frota": {"ano": "rank_ano", "mes": "rank_mes", "categoria": "rank_categoria", "placa": "rank_placa", "rota": "rank_rota_selecao", "ordenar_por": "rank_ordenar"},
+    "frota": {"ano": "rank_ano", "mes": "rank_mes", "categoria": "rank_categoria", "placa": "rank_placa", "ordenar_por": "rank_ordenar"},
     "rotas": {"categoria": "routes_categories_v5", "placa": "routes_plates_v5", "motorista": "routes_drivers_v5", "rota": "routes_global_route_v1", "busca": "routes_search_v5"},
 }
 

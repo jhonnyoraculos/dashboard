@@ -172,6 +172,11 @@ class RoutesDashboardTests(unittest.TestCase):
         self.assertNotIn('href="?page=', source)
         self.assertNotIn("target=\"_self\"", source)
 
+    def test_ranking_route_filter_is_disabled(self):
+        self.assertFalse(dashboard.RANK_ROUTES_ENABLED)
+        self.assertNotIn("rota", dashboard.AI_DASHBOARD_FILTERS["frota"])
+        self.assertNotIn("rota", dashboard.AI_FILTER_STATE_KEYS["frota"])
+
     def test_dashboard_password_hash_rejects_invalid_salt(self):
         self.assertEqual(dashboard._password_hash("senha", "sal-invalido", 600_000), "")
 
