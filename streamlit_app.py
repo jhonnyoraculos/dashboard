@@ -2060,22 +2060,27 @@ def inject_css() -> None:
 
         div[class*="st-key-home_open_"] {{
           position: absolute;
-          left: 32px;
-          bottom: 28px;
-          width: auto;
+          inset: 0;
+          width: 100%;
+          height: 100%;
           z-index: 3;
         }}
 
+        div[class*="st-key-home_open_"] .stButton {{
+          width: 100%;
+          height: 100%;
+        }}
+
         div[class*="st-key-home_open_"] .stButton button {{
-          width: auto;
-          min-height: auto;
+          width: 100%;
+          height: 100%;
+          min-height: 100%;
           margin: 0;
           padding: 0;
           border: 0;
           border-radius: 0;
           background: transparent;
-          color: var(--jr-blue);
-          font-weight: 800;
+          opacity: 0;
           box-shadow: none;
           cursor: pointer;
         }}
@@ -2083,13 +2088,15 @@ def inject_css() -> None:
         div[class*="st-key-home_open_"] .stButton button:hover {{
           border: 0;
           background: transparent;
-          color: var(--jr-red);
-          transform: translateX(3px);
         }}
 
         div[class*="st-key-home_open_"] .stButton button:focus-visible {{
+          outline: 0;
+        }}
+
+        div[class*="st-key-home_nav_"]:not(.st-key-home_nav_grid):has(button:focus-visible) .home-card {{
           outline: 3px solid rgba(190,30,45,.26);
-          outline-offset: 5px;
+          outline-offset: 3px;
         }}
 
         div[class*="st-key-home_nav_"]:not(.st-key-home_nav_grid):hover .home-card {{
@@ -2100,13 +2107,18 @@ def inject_css() -> None:
             inset 0 1px 0 rgba(255,255,255,.90);
         }}
 
+        div[class*="st-key-home_nav_"]:not(.st-key-home_nav_grid):hover .home-link {{
+          transform: translateX(3px);
+          color: var(--jr-red) !important;
+        }}
+
         .home-card {{
           background:
             linear-gradient(145deg, rgba(255,255,255,.76), rgba(255,255,255,.48)),
             rgba(255,255,255,.58);
           border: 1px solid rgba(255,255,255,.82);
           border-radius: 18px;
-          padding: 32px 32px 72px;
+          padding: 32px;
           box-shadow:
             0 22px 48px rgba(16,24,40,.10),
             inset 0 1px 0 rgba(255,255,255,.86);
@@ -3403,12 +3415,7 @@ def inject_css() -> None:
           }}
 
           .home-card {{
-            padding-bottom: 64px;
-          }}
-
-          div[class*="st-key-home_open_"] {{
-            left: 20px;
-            bottom: 22px;
+            padding: 20px;
           }}
 
           .home-brand {{
@@ -9247,6 +9254,7 @@ def render_home() -> None:
                       <div><span class="home-chip">{h(chip)}</span><h2>{h(title)}</h2></div>
                       <p class="home-card-text">{h(description)}</p>
                       <ul class="home-list">{list_html}</ul>
+                      <span class="home-link">Abrir dashboard &rarr;</span>
                     </div>
                     """,
                     unsafe_allow_html=True,
