@@ -2032,23 +2032,30 @@ def inject_css() -> None:
           box-shadow: 0 10px 24px rgba(16,24,40,.10);
         }}
 
-        .st-key-home_nav_grid > div > [data-testid="stVerticalBlock"] {{
-          gap: 28px;
-        }}
-
-        .st-key-home_nav_grid [data-testid="stHorizontalBlock"] {{
+        .st-key-home_nav_grid {{
+          display: grid;
+          grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
           gap: 28px;
           align-items: stretch;
         }}
 
-        .st-key-home_nav_grid [data-testid="stColumn"] {{
-          display: flex;
+        .st-key-home_nav_grid > [data-testid="stLayoutWrapper"] {{
+          width: auto !important;
+          min-width: 0 !important;
+          height: 100%;
         }}
 
         div[class*="st-key-home_nav_"]:not(.st-key-home_nav_grid) {{
           width: 100%;
           height: 100%;
           position: relative;
+        }}
+
+        div[class*="st-key-home_nav_"]:not(.st-key-home_nav_grid) > [data-testid="stElementContainer"]:first-child,
+        div[class*="st-key-home_nav_"]:not(.st-key-home_nav_grid) > [data-testid="stElementContainer"]:first-child .stMarkdown,
+        div[class*="st-key-home_nav_"]:not(.st-key-home_nav_grid) > [data-testid="stElementContainer"]:first-child .stMarkdown > div,
+        div[class*="st-key-home_nav_"]:not(.st-key-home_nav_grid) > [data-testid="stElementContainer"]:first-child [data-testid="stMarkdownContainer"] {{
+          height: 100%;
         }}
 
         div[class*="st-key-home_open_"] {{
@@ -2099,7 +2106,7 @@ def inject_css() -> None:
             rgba(255,255,255,.58);
           border: 1px solid rgba(255,255,255,.82);
           border-radius: 18px;
-          padding: 32px;
+          padding: 32px 32px 72px;
           box-shadow:
             0 22px 48px rgba(16,24,40,.10),
             inset 0 1px 0 rgba(255,255,255,.86);
@@ -2111,6 +2118,8 @@ def inject_css() -> None:
           position: relative;
           overflow: hidden;
           min-height: 330px;
+          height: 100%;
+          box-sizing: border-box;
           color: inherit !important;
           text-decoration: none !important;
           cursor: pointer;
@@ -3391,6 +3400,15 @@ def inject_css() -> None:
           .home-card,
           .home-footer {{
             padding: 20px;
+          }}
+
+          .home-card {{
+            padding-bottom: 64px;
+          }}
+
+          div[class*="st-key-home_open_"] {{
+            left: 20px;
+            bottom: 22px;
           }}
 
           .home-brand {{
@@ -9220,25 +9238,21 @@ def render_home() -> None:
     ]
     st.markdown('<div id="dashboards"></div>', unsafe_allow_html=True)
     with st.container(key="home_nav_grid"):
-        for start in range(0, len(dashboard_cards), 3):
-            card_columns = st.columns(3)
-            for column, (page, chip, title, description, items) in zip(
-                card_columns, dashboard_cards[start : start + 3]
-            ):
-                with column, st.container(key=f"home_nav_{page}"):
-                    list_html = "".join(f"<li>{h(item)}</li>" for item in items)
-                    st.markdown(
-                        f"""
-                        <div class="home-card">
-                          <div><span class="home-chip">{h(chip)}</span><h2>{h(title)}</h2></div>
-                          <p class="home-card-text">{h(description)}</p>
-                          <ul class="home-list">{list_html}</ul>
-                        </div>
-                        """,
-                        unsafe_allow_html=True,
-                    )
-                    if st.button("Abrir dashboard →", key=f"home_open_{page}", width="stretch"):
-                        navigate(page)
+        for page, chip, title, description, items in dashboard_cards:
+            with st.container(key=f"home_nav_{page}"):
+                list_html = "".join(f"<li>{h(item)}</li>" for item in items)
+                st.markdown(
+                    f"""
+                    <div class="home-card">
+                      <div><span class="home-chip">{h(chip)}</span><h2>{h(title)}</h2></div>
+                      <p class="home-card-text">{h(description)}</p>
+                      <ul class="home-list">{list_html}</ul>
+                    </div>
+                    """,
+                    unsafe_allow_html=True,
+                )
+                if st.button("Abrir dashboard →", key=f"home_open_{page}", width="stretch"):
+                    navigate(page)
     st.markdown("</main>", unsafe_allow_html=True)
 
 
