@@ -2047,22 +2047,38 @@ def inject_css() -> None:
           position: relative;
         }}
 
-        div[class*="st-key-home_nav_"]:not(.st-key-home_nav_grid) .stButton button {{
-          width: 100%;
-          min-height: 44px;
-          margin-top: 10px;
-          border: 1px solid rgba(28,45,107,.16);
-          border-radius: 10px;
-          background: var(--jr-blue);
-          color: #fff;
+        div[class*="st-key-home_open_"] {{
+          position: absolute;
+          left: 32px;
+          bottom: 28px;
+          width: auto;
+          z-index: 3;
+        }}
+
+        div[class*="st-key-home_open_"] .stButton button {{
+          width: auto;
+          min-height: auto;
+          margin: 0;
+          padding: 0;
+          border: 0;
+          border-radius: 0;
+          background: transparent;
+          color: var(--jr-blue);
           font-weight: 800;
+          box-shadow: none;
           cursor: pointer;
         }}
 
-        div[class*="st-key-home_nav_"]:not(.st-key-home_nav_grid) .stButton button:hover {{
-          border-color: var(--jr-red);
-          background: var(--jr-red);
-          color: #fff;
+        div[class*="st-key-home_open_"] .stButton button:hover {{
+          border: 0;
+          background: transparent;
+          color: var(--jr-red);
+          transform: translateX(3px);
+        }}
+
+        div[class*="st-key-home_open_"] .stButton button:focus-visible {{
+          outline: 3px solid rgba(190,30,45,.26);
+          outline-offset: 5px;
         }}
 
         div[class*="st-key-home_nav_"]:not(.st-key-home_nav_grid):hover .home-card {{
