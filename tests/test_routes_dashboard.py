@@ -156,11 +156,7 @@ class RoutesDashboardTests(unittest.TestCase):
             patch.object(dashboard.st, "session_state", session_state),
             patch.object(dashboard, "_request_cookie", return_value="token-valido"),
             patch.object(dashboard, "_verify_remember_token", return_value="usuario-teste"),
-            patch.object(dashboard.st, "sidebar") as sidebar,
-            patch.object(dashboard.st, "caption"),
-            patch.object(dashboard.st, "button", return_value=False),
         ):
-            sidebar.__enter__.return_value = sidebar
             self.assertTrue(dashboard.require_authentication())
 
         self.assertTrue(session_state["jr_authenticated"])

@@ -279,19 +279,6 @@ def require_authentication() -> bool:
             st.session_state["jr_authenticated_user"] = remembered_user
 
     if st.session_state.get("jr_authenticated") is True:
-        with st.sidebar:
-            st.caption(f"Acesso: {st.session_state.get('jr_authenticated_user', AUTH_DEFAULT_USERNAME)}")
-            if st.button("Sair do painel", key="jr_logout", width="stretch"):
-                _delete_auth_cookie()
-                for key in (
-                    "jr_authenticated",
-                    "jr_authenticated_user",
-                    "jr_auth_failures",
-                    "jr_auth_locked_until",
-                ):
-                    st.session_state.pop(key, None)
-                st.session_state["jr_force_logged_out"] = True
-                return False
         return True
 
     now = datetime.now(timezone.utc).timestamp()
@@ -22392,7 +22379,7 @@ def main() -> None:
         page_title="JR Dashboard",
         page_icon=str(LOGO_PATH),
         layout="wide",
-        initial_sidebar_state="expanded",
+        initial_sidebar_state="collapsed",
     )
     inject_css()
     if not require_authentication():
