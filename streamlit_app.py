@@ -850,6 +850,31 @@ def inject_css() -> None:
           box-shadow: 0 3px 8px rgba(0,0,0,.12);
         }}
 
+        .st-key-jr_topbar_back {{
+          position: fixed;
+          top: 18px;
+          right: 32px;
+          z-index: 12;
+        }}
+
+        .st-key-jr_topbar_back button {{
+          min-height: 38px;
+          padding: 8px 16px;
+          border: 0;
+          border-radius: 8px;
+          background: var(--jr-red);
+          color: #fff;
+          font-size: 14px;
+          font-weight: 800;
+          box-shadow: 0 3px 8px rgba(0,0,0,.12);
+        }}
+
+        .st-key-jr_topbar_back button:hover {{
+          border: 0;
+          background: #a51924;
+          color: #fff;
+        }}
+
         .st-key-comb_filterbar,
         .st-key-manu_filterbar,
         .st-key-hotel_filterbar,
@@ -1129,6 +1154,19 @@ def inject_css() -> None:
           text-decoration: none !important;
           box-shadow: 0 3px 8px rgba(190,30,45,.25);
           white-space: nowrap;
+        }}
+
+        .st-key-comb_back button,
+        .st-key-manu_back button,
+        .st-key-hotel_back button,
+        .st-key-ped_back button,
+        .st-key-vex_back button,
+        .st-key-vel_back button,
+        .st-key-rank_back button {{
+          border-color: var(--jr-red) !important;
+          background: var(--jr-red) !important;
+          color: #fff !important;
+          box-shadow: 0 3px 8px rgba(190,30,45,.25) !important;
         }}
 
         .home-wrapper {{
@@ -1964,6 +2002,78 @@ def inject_css() -> None:
           display: grid;
           gap: 28px;
           grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+        }}
+
+        .st-key-home_quick_nav,
+        .st-key-home_nav_grid {{
+          max-width: 1100px;
+          margin-left: auto;
+          margin-right: auto;
+        }}
+
+        .st-key-home_quick_nav {{
+          margin-top: -34px;
+          margin-bottom: 30px;
+          position: relative;
+          z-index: 2;
+        }}
+
+        .st-key-home_quick_nav button {{
+          min-height: 42px;
+          border-color: rgba(28,45,107,.16);
+          border-radius: 999px;
+          background: rgba(255,255,255,.92);
+          color: var(--jr-blue);
+          font-weight: 800;
+          box-shadow: 0 10px 24px rgba(16,24,40,.10);
+        }}
+
+        .st-key-home_nav_grid > div > [data-testid="stVerticalBlock"] {{
+          gap: 28px;
+        }}
+
+        .st-key-home_nav_grid [data-testid="stHorizontalBlock"] {{
+          gap: 28px;
+          align-items: stretch;
+        }}
+
+        .st-key-home_nav_grid [data-testid="stColumn"] {{
+          display: flex;
+        }}
+
+        div[class*="st-key-home_nav_"]:not(.st-key-home_nav_grid) {{
+          width: 100%;
+          height: 100%;
+          position: relative;
+        }}
+
+        div[class*="st-key-home_nav_"]:not(.st-key-home_nav_grid) .stButton {{
+          position: absolute;
+          inset: 0;
+          z-index: 3;
+        }}
+
+        div[class*="st-key-home_nav_"]:not(.st-key-home_nav_grid) .stButton button {{
+          width: 100%;
+          height: 100%;
+          min-height: 330px;
+          border: 0;
+          background: transparent;
+          opacity: 0;
+          cursor: pointer;
+        }}
+
+        div[class*="st-key-home_nav_"]:not(.st-key-home_nav_grid):hover .home-card {{
+          transform: translateY(-4px);
+          border-color: rgba(194,210,243,.96);
+          box-shadow:
+            0 28px 64px rgba(16,24,40,.14),
+            inset 0 1px 0 rgba(255,255,255,.90);
+        }}
+
+        div[class*="st-key-home_nav_"]:not(.st-key-home_nav_grid):hover .home-link {{
+          transform: translateX(3px);
+          color: var(--jr-red) !important;
         }}
 
         .home-card {{
@@ -5126,7 +5236,6 @@ def query_multiselect(values: list[object]) -> list[str]:
 
 def topbar(title: str, *, back: bool = True) -> None:
     logo = logo_data_uri()
-    back_html = '<a class="jr-back" href="?page=home" target="_self">&larr; Voltar</a>' if back else ""
     st.markdown(
         f"""
         <header class="jr-topbar">
@@ -5134,11 +5243,12 @@ def topbar(title: str, *, back: bool = True) -> None:
             <img class="jr-logo" src="{logo}" alt="JR">
             <h1>{h(title)}</h1>
           </div>
-          {back_html}
         </header>
         """,
         unsafe_allow_html=True,
     )
+    if back and st.button("← Voltar", key="jr_topbar_back"):
+        navigate("home")
 
 
 def render_kpis(items: list[tuple]) -> None:
@@ -6767,7 +6877,8 @@ def filter_controls(
                         del st.session_state[state_key]
                 st.rerun()
         with filter_cols[-1]:
-            st.markdown('<a class="filter-back" href="?page=home" target="_self">&larr; Voltar</a>', unsafe_allow_html=True)
+            if st.button("← Voltar", key=f"{key_prefix}_back", width="stretch"):
+                navigate("home")
 
     for key, value in list(params.items()):
         if value == "Todos":
@@ -7585,7 +7696,8 @@ def frota_filter_controls(seed: dict) -> dict[str, object]:
                         del st.session_state[state_key]
                 st.rerun()
         with cols[10]:
-            st.markdown('<a class="filter-back" href="?page=home" target="_self">&larr; Voltar</a>', unsafe_allow_html=True)
+            if st.button("← Voltar", key="rank_back", width="stretch"):
+                navigate("home")
 
     return {
         "ano": None if ano == "Todos" else ano,
@@ -8899,8 +9011,6 @@ def render_home() -> None:
         <header class="home-header">
           <div class="home-header-actions">
             <p class="home-last-update">&Uacute;ltima atualiza&ccedil;&atilde;o: {last_update}</p>
-            <a class="home-alert-link" href="?page=alertas" target="_self">&#9888; Alertas</a>
-            <a class="home-admin-link" href="?page=cadastro" target="_self">Adicionar dados</a>
           </div>
           <div class="home-brand">
             <img src="{logo}" alt="JR" class="home-logo">
@@ -8908,7 +9018,6 @@ def render_home() -> None:
               <p class="home-eyebrow">JR Ferragens &amp; Madeiras</p>
               <div class="home-title-row">
                 <h1>Dashboards operacionais</h1>
-                <a class="home-freight-link" href="?page=calculadora-frete" target="_self">Calculadora de frete</a>
               </div>
               <p class="home-subtitle">Monitore velocidade, combustível, manutenção, hospedagens e despesas de pedágio/extras em tempo real, com dados centralizados no Neon.</p>
             </div>
@@ -8918,6 +9027,17 @@ def render_home() -> None:
         """,
         unsafe_allow_html=True,
     )
+    with st.container(key="home_quick_nav"):
+        quick_nav = st.columns(3)
+        with quick_nav[0]:
+            if st.button("⚠ Alertas", key="home_alertas", width="stretch"):
+                navigate("alertas")
+        with quick_nav[1]:
+            if st.button("Adicionar dados", key="home_cadastro", width="stretch"):
+                navigate("cadastro")
+        with quick_nav[2]:
+            if st.button("Calculadora de frete", key="home_calculadora_frete", width="stretch"):
+                navigate("calculadora-frete")
 
     overview_options_all = route_json("overview_options")
     year_options = ["Todos", *(overview_options_all.get("anos_disponiveis", []) or [])]
@@ -9047,56 +9167,66 @@ def render_home() -> None:
                     st.session_state.pop(key, None)
                 st.rerun()
 
-    st.markdown(
-        """
-        <section id="dashboards" class="home-grid">
-          <a class="home-card" href="?page=rotas" target="_self" aria-label="Abrir dashboard Rotas">
-            <div><span class="home-chip">Rotas</span><h2>Manifestos, entregas e motoristas</h2></div>
-            <p class="home-card-text">Pesquise todos os dados extraídos dos PDFs e acompanhe cada rota por placa, motorista e dia.</p>
-            <ul class="home-list"><li>Ranking de motoristas, placas, rotas e cidades</li><li>Saída, retorno, duração e KM realizados</li><li>Clientes, pedidos, endereços, peso e valores das entregas</li></ul>
-            <span class="home-link">Abrir dashboard &rarr;</span>
-          </a>
-          <a class="home-card" href="?page=frota" target="_self" aria-label="Abrir dashboard Ranking">
-            <div><span class="home-chip">Ranking</span><h2>Ranking de gastos por caminhão</h2></div>
-            <p class="home-card-text">Veja todos os caminhões em formato de tabela, do maior para o menor gasto, com detalhamento por placa.</p>
-            <ul class="home-list"><li>Ordenação por combustível, manutenção, pedágio/extras ou total</li><li>Métricas individuais dentro da própria linha</li><li>Filtros por ano, mês e categoria</li></ul>
-            <span class="home-link">Abrir dashboard &rarr;</span>
-          </a>
-          <a class="home-card" href="?page=combustivel" target="_self" aria-label="Abrir dashboard Combustível">
-            <div><span class="home-chip">Combustível</span><h2>Consumo, custo e eficiência da frota</h2></div>
-            <p class="home-card-text">Filtros por mês, placa, posto e tipo de combustível com KPIs e gráficos de desempenho.</p>
-            <ul class="home-list"><li>KPIs automáticos de custo, km e litros</li><li>Comparativo por posto e tipo de combustível</li><li>Histórico mensal de consumo e gastos</li></ul>
-            <span class="home-link">Abrir dashboard &rarr;</span>
-          </a>
-          <a class="home-card" href="?page=manutencao" target="_self" aria-label="Abrir dashboard Manutenção">
-            <div><span class="home-chip">Manutenção</span><h2>Gestão de oficinas e serviços</h2></div>
-            <p class="home-card-text">Acompanhe gastos por placa, oficina e mês, com ticket médio atualizado.</p>
-            <ul class="home-list"><li>Resumo financeiro com ticket médio</li><li>Distribuição por placa e oficina</li><li>Curva mensal de investimentos</li></ul>
-            <span class="home-link">Abrir dashboard &rarr;</span>
-          </a>
-          <a class="home-card" href="?page=hoteis" target="_self" aria-label="Abrir dashboard Hotéis">
-            <div><span class="home-chip">Hotéis</span><h2>Reservas e hospedagens da equipe</h2></div>
-            <p class="home-card-text">Filtros por mês, cidade e hotel para entender os investimentos em hospedagem.</p>
-            <ul class="home-list"><li>KPIs automáticos de valor total, reservas e médias</li><li>Ranking por cidade e hotel/pousada</li><li>Histórico mensal dos gastos com hospedagem</li></ul>
-            <span class="home-link">Abrir dashboard &rarr;</span>
-          </a>
-          <a class="home-card" href="?page=pedagio" target="_self" aria-label="Abrir dashboard Pedágio e Extras">
-            <div><span class="home-chip">Pedágio &amp; Extras</span><h2>Pedágio e custos extras da frota</h2></div>
-            <p class="home-card-text">Acompanhe quanto cada placa consome com pedágio, seguros e tributos, com KPIs dinâmicos.</p>
-            <ul class="home-list"><li>Resumo mensal consolidado por tipo de despesa</li><li>Comparativo por placa e categoria</li><li>Filtros rápidos por mês, placa e tipo</li></ul>
-            <span class="home-link">Abrir dashboard &rarr;</span>
-          </a>
-          <a class="home-card" href="?page=vex" target="_self" aria-label="Abrir dashboard Vex">
-            <div><span class="home-chip">Vex</span><h2>Gastos exclusivos da categoria Vex</h2></div>
-            <p class="home-card-text">Visão consolidada dos custos Vex, com filtros por ano e mês.</p>
-            <ul class="home-list"><li>Totais Vex por área</li><li>Evolução mensal dos gastos</li><li>Resumo centralizado da categoria</li></ul>
-            <span class="home-link">Abrir dashboard &rarr;</span>
-          </a>
-        </section>
-        </main>
-        """,
-        unsafe_allow_html=True,
-    )
+    dashboard_cards = [
+        (
+            "rotas", "Rotas", "Manifestos, entregas e motoristas",
+            "Pesquise todos os dados extraídos dos PDFs e acompanhe cada rota por placa, motorista e dia.",
+            ["Ranking de motoristas, placas, rotas e cidades", "Saída, retorno, duração e KM realizados", "Clientes, pedidos, endereços, peso e valores das entregas"],
+        ),
+        (
+            "frota", "Ranking", "Ranking de gastos por caminhão",
+            "Veja todos os caminhões em formato de tabela, do maior para o menor gasto, com detalhamento por placa.",
+            ["Ordenação por combustível, manutenção, pedágio/extras ou total", "Métricas individuais dentro da própria linha", "Filtros por ano, mês e categoria"],
+        ),
+        (
+            "combustivel", "Combustível", "Consumo, custo e eficiência da frota",
+            "Filtros por mês, placa, posto e tipo de combustível com KPIs e gráficos de desempenho.",
+            ["KPIs automáticos de custo, km e litros", "Comparativo por posto e tipo de combustível", "Histórico mensal de consumo e gastos"],
+        ),
+        (
+            "manutencao", "Manutenção", "Gestão de oficinas e serviços",
+            "Acompanhe gastos por placa, oficina e mês, com ticket médio atualizado.",
+            ["Resumo financeiro com ticket médio", "Distribuição por placa e oficina", "Curva mensal de investimentos"],
+        ),
+        (
+            "hoteis", "Hotéis", "Reservas e hospedagens da equipe",
+            "Filtros por mês, cidade e hotel para entender os investimentos em hospedagem.",
+            ["KPIs automáticos de valor total, reservas e médias", "Ranking por cidade e hotel/pousada", "Histórico mensal dos gastos com hospedagem"],
+        ),
+        (
+            "pedagio", "Pedágio & Extras", "Pedágio e custos extras da frota",
+            "Acompanhe quanto cada placa consome com pedágio, seguros e tributos, com KPIs dinâmicos.",
+            ["Resumo mensal consolidado por tipo de despesa", "Comparativo por placa e categoria", "Filtros rápidos por mês, placa e tipo"],
+        ),
+        (
+            "vex", "Vex", "Gastos exclusivos da categoria Vex",
+            "Visão consolidada dos custos Vex, com filtros por ano e mês.",
+            ["Totais Vex por área", "Evolução mensal dos gastos", "Resumo centralizado da categoria"],
+        ),
+    ]
+    st.markdown('<div id="dashboards"></div>', unsafe_allow_html=True)
+    with st.container(key="home_nav_grid"):
+        for start in range(0, len(dashboard_cards), 3):
+            card_columns = st.columns(3)
+            for column, (page, chip, title, description, items) in zip(
+                card_columns, dashboard_cards[start : start + 3]
+            ):
+                with column, st.container(key=f"home_nav_{page}"):
+                    list_html = "".join(f"<li>{h(item)}</li>" for item in items)
+                    st.markdown(
+                        f"""
+                        <div class="home-card">
+                          <div><span class="home-chip">{h(chip)}</span><h2>{h(title)}</h2></div>
+                          <p class="home-card-text">{h(description)}</p>
+                          <ul class="home-list">{list_html}</ul>
+                          <span class="home-link">Abrir dashboard &rarr;</span>
+                        </div>
+                        """,
+                        unsafe_allow_html=True,
+                    )
+                    if st.button(f"Abrir dashboard {chip}", key=f"home_open_{page}"):
+                        navigate(page)
+    st.markdown("</main>", unsafe_allow_html=True)
 
 
 def _entry_month(value: date) -> str:

@@ -4,6 +4,7 @@ import unittest
 import zipfile
 from datetime import date, datetime, timedelta, timezone
 from io import BytesIO
+from pathlib import Path
 from unittest.mock import patch
 
 import pandas as pd
@@ -165,6 +166,11 @@ class RoutesDashboardTests(unittest.TestCase):
         self.assertTrue(session_state["jr_authenticated"])
         self.assertEqual(session_state["jr_authenticated_user"], "usuario-teste")
         self.assertNotIn("jr_show_entry_loading", session_state)
+
+    def test_internal_dashboard_navigation_does_not_reload_browser_session(self):
+        source = Path(dashboard.__file__).read_text(encoding="utf-8")
+        self.assertNotIn('href="?page=', source)
+        self.assertNotIn("target=\"_self\"", source)
 
     def test_dashboard_password_hash_rejects_invalid_salt(self):
         self.assertEqual(dashboard._password_hash("senha", "sal-invalido", 600_000), "")
