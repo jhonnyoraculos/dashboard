@@ -9028,14 +9028,11 @@ def render_home() -> None:
         unsafe_allow_html=True,
     )
     with st.container(key="home_quick_nav"):
-        quick_nav = st.columns(3)
+        quick_nav = st.columns(2)
         with quick_nav[0]:
-            if st.button("⚠ Alertas", key="home_alertas", width="stretch"):
-                navigate("alertas")
-        with quick_nav[1]:
             if st.button("Adicionar dados", key="home_cadastro", width="stretch"):
                 navigate("cadastro")
-        with quick_nav[2]:
+        with quick_nav[1]:
             if st.button("Calculadora de frete", key="home_calculadora_frete", width="stretch"):
                 navigate("calculadora-frete")
 
