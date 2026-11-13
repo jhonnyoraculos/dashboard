@@ -2047,20 +2047,22 @@ def inject_css() -> None:
           position: relative;
         }}
 
-        div[class*="st-key-home_nav_"]:not(.st-key-home_nav_grid) .stButton {{
-          position: absolute;
-          inset: 0;
-          z-index: 3;
-        }}
-
         div[class*="st-key-home_nav_"]:not(.st-key-home_nav_grid) .stButton button {{
           width: 100%;
-          height: 100%;
-          min-height: 330px;
-          border: 0;
-          background: transparent;
-          opacity: 0;
+          min-height: 44px;
+          margin-top: 10px;
+          border: 1px solid rgba(28,45,107,.16);
+          border-radius: 10px;
+          background: var(--jr-blue);
+          color: #fff;
+          font-weight: 800;
           cursor: pointer;
+        }}
+
+        div[class*="st-key-home_nav_"]:not(.st-key-home_nav_grid) .stButton button:hover {{
+          border-color: var(--jr-red);
+          background: var(--jr-red);
+          color: #fff;
         }}
 
         div[class*="st-key-home_nav_"]:not(.st-key-home_nav_grid):hover .home-card {{
@@ -2069,11 +2071,6 @@ def inject_css() -> None:
           box-shadow:
             0 28px 64px rgba(16,24,40,.14),
             inset 0 1px 0 rgba(255,255,255,.90);
-        }}
-
-        div[class*="st-key-home_nav_"]:not(.st-key-home_nav_grid):hover .home-link {{
-          transform: translateX(3px);
-          color: var(--jr-red) !important;
         }}
 
         .home-card {{
@@ -9216,12 +9213,11 @@ def render_home() -> None:
                           <div><span class="home-chip">{h(chip)}</span><h2>{h(title)}</h2></div>
                           <p class="home-card-text">{h(description)}</p>
                           <ul class="home-list">{list_html}</ul>
-                          <span class="home-link">Abrir dashboard &rarr;</span>
                         </div>
                         """,
                         unsafe_allow_html=True,
                     )
-                    if st.button(f"Abrir dashboard {chip}", key=f"home_open_{page}"):
+                    if st.button("Abrir dashboard →", key=f"home_open_{page}", width="stretch"):
                         navigate(page)
     st.markdown("</main>", unsafe_allow_html=True)
 
